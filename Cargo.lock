@@ -12,6 +12,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "cfg-if"
+version = "0.1.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4785bdd1c96b2a846b2bd7cc02e86b6b3dbf14e7e53446c4f54c92a361040822"
+
+[[package]]
 name = "lazy_static"
 version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -108,6 +114,7 @@ checksum = "5bd2fe26506023ed7b5e1e315add59d6f584c621d037f9368fea9cfb988f368c"
 name = "yamis"
 version = "0.1.0"
 dependencies = [
+ "cfg-if",
  "lazy_static",
  "regex",
  "serde",

@@ -1,14 +1,12 @@
+use std::{error, fmt, fs};
 use std::collections::HashMap;
-use std::{env, error, fmt, fs, option};
-use std::borrow::BorrowMut;
-use std::cell::{Cell, RefMut};
 use std::error::Error;
-use std::ops::{Add, Deref};
 use std::path::Path;
 use std::process::Command;
-use std::rc::Rc;
-use toml::Value;
+
 use serde_derive::Deserialize;
+use toml::Value;
+
 use crate::args::{format_string, FormatError};
 
 const ROOT_PROJECT_CONF_NAME: &str = "yamis.project.toml";
@@ -16,8 +14,20 @@ const CONF_NAME: &str = "yamis.toml";
 const PRIVATE_CONF_NAME: &str = "yamis.local.toml";
 const CONFIG_FILES_PRIO: &[&str] = &["yamis.local.toml", "yamis.toml", "yamis.project.toml"];
 
-
-type Env = HashMap<String, Value>;
+cfg_if::cfg_if! {
+    if #[cfg(target_os = "windows")] {
+        const SHELL_PROGRAM: &str = "cmd";
+        const SHELL_PROGRAM_ARG: &str = "/C";
+    } else if #[cfg(target_os = "linux")] {
+        const SHELL_PROGRAM: &str = "bash";
+        const SHELL_PROGRAM_ARG: &str = "-c";
+    } else if #[cfg(target_os = "macos")] {
+        const SHELL_PROGRAM: &str = "bash";
+        const SHELL_PROGRAM_ARG: &str = "-c";
+    }else {
+        compile_error!("Unsupported platform.");
+    }
+}
 
 
 #[derive(Debug, PartialEq)]
@@ -50,7 +60,6 @@ impl error::Error for TaskError {
 // Do not deny for now
 // #[serde(deny_unknown_fields)]
 // Minimal for now
-
 /// Represents a Task. Should have only program, command or script at the same time
 struct Task {
     /// Name of the task.
@@ -96,20 +105,17 @@ impl Task {
             let mut script = String::with_capacity(total_length);
 
             // Joins everything as a single argument since we are passing it to a program
-            &script.push_str(command);
+            script.push_str(command);
             for param in params {
-                &script.push_str(" ");
-                &script.push_str(&*param);
+                script.push_str(" ");
+                script.push_str(&*param);
             }
-
-            // TODO: support linux etc
-            let out = Command::new("cmd").arg("/C").arg(script).output()?;
+            let out = Command::new(SHELL_PROGRAM).arg(SHELL_PROGRAM_ARG).arg(script).output()?;
             print!("{}", String::from_utf8(out.stdout)?);
             return Ok(());
         } else if let Some(script) = &self.script{
-            // TODO: support linux etc
             let script = format_string(script, args);
-            let out = Command::new("cmd").arg("/C").arg(script?).output()?;
+            let out = Command::new(SHELL_PROGRAM).arg(SHELL_PROGRAM_ARG).arg(script?).output()?;
             print!("{}", String::from_utf8(out.stdout)?);
             return Ok(());
         } else if let Some(program) = &self.program {
