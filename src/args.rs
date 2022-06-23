@@ -52,8 +52,6 @@ fn is_valid_arg(arg: &str) -> bool {
     lazy_static! {
         static ref VALID_ARG_RE: Regex = Regex::new(r"^(?:(?:-*[a-zA-Z]+[a-zA-Z0-9_\-]*)|[0-9]+|\*)$").unwrap();
     }
-    dbg!(arg);
-    dbg!(VALID_ARG_RE.is_match(arg));
     return VALID_ARG_RE.is_match(arg);
 }
 
