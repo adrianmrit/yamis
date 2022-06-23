@@ -153,7 +153,7 @@ pub fn format_string(fmtstr: &str, args: &HashMap<String, String>) -> Result<Str
 }
 
 /// Returns a HashMap containing the arguments passed, including '*' which maps to all arguments
-fn get_args() -> HashMap<String, String> {
+pub fn get_args() -> HashMap<String, String> {
     lazy_static! {
         static ref RE: Regex = Regex::new(r"(?P<key>[a-zA-Z\-]{1,2}[a-zA-Z_\-])=(?P<val>[\s\S]*)").unwrap();
     }
