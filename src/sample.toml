@@ -9,3 +9,6 @@ script = "echo Hello World"
 [tasks.program]
 program = "python"
 params = ["-c", "print(\"{-m}\")"]
+
+[tasks.python]  # Example of an interactive application
+program = "python"

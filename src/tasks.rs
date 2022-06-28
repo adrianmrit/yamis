@@ -1,13 +1,11 @@
 use std::{error, fmt, fs};
 use std::collections::HashMap;
-use std::error::Error;
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, ExitStatus, Stdio};
 
 use serde_derive::Deserialize;
-use toml::Value;
 
-use crate::args::{format_string, FormatError};
+use crate::args::format_string;
 
 const ROOT_PROJECT_CONF_NAME: &str = "yamis.project.toml";
 const CONF_NAME: &str = "yamis.toml";
@@ -61,7 +59,7 @@ impl error::Error for TaskError {
 // #[serde(deny_unknown_fields)]
 // Minimal for now
 /// Represents a Task. Should have only program, command or script at the same time
-struct Task {
+pub struct Task {
     /// Name of the task.
     #[serde(skip)]
     name: String,
@@ -80,19 +78,25 @@ struct Task {
 #[derive(Deserialize)]
 // #[serde(deny_unknown_fields)]
 /// Repressents a config file.
-struct ConfigFile {
+pub struct ConfigFile {
     #[serde(skip)]
     filepath: String,
     /// Tasks inside the conig file
-    tasks: Option<HashMap<String, Task>>,
+    pub tasks: Option<HashMap<String, Task>>,
 }
 
 
 impl Task {
     /// Runs the task with the given arguments
-    fn run(&self, args: &HashMap<String, String>) -> Result<(), Box<dyn Error>> {
+    pub fn run(&self, args: &HashMap<String, String>) -> Result<ExitStatus, Box<dyn error::Error>> {
+
+        let command = self.prepare_command(args)?;
+        self.run_and_print_output(command)
+    }
+
+    fn prepare_command(&self, args: &HashMap<String, String>) -> Result<Command, Box<dyn error::Error>> {
         // TODO: Validate only one of program, command line or script is given
-        if let Some(command) = &self.command {
+        let task_command = if let Some(command) = &self.command {
             // Get parsed params
             let params = self.get_parsed_params(args)?;
 
@@ -107,28 +111,53 @@ impl Task {
             // Joins everything as a single argument since we are passing it to a program
             script.push_str(command);
             for param in params {
+                if param.is_empty() {
+                    continue
+                }
                 script.push_str(" ");
                 script.push_str(&*param);
             }
-            let out = Command::new(SHELL_PROGRAM).arg(SHELL_PROGRAM_ARG).arg(script).output()?;
-            print!("{}", String::from_utf8(out.stdout)?);
-            return Ok(());
+            let mut command = Command::new(SHELL_PROGRAM);
+            command.arg(SHELL_PROGRAM_ARG);
+            if !script.is_empty() {
+                command.arg(script);
+            }
+            command
         } else if let Some(script) = &self.script{
             let script = format_string(script, args);
-            let out = Command::new(SHELL_PROGRAM).arg(SHELL_PROGRAM_ARG).arg(script?).output()?;
-            print!("{}", String::from_utf8(out.stdout)?);
-            return Ok(());
+            let mut command = Command::new(SHELL_PROGRAM);
+            // TODO: Handle empty script
+            command.arg(SHELL_PROGRAM_ARG).arg(script?);
+            command
         } else if let Some(program) = &self.program {
-            let params = self.get_parsed_params(args)?;
-            let out = Command::new(program).args(params).output()?;
-            print!("{}", String::from_utf8(out.stdout)?);
-            return Ok(());
-        }
-        return Err(Box::new(TaskError::Empty(String::from("nothing found"))));
+            let params: Vec<String> = self.get_parsed_params(args)?;
+            let mut non_empty_params: Vec<String> = Vec::with_capacity(params.len());
+            for param in params {
+                if !param.is_empty() {
+                    non_empty_params.push(param);
+                }
+            }
+            let mut command = Command::new(program);
+            if non_empty_params.len() > 0 {
+                command.args(non_empty_params);
+            }
+            command
+        } else {
+            return Err(Box::new(TaskError::Empty(String::from("nothing found"))));
+        };
+        Ok(task_command)
+    }
+
+    fn run_and_print_output(&self, mut command: Command) -> Result<ExitStatus, Box<dyn error::Error>> {
+        command.stdout(Stdio::inherit());
+        command.stderr(Stdio::inherit());
+        command.stdin(Stdio::inherit());
+        let mut child = command.spawn()?;
+        Ok(child.wait()?)
     }
 
     /// Given a map of args, returns a vector of parsed parameters for the task.
-    fn get_parsed_params(&self, args: &HashMap<String, String>) -> Result<Vec<String>, Box<dyn Error>> {
+    fn get_parsed_params(&self, args: &HashMap<String, String>) -> Result<Vec<String>, Box<dyn error::Error>> {
         let mut v: Vec<String> = Vec::new();
         if let Some(params) = &self.params {
             for param in params {
@@ -143,9 +172,9 @@ impl Task {
 
 impl ConfigFile {
     /// Loads a config file from the TOML representation.
-    fn load<P: AsRef<Path>>(path: P) -> Result<ConfigFile, Box<dyn Error>> {
+    pub fn load<P: AsRef<Path>>(path: P) -> Result<ConfigFile, Box<dyn error::Error>> {
         let contents = fs::read_to_string(&path)?;
-        let mut conf: ConfigFile = toml::from_str(&*contents)?;
+        let conf: ConfigFile = toml::from_str(&*contents)?;
         Ok(conf)
     }
 }
