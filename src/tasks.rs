@@ -1,5 +1,6 @@
-use std::{error, fmt, fs};
+use std::{env, error, fmt, fs};
 use std::collections::HashMap;
+use std::fs::read;
 use std::path::Path;
 use std::process::{Command, ExitStatus, Stdio};
 
@@ -7,10 +8,10 @@ use serde_derive::Deserialize;
 
 use crate::args::format_string;
 
-const ROOT_PROJECT_CONF_NAME: &str = "yamis.project.toml";
+const ROOT_PROJECT_CONF_NAME: &str = "project.yamis.toml";
 const CONF_NAME: &str = "yamis.toml";
-const PRIVATE_CONF_NAME: &str = "yamis.local.toml";
-const CONFIG_FILES_PRIO: &[&str] = &["yamis.local.toml", "yamis.toml", "yamis.project.toml"];
+const PRIVATE_CONF_NAME: &str = "local.yamis.toml";
+const CONFIG_FILES_PRIO: &[&str] = &["local.yamis.toml", "yamis.toml", "project.yamis.toml"];
 
 cfg_if::cfg_if! {
     if #[cfg(target_os = "windows")] {
@@ -29,22 +30,25 @@ cfg_if::cfg_if! {
 
 
 #[derive(Debug, PartialEq)]
-pub enum TaskError {
-    Empty(String),  // Nothing to run
+pub enum ConfigError {
+    EmptyTask(String),  // Nothing to run
+    FileNotFound(String) // Config File not found
 }
 
-impl fmt::Display for TaskError {
+impl fmt::Display for ConfigError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
-            TaskError::Empty(ref s) => write!(f, "Task {} is empty.", s),
+            ConfigError::EmptyTask(ref s) => write!(f, "Task {} is empty.", s),
+            ConfigError::FileNotFound(ref s) => write!(f, "File {} not found.", s),
         }
     }
 }
 
-impl error::Error for TaskError {
+impl error::Error for ConfigError {
     fn description(&self) -> &str {
         match *self {
-            TaskError::Empty(_) => "nothing to run",
+            ConfigError::EmptyTask(_) => "nothing to run",
+            ConfigError::FileNotFound(_) => "file not found",
         }
     }
 
@@ -77,12 +81,21 @@ pub struct Task {
 
 #[derive(Deserialize)]
 // #[serde(deny_unknown_fields)]
-/// Repressents a config file.
+/// Represents a config file.
 pub struct ConfigFile {
     #[serde(skip)]
     filepath: String,
-    /// Tasks inside the conig file
+    /// Next config to check if the one doesn't contains the required task.
+    pub next: Option<Box<ConfigFile>>,
+    /// Tasks inside the config file
     pub tasks: Option<HashMap<String, Task>>,
+}
+
+
+/// Used to discover files.
+pub struct ConfigFiles {
+    /// First config file to check
+    entry: ConfigFile,
 }
 
 
@@ -94,6 +107,7 @@ impl Task {
         self.run_and_print_output(command)
     }
 
+    /// Prepares the task command to run
     fn prepare_command(&self, args: &HashMap<String, String>) -> Result<Command, Box<dyn error::Error>> {
         // TODO: Validate only one of program, command line or script is given
         let task_command = if let Some(command) = &self.command {
@@ -143,11 +157,12 @@ impl Task {
             }
             command
         } else {
-            return Err(Box::new(TaskError::Empty(String::from("nothing found"))));
+            return Err(Box::new(ConfigError::EmptyTask(String::from("nothing found"))));
         };
         Ok(task_command)
     }
 
+    /// Runs the task, with stdout, stderr and stdin inherited.
     fn run_and_print_output(&self, mut command: Command) -> Result<ExitStatus, Box<dyn error::Error>> {
         command.stdout(Stdio::inherit());
         command.stderr(Stdio::inherit());
@@ -172,33 +187,91 @@ impl Task {
 
 impl ConfigFile {
     /// Loads a config file from the TOML representation.
-    pub fn load<P: AsRef<Path>>(path: P) -> Result<ConfigFile, Box<dyn error::Error>> {
+    pub fn load(path: &Path) -> Result<ConfigFile, Box<dyn error::Error>> {
         let contents = fs::read_to_string(&path)?;
-        let conf: ConfigFile = toml::from_str(&*contents)?;
+        let mut conf: ConfigFile = toml::from_str(&*contents)?;
+        conf.filepath = path.to_str().unwrap().to_string();
+        conf.set_next()?;
         Ok(conf)
+    }
+
+    // TODO: Consider lazily loading next
+    /// Sets the next config file.
+    fn set_next<'b>(&'b mut self) -> Result<(), Box<dyn error::Error>>{
+        let path = Path::new(&self.filepath);
+        if path.ends_with(ROOT_PROJECT_CONF_NAME){
+            return Ok(());
+        }
+
+        if let Some(parent) = path.parent() {
+            for path in parent.ancestors() {
+                for name in CONFIG_FILES_PRIO {
+                    let config_file_path = path.join(name);
+                    if config_file_path.is_file() {
+                        let mut config = ConfigFile::load(&config_file_path)?;
+                        self.next = Some(Box::new(config));
+                    }
+                }
+            }
+        }
+        return Ok(());
+    }
+
+    /// Finds a task by name on this config file or the next
+    fn get_task(&self, task_name: &str) -> Option<&Task> {
+        if let Some(tasks) = &self.tasks {
+            if let Some(task) = tasks.get(task_name) {
+                return Some(task);
+            }
+        } else if let Some(next) = &self.next {
+            return next.get_task(task_name);
+        }
+        return None;
+    }
+}
+
+impl ConfigFiles {
+    /// Discovers the config files.
+    pub fn discover() -> Result<ConfigFiles, Box<dyn error::Error>>{
+        let working_dir = env::current_dir()?;
+        for dir in working_dir.ancestors() {
+            for conf_name in CONFIG_FILES_PRIO {
+                let config_path = dir.join(conf_name);
+                if config_path.is_file() {
+                    let config = ConfigFile::load(config_path.as_path())?;
+                    return Ok(ConfigFiles {entry: config});
+                }
+            }
+        }
+        Err(Box::new(ConfigError::FileNotFound(String::from("No File Found"))))
+    }
+
+    /// Returns a task for the given name
+    pub fn get_task(&self, task_name: &str) -> Option<&Task> {
+        return self.entry.get_task(task_name);
     }
 }
 
 #[test]
 fn test_format_string_unclosed_tag(){
-    let config = ConfigFile::load("src/sample.toml");
+    let config = ConfigFile::load(Path::new("src/sample.toml"));
     assert!(config.unwrap().tasks.unwrap().contains_key("echo_base"));
 }
 
 #[test]
 fn test_exec(){
     // TODO: Write actual test
-    let config = ConfigFile::load("src/sample.toml");
+    let config = ConfigFile::load(Path::new("src/sample.toml"));
     let mut args: HashMap<String, String> = HashMap::new();
     args.insert(String::from("-m"), String::from("hi from python"));
     let task = &config.unwrap().tasks.unwrap()["command"];
     task.run(&args).unwrap();
 
-    let config = ConfigFile::load("src/sample.toml");
+    let config = ConfigFile::load(Path::new("src/sample.toml"));
     let task = &config.unwrap().tasks.unwrap()["script"];
     task.run(&args).unwrap();
 
-    let config = ConfigFile::load("src/sample.toml");
+    let config = ConfigFile::load(Path::new("src/sample.toml"));
     let task = &config.unwrap().tasks.unwrap()["program"];
     task.run(&args).unwrap();
 }
