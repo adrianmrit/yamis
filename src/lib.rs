@@ -1,55 +1,36 @@
 extern crate core;
 
-use crate::args::YamisArgs;
-use crate::tasks::{ConfigFiles, Task};
-use colored::Colorize;
 use std::env;
 use std::env::Args;
+use std::error::Error;
+
+use crate::args::YamisArgs;
+use crate::tasks::ConfigFiles;
 
 pub mod args;
 pub mod tasks;
 
-// TODO: Properly handle errors
-pub fn program(args: Args) {
+pub fn program() -> Result<(), Box<dyn Error>> {
     let args = YamisArgs::new(env::args());
-    match args {
+    return match args {
         YamisArgs::CommandArgs(args) => {
             let config_files = match args.file {
-                None => match ConfigFiles::discover() {
-                    Ok(c) => c,
-                    Err(e) => {
-                        eprintln!("{}", e.to_string().red());
-                        return;
-                    }
-                },
-                Some(file_path) => ConfigFiles::for_path(&file_path).unwrap(),
+                None => ConfigFiles::discover()?,
+                Some(file_path) => ConfigFiles::for_path(&file_path)?,
             };
             match args.task {
-                None => {
-                    eprintln!("not implemented");
-                    return;
-                }
+                None => Err("No task to run was given.")?,
                 Some(task_name) => {
                     let task = config_files.get_task(&task_name);
                     match task {
-                        None => {
-                            eprintln!(
-                                "{} {} {}",
-                                "Task".red(),
-                                task_name.red(),
-                                "not found.".red()
-                            );
-                            return;
+                        None => Err(format!("Task {task_name} not found."))?,
+                        Some(task) => {
+                            task.run(&args.args)?;
+                            Ok(())
                         }
-                        Some(task) => match task.run(&args.args) {
-                            Ok(_) => {}
-                            Err(e) => {
-                                eprintln!("{}", e.to_string().red())
-                            }
-                        },
                     }
                 }
             }
         }
-    }
+    };
 }
