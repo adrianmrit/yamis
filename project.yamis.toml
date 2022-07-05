@@ -1,4 +1,4 @@
-[tasks.command]
+[tasks.command
 command = "echo"
 params = ["Hello World"]
 

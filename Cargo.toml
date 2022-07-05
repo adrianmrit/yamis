@@ -8,6 +8,7 @@ edition = "2021"
 [dependencies]
 regex = "1"
 cfg-if = "0.1"
+colored = "2"
 toml = "0.5"
 lazy_static = "1.4"
 serde_derive = "1.0"

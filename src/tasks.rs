@@ -1,4 +1,4 @@
-use std::{env, error, fmt, fs};
+use std::{env, error, fmt, fs, result};
 use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::fs::read;
@@ -28,6 +28,8 @@ cfg_if::cfg_if! {
         compile_error!("Unsupported platform.");
     }
 }
+
+type Result<T> = result::Result<T, Box<dyn error::Error>>;
 
 
 #[derive(Debug, PartialEq)]
@@ -102,14 +104,14 @@ pub struct ConfigFiles {
 
 impl Task {
     /// Runs the task with the given arguments
-    pub fn run(&self, args: &HashMap<String, String>) -> Result<ExitStatus, Box<dyn error::Error>> {
+    pub fn run(&self, args: &HashMap<String, String>) -> Result<ExitStatus> {
 
         let command = self.prepare_command(args)?;
         self.run_and_print_output(command)
     }
 
     /// Prepares the task command to run
-    fn prepare_command(&self, args: &HashMap<String, String>) -> Result<Command, Box<dyn error::Error>> {
+    fn prepare_command(&self, args: &HashMap<String, String>) -> Result<Command> {
         // TODO: Validate only one of program, command line or script is given
         let task_command = if let Some(command) = &self.command {
             // Get parsed params
@@ -158,13 +160,13 @@ impl Task {
             }
             command
         } else {
-            return Err(Box::new(ConfigError::EmptyTask(String::from("nothing found"))));
+            return Err(ConfigError::EmptyTask(String::from("nothing found")))?;
         };
         Ok(task_command)
     }
 
     /// Runs the task, with stdout, stderr and stdin inherited.
-    fn run_and_print_output(&self, mut command: Command) -> Result<ExitStatus, Box<dyn error::Error>> {
+    fn run_and_print_output(&self, mut command: Command) -> Result<ExitStatus> {
         command.stdout(Stdio::inherit());
         command.stderr(Stdio::inherit());
         command.stdin(Stdio::inherit());
@@ -173,7 +175,7 @@ impl Task {
     }
 
     /// Given a map of args, returns a vector of parsed parameters for the task.
-    fn get_parsed_params(&self, args: &HashMap<String, String>) -> Result<Vec<String>, Box<dyn error::Error>> {
+    fn get_parsed_params(&self, args: &HashMap<String, String>) -> Result<Vec<String>> {
         let mut v: Vec<String> = Vec::new();
         if let Some(params) = &self.params {
             for param in params {
@@ -188,9 +190,18 @@ impl Task {
 
 impl ConfigFile {
     /// Loads a config file from the TOML representation.
-    pub fn load(path: &Path) -> Result<ConfigFile, Box<dyn error::Error>> {
-        let contents = fs::read_to_string(&path)?;
-        let mut conf: ConfigFile = toml::from_str(&*contents)?;
+    pub fn load(path: &Path) -> Result<ConfigFile> {
+        let contents = match fs::read_to_string(&path) {
+            Ok(file_contents) => {file_contents}
+            Err(e) => {Err(format!("There was an error reading the file:\n{}", e))?}
+        };
+        let mut conf: ConfigFile = match toml::from_str(&*contents) {
+            Ok(conf) => {conf}
+            Err(e) => {
+                let err_msg = e.to_string();
+                Err(format!("There was an error parsing the toml file:\n{}{}", &err_msg[..1].to_uppercase(), &err_msg[1..]))?
+            }
+        };
         conf.filepath = path.to_str().unwrap().to_string();
         conf.set_next()?;
         Ok(conf)
@@ -198,7 +209,7 @@ impl ConfigFile {
 
     // TODO: Consider lazily loading next
     /// Sets the next config file.
-    fn set_next<'b>(&'b mut self) -> Result<(), Box<dyn error::Error>>{
+    fn set_next<'b>(&'b mut self) -> Result<()>{
         let path = Path::new(&self.filepath);
         if path.ends_with(ROOT_PROJECT_CONF_NAME){
             return Ok(());
@@ -233,7 +244,7 @@ impl ConfigFile {
 
 impl ConfigFiles {
     /// Discovers the config files.
-    pub fn discover() -> Result<ConfigFiles, Box<dyn error::Error>> {
+    pub fn discover() -> Result<ConfigFiles> {
         let working_dir = env::current_dir()?;
         for dir in working_dir.ancestors() {
             for conf_name in CONFIG_FILES_PRIO {
@@ -247,7 +258,7 @@ impl ConfigFiles {
         Err(Box::new(ConfigError::FileNotFound(String::from("No File Found"))))
     }
 
-    pub fn for_path<S: AsRef<OsStr> + ?Sized>(path: &S) -> Result<ConfigFiles, Box<dyn error::Error>> {
+    pub fn for_path<S: AsRef<OsStr> + ?Sized>(path: &S) -> Result<ConfigFiles> {
         let config = ConfigFile::load(Path::new(path))?;
         return Ok(ConfigFiles {entry: config})
     }
