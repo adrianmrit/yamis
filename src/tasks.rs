@@ -1,9 +1,9 @@
-use std::{env, error, fmt, fs, result};
 use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::fs::read;
 use std::path::Path;
 use std::process::{Command, ExitStatus, Stdio};
+use std::{env, error, fmt, fs, result};
 
 use serde_derive::Deserialize;
 
@@ -31,11 +31,10 @@ cfg_if::cfg_if! {
 
 type Result<T> = result::Result<T, Box<dyn error::Error>>;
 
-
 #[derive(Debug, PartialEq)]
 pub enum ConfigError {
-    EmptyTask(String),  // Nothing to run
-    FileNotFound(String) // Config File not found
+    EmptyTask(String),    // Nothing to run
+    FileNotFound(String), // Config File not found
 }
 
 impl fmt::Display for ConfigError {
@@ -60,8 +59,7 @@ impl error::Error for ConfigError {
     }
 }
 
-#[derive(Debug)]
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 // Do not deny for now
 // #[serde(deny_unknown_fields)]
 // Minimal for now
@@ -94,18 +92,15 @@ pub struct ConfigFile {
     pub tasks: Option<HashMap<String, Task>>,
 }
 
-
 /// Used to discover files.
 pub struct ConfigFiles {
     /// First config file to check
     entry: ConfigFile,
 }
 
-
 impl Task {
     /// Runs the task with the given arguments
     pub fn run(&self, args: &HashMap<String, String>) -> Result<ExitStatus> {
-
         let command = self.prepare_command(args)?;
         self.run_and_print_output(command)
     }
@@ -119,17 +114,15 @@ impl Task {
 
             // Prepare string with expected capacity
             let lengths_vec: Vec<usize> = params.iter().map(|s| s.len()).collect();
-            let total_length = command.len()
-                + params.len()
-                + lengths_vec.iter().fold(0, |t, v| t + v)
-                + 1; // space between command and params
+            let total_length =
+                command.len() + params.len() + lengths_vec.iter().fold(0, |t, v| t + v) + 1; // space between command and params
             let mut script = String::with_capacity(total_length);
 
             // Joins everything as a single argument since we are passing it to a program
             script.push_str(command);
             for param in params {
                 if param.is_empty() {
-                    continue
+                    continue;
                 }
                 script.push_str(" ");
                 script.push_str(&*param);
@@ -140,7 +133,7 @@ impl Task {
                 command.arg(script);
             }
             command
-        } else if let Some(script) = &self.script{
+        } else if let Some(script) = &self.script {
             let script = format_string(script, args);
             let mut command = Command::new(SHELL_PROGRAM);
             // TODO: Handle empty script
@@ -187,19 +180,22 @@ impl Task {
     }
 }
 
-
 impl ConfigFile {
     /// Loads a config file from the TOML representation.
     pub fn load(path: &Path) -> Result<ConfigFile> {
         let contents = match fs::read_to_string(&path) {
-            Ok(file_contents) => {file_contents}
-            Err(e) => {Err(format!("There was an error reading the file:\n{}", e))?}
+            Ok(file_contents) => file_contents,
+            Err(e) => Err(format!("There was an error reading the file:\n{}", e))?,
         };
         let mut conf: ConfigFile = match toml::from_str(&*contents) {
-            Ok(conf) => {conf}
+            Ok(conf) => conf,
             Err(e) => {
                 let err_msg = e.to_string();
-                Err(format!("There was an error parsing the toml file:\n{}{}", &err_msg[..1].to_uppercase(), &err_msg[1..]))?
+                Err(format!(
+                    "There was an error parsing the toml file:\n{}{}",
+                    &err_msg[..1].to_uppercase(),
+                    &err_msg[1..]
+                ))?
             }
         };
         conf.filepath = path.to_str().unwrap().to_string();
@@ -209,9 +205,9 @@ impl ConfigFile {
 
     // TODO: Consider lazily loading next
     /// Sets the next config file.
-    fn set_next<'b>(&'b mut self) -> Result<()>{
+    fn set_next<'b>(&'b mut self) -> Result<()> {
         let path = Path::new(&self.filepath);
-        if path.ends_with(ROOT_PROJECT_CONF_NAME){
+        if path.ends_with(ROOT_PROJECT_CONF_NAME) {
             return Ok(());
         }
 
@@ -251,16 +247,18 @@ impl ConfigFiles {
                 let config_path = dir.join(conf_name);
                 if config_path.is_file() {
                     let config = ConfigFile::load(config_path.as_path())?;
-                    return Ok(ConfigFiles {entry: config});
+                    return Ok(ConfigFiles { entry: config });
                 }
             }
         }
-        Err(Box::new(ConfigError::FileNotFound(String::from("No File Found"))))
+        Err(Box::new(ConfigError::FileNotFound(String::from(
+            "No File Found",
+        ))))
     }
 
     pub fn for_path<S: AsRef<OsStr> + ?Sized>(path: &S) -> Result<ConfigFiles> {
         let config = ConfigFile::load(Path::new(path))?;
-        return Ok(ConfigFiles {entry: config})
+        return Ok(ConfigFiles { entry: config });
     }
 
     /// Returns a task for the given name
@@ -270,13 +268,13 @@ impl ConfigFiles {
 }
 
 #[test]
-fn test_format_string_unclosed_tag(){
+fn test_format_string_unclosed_tag() {
     let config = ConfigFile::load(Path::new("src/sample.toml"));
     assert!(config.unwrap().tasks.unwrap().contains_key("echo_base"));
 }
 
 #[test]
-fn test_exec(){
+fn test_exec() {
     // TODO: Write actual test
     let config = ConfigFile::load(Path::new("src/sample.toml"));
     let mut args: HashMap<String, String> = HashMap::new();

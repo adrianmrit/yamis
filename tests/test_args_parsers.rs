@@ -1,5 +1,8 @@
 use std::collections::HashMap;
-use yamis::args::{format_string, FormatError, INVALID_ARG_CHAR_ERROR, UNCLOSED_TAG_ERROR, UNESCAPED_CLOSE_TOKEN_ERROR, UNESCAPED_OPEN_TOKEN_ERROR};
+use yamis::args::{
+    format_string, FormatError, INVALID_ARG_CHAR_ERROR, UNCLOSED_TAG_ERROR,
+    UNESCAPED_CLOSE_TOKEN_ERROR, UNESCAPED_OPEN_TOKEN_ERROR,
+};
 
 #[test]
 fn test_format_string() {
@@ -19,10 +22,9 @@ fn test_format_string() {
 }
 
 #[test]
-fn test_format_string_unclosed_tag(){
-    let expected_err: Result<String, FormatError> = Err(
-        FormatError::Invalid(String::from(UNCLOSED_TAG_ERROR))
-    );
+fn test_format_string_unclosed_tag() {
+    let expected_err: Result<String, FormatError> =
+        Err(FormatError::Invalid(String::from(UNCLOSED_TAG_ERROR)));
     let mut vars = HashMap::new();
     vars.insert("1".to_string(), "arg_1".to_string());
     vars.insert("2".to_string(), "arg_2".to_string());
@@ -34,12 +36,11 @@ fn test_format_string_unclosed_tag(){
     assert_eq!(format_string(&string, &vars), expected_err);
 }
 
-
 #[test]
-fn test_format_string_unescaped_open_token(){
-    let expected_err: Result<String, FormatError> = Err(
-        FormatError::Invalid(String::from(UNESCAPED_OPEN_TOKEN_ERROR))
-    );
+fn test_format_string_unescaped_open_token() {
+    let expected_err: Result<String, FormatError> = Err(FormatError::Invalid(String::from(
+        UNESCAPED_OPEN_TOKEN_ERROR,
+    )));
     let mut vars = HashMap::new();
     vars.insert("1".to_string(), "arg_1".to_string());
     vars.insert("2".to_string(), "arg_2".to_string());
@@ -48,12 +49,11 @@ fn test_format_string_unescaped_open_token(){
     assert_eq!(format_string(&string, &vars), expected_err);
 }
 
-
 #[test]
-fn test_format_string_unescaped_close_token(){
-    let expected_err: Result<String, FormatError> = Err(
-        FormatError::Invalid(String::from(UNESCAPED_CLOSE_TOKEN_ERROR))
-    );
+fn test_format_string_unescaped_close_token() {
+    let expected_err: Result<String, FormatError> = Err(FormatError::Invalid(String::from(
+        UNESCAPED_CLOSE_TOKEN_ERROR,
+    )));
     let mut vars = HashMap::new();
     vars.insert("1".to_string(), "arg_1".to_string());
     vars.insert("2".to_string(), "arg_2".to_string());
@@ -65,11 +65,10 @@ fn test_format_string_unescaped_close_token(){
 }
 
 #[test]
-fn test_format_string_invalid_arg(){
+fn test_format_string_invalid_arg() {
     let mut vars = HashMap::new();
-    let expected_err: Result<String, FormatError> = Err(
-        FormatError::Invalid(String::from(INVALID_ARG_CHAR_ERROR))
-    );
+    let expected_err: Result<String, FormatError> =
+        Err(FormatError::Invalid(String::from(INVALID_ARG_CHAR_ERROR)));
     vars.insert("1".to_string(), "arg_1".to_string());
     vars.insert("2".to_string(), "arg_2".to_string());
 
