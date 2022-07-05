@@ -1,5 +1,6 @@
 use std::{env, error, fmt, fs};
 use std::collections::HashMap;
+use std::ffi::OsStr;
 use std::fs::read;
 use std::path::Path;
 use std::process::{Command, ExitStatus, Stdio};
@@ -232,7 +233,7 @@ impl ConfigFile {
 
 impl ConfigFiles {
     /// Discovers the config files.
-    pub fn discover() -> Result<ConfigFiles, Box<dyn error::Error>>{
+    pub fn discover() -> Result<ConfigFiles, Box<dyn error::Error>> {
         let working_dir = env::current_dir()?;
         for dir in working_dir.ancestors() {
             for conf_name in CONFIG_FILES_PRIO {
@@ -244,6 +245,11 @@ impl ConfigFiles {
             }
         }
         Err(Box::new(ConfigError::FileNotFound(String::from("No File Found"))))
+    }
+
+    pub fn for_path<S: AsRef<OsStr> + ?Sized>(path: &S) -> Result<ConfigFiles, Box<dyn error::Error>> {
+        let config = ConfigFile::load(Path::new(path))?;
+        return Ok(ConfigFiles {entry: config})
     }
 
     /// Returns a task for the given name

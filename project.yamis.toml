@@ -1,2 +1,13 @@
+[tasks.command]
+command = "echo"
+params = ["Hello World"]
+
+[tasks.script]
+script = "echo Hello World"
+
+[tasks.program]
+program = "python"
+params = ["-c", "print(\"{out}\")"]
+
 [tasks.python]  # Example of an interactive application
 program = "python"

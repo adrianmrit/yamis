@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::{env, error, fmt};
+use std::env::Args;
 use std::fmt::Debug;
 use std::fs::read;
 use std::ops::Add;
@@ -24,6 +25,22 @@ Additionally, you can use '{*}' to pass all arguments as given.";
 pub enum FormatError {
     Invalid(String),  // Invalid format string
     KeyError(String), // Missing mandatory argument
+}
+
+pub struct CommandArgs {
+    /// Manually set config file
+    pub(crate) file: Option<String>,
+    /// Command to run, if given
+    pub(crate) task: Option<String>,
+    /// Args to run the command with
+    pub(crate) args: HashMap<String, String>
+}
+
+// TODO: Implement second mode
+/// We can run the program in two different modes, one is to run a command with args
+/// amd the other mode is to run other things like help, list commands etc
+pub enum YamisArgs {
+    CommandArgs(CommandArgs),
 }
 
 impl fmt::Display for FormatError {
@@ -152,21 +169,47 @@ pub fn format_string(fmtstr: &str, args: &HashMap<String, String>) -> Result<Str
     return Ok(out);
 }
 
-/// Returns a HashMap containing the arguments passed, including '*' which maps to all arguments
-pub fn get_args() -> HashMap<String, String> {
-    lazy_static! {
-        static ref RE: Regex = Regex::new(r"(?P<key>[a-zA-Z\-]{1,2}[a-zA-Z_\-])=(?P<val>[\s\S]*)").unwrap();
+impl YamisArgs {
+    pub fn new(mut args: Args) -> YamisArgs {
+        args.next(); // ignore the program name arg
+        let args: Vec<String> = args.collect();
+        if args.len() > 0 && args[0].starts_with("-") {
+            panic!("Not implemented yet");
+        }
+        return YamisArgs::CommandArgs(CommandArgs::new(args));
     }
-    let mut kwargs: HashMap<String, String> = HashMap::new();
+}
 
-    let mut args = env::args();
-    args.next();  // ignore file first arg
-    for arg in env::args().enumerate() {
-        kwargs.insert(arg.0.to_string(), arg.1);
+impl CommandArgs {
+    fn new(mut args: Vec<String>) -> CommandArgs{
+        let arg_regex: Regex = Regex::new(r"(?P<key>[a-zA-Z\-]{1,2}[a-zA-Z_\-])=(?P<val>[\s\S]*)").unwrap();
+        let mut kwargs: HashMap<String, String> = HashMap::new();
+        let mut file: Option<String> = None;
+        let mut command: Option<String> = None;
+
+        if let Some(first_arg) = args.get(0) {
+            if first_arg.to_lowercase().ends_with(".toml") {
+                file = Some(args.remove(0));
+            }
+            if let Some(_) = args.get(0) {
+                command = Some(args.remove(0));
+            }
+        }
+
+        for arg in args.iter().enumerate() {
+            kwargs.insert(arg.0.to_string(), arg.1.clone());
+        }
+
+        kwargs.insert(String::from("*"), args.join(" "));
+
+        for arg in args {
+            let arg_match = arg_regex.captures(&arg);
+            if let Some(arg_match) = arg_match {
+                // TODO: Handle unwraps
+                kwargs.insert(String::from(arg_match.name("key").unwrap().as_str()), String::from(arg_match.name("val").unwrap().as_str()));
+            }
+        }
+
+        return CommandArgs {file, task: command, args: kwargs };
     }
-    let mut args = env::args();
-    args.next();  // ignore file first arg
-    let args: Vec<String> = args.collect();
-    kwargs.insert(String::from("*"), args.join(" "));
-    kwargs
 }
