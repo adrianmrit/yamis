@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::fs::read;
-use std::path::Path;
+use std::path::{Ancestors, Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
 use std::{env, error, fmt, fs, result};
 
@@ -63,7 +63,7 @@ impl error::Error for ConfigError {
 // Do not deny for now
 // #[serde(deny_unknown_fields)]
 // Minimal for now
-/// Represents a Task. Should have only program, command or script at the same time
+/// Represents a Task. Should have only program, command or script at the same time.
 pub struct Task {
     /// Name of the task.
     #[serde(skip)]
@@ -86,26 +86,79 @@ pub struct Task {
 pub struct ConfigFile {
     #[serde(skip)]
     filepath: String,
-    /// Next config to check if the one doesn't contains the required task.
-    pub next: Option<Box<ConfigFile>>,
-    /// Tasks inside the config file
+    /// Tasks inside the config file.
     pub tasks: Option<HashMap<String, Task>>,
 }
 
 /// Used to discover files.
 pub struct ConfigFiles {
-    /// First config file to check
-    entry: ConfigFile,
+    /// First config file to check.
+    configs: Vec<ConfigFile>,
+}
+
+/// Iterates over existing config file paths, in order of priority.
+pub struct ConfigFilePaths {
+    index: usize,
+    finished: bool,
+    current: PathBuf,
+}
+
+impl Iterator for ConfigFilePaths {
+    type Item = PathBuf;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        while !self.finished {
+            let path = self.current.join(CONFIG_FILES_PRIO[self.index]);
+            let is_last_index = CONFIG_FILES_PRIO.len() - 1 == self.index;
+            dbg!(&path);
+            let is_file = path.is_file();
+            if is_last_index {
+                if is_file {
+                    // Break if the file found is the root file
+                    // Index is updated on the previous match, therefore we compare against 0
+                    self.finished = true;
+                } else {
+                    let new_current = path.parent().unwrap().parent();
+                    match new_current {
+                        None => {
+                            self.finished = true;
+                        }
+                        Some(new_current) => {
+                            self.current = new_current.to_path_buf();
+                        }
+                    }
+                }
+                self.index = 0;
+            } else {
+                self.index += 1;
+            }
+            if is_file {
+                return Some(path);
+            }
+        }
+        return None;
+    }
+}
+
+impl ConfigFilePaths {
+    /// Returns a new iterator that starts at the given path.
+    fn new(path: PathBuf) -> ConfigFilePaths {
+        ConfigFilePaths {
+            index: 0,
+            finished: false,
+            current: path,
+        }
+    }
 }
 
 impl Task {
-    /// Runs the task with the given arguments
+    /// Runs the task with the given arguments.
     pub fn run(&self, args: &HashMap<String, String>) -> Result<ExitStatus> {
         let command = self.prepare_command(args)?;
         self.run_and_print_output(command)
     }
 
-    /// Prepares the task command to run
+    /// Prepares the task command to run.
     fn prepare_command(&self, args: &HashMap<String, String>) -> Result<Command> {
         // TODO: Validate only one of program, command line or script is given
         let task_command = if let Some(command) = &self.command {
@@ -199,40 +252,15 @@ impl ConfigFile {
             }
         };
         conf.filepath = path.to_str().unwrap().to_string();
-        conf.set_next()?;
         Ok(conf)
     }
 
-    // TODO: Consider lazily loading next
-    /// Sets the next config file.
-    fn set_next<'b>(&'b mut self) -> Result<()> {
-        let path = Path::new(&self.filepath);
-        if path.ends_with(ROOT_PROJECT_CONF_NAME) {
-            return Ok(());
-        }
-
-        if let Some(parent) = path.parent() {
-            for path in parent.ancestors() {
-                for name in CONFIG_FILES_PRIO {
-                    let config_file_path = path.join(name);
-                    if config_file_path.is_file() {
-                        let mut config = ConfigFile::load(&config_file_path)?;
-                        self.next = Some(Box::new(config));
-                    }
-                }
-            }
-        }
-        return Ok(());
-    }
-
-    /// Finds a task by name on this config file or the next
+    /// Finds a task by name on this config file or the next.
     fn get_task(&self, task_name: &str) -> Option<&Task> {
         if let Some(tasks) = &self.tasks {
             if let Some(task) = tasks.get(task_name) {
                 return Some(task);
             }
-        } else if let Some(next) = &self.next {
-            return next.get_task(task_name);
         }
         return None;
     }
@@ -241,29 +269,34 @@ impl ConfigFile {
 impl ConfigFiles {
     /// Discovers the config files.
     pub fn discover() -> Result<ConfigFiles> {
+        let mut confs: Vec<ConfigFile> = Vec::new();
         let working_dir = env::current_dir()?;
-        for dir in working_dir.ancestors() {
-            for conf_name in CONFIG_FILES_PRIO {
-                let config_path = dir.join(conf_name);
-                if config_path.is_file() {
-                    let config = ConfigFile::load(config_path.as_path())?;
-                    return Ok(ConfigFiles { entry: config });
-                }
-            }
+        for config_path in ConfigFilePaths::new(working_dir) {
+            let config = ConfigFile::load(config_path.as_path())?;
+            confs.push(config);
         }
-        Err(Box::new(ConfigError::FileNotFound(String::from(
-            "No File Found",
-        ))))
+        if confs.is_empty() {
+            Err(ConfigError::FileNotFound(String::from("No File Found")))?
+        }
+        Ok(ConfigFiles { configs: confs })
     }
 
+    /// Only loads the config file for the given path.
     pub fn for_path<S: AsRef<OsStr> + ?Sized>(path: &S) -> Result<ConfigFiles> {
         let config = ConfigFile::load(Path::new(path))?;
-        return Ok(ConfigFiles { entry: config });
+        return Ok(ConfigFiles {
+            configs: vec![config],
+        });
     }
 
-    /// Returns a task for the given name
+    /// Returns a task for the given name.
     pub fn get_task(&self, task_name: &str) -> Option<&Task> {
-        return self.entry.get_task(task_name);
+        for conf in &self.configs {
+            if let Some(task) = conf.get_task(task_name) {
+                return Some(task);
+            }
+        }
+        return None;
     }
 }
 
