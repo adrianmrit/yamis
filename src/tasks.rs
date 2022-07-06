@@ -34,7 +34,8 @@ type Result<T> = result::Result<T, Box<dyn error::Error>>;
 #[derive(Debug, PartialEq)]
 pub enum ConfigError {
     EmptyTask(String),    // Nothing to run
-    FileNotFound(String), // Config File not found
+    FileNotFound(String), // Given config file not found
+    NoConfigFile,         // No config file was discovered
 }
 
 impl fmt::Display for ConfigError {
@@ -42,6 +43,7 @@ impl fmt::Display for ConfigError {
         match *self {
             ConfigError::EmptyTask(ref s) => write!(f, "Task {} is empty.", s),
             ConfigError::FileNotFound(ref s) => write!(f, "File {} not found.", s),
+            ConfigError::NoConfigFile => write!(f, "No config file found."),
         }
     }
 }
@@ -51,6 +53,7 @@ impl error::Error for ConfigError {
         match *self {
             ConfigError::EmptyTask(_) => "nothing to run",
             ConfigError::FileNotFound(_) => "file not found",
+            ConfigError::NoConfigFile => "no config discovered",
         }
     }
 
@@ -276,7 +279,7 @@ impl ConfigFiles {
             confs.push(config);
         }
         if confs.is_empty() {
-            Err(ConfigError::FileNotFound(String::from("No File Found")))?
+            Err(ConfigError::NoConfigFile)?
         }
         Ok(ConfigFiles { configs: confs })
     }
