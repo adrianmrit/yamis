@@ -304,25 +304,24 @@ impl ConfigFiles {
 }
 
 #[test]
-fn test_format_string_unclosed_tag() {
-    let config = ConfigFile::load(Path::new("src/sample.toml"));
-    assert!(config.unwrap().tasks.unwrap().contains_key("echo_base"));
-}
+fn test_discovery() {
+    let config = ConfigFiles::discover().unwrap();
+    assert_eq!(config.configs.len(), 1);
 
-#[test]
-fn test_exec() {
-    // TODO: Write actual test
-    let config = ConfigFile::load(Path::new("src/sample.toml"));
-    let mut args: HashMap<String, String> = HashMap::new();
-    args.insert(String::from("-m"), String::from("hi from python"));
-    let task = &config.unwrap().tasks.unwrap()["command"];
-    task.run(&args).unwrap();
+    match config.get_task("non_existent") {
+        None => {}
+        Some(_) => {
+            assert!(false, "task non_existent should not exist");
+        }
+    }
 
-    let config = ConfigFile::load(Path::new("src/sample.toml"));
-    let task = &config.unwrap().tasks.unwrap()["script"];
-    task.run(&args).unwrap();
+    match config.get_task("hello_world") {
+        None => {
+            assert!(false, "task hello_world should exist");
+        }
+        Some(_) => {}
+    }
 
-    let config = ConfigFile::load(Path::new("src/sample.toml"));
-    let task = &config.unwrap().tasks.unwrap()["program"];
-    task.run(&args).unwrap();
+    let config = ConfigFiles::for_path("project.yamis.toml").unwrap();
+    assert_eq!(config.configs.len(), 1);
 }

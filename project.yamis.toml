@@ -1,13 +1,13 @@
-[tasks.command]
+[tasks.hello_world]
 command = "echo"
 params = ["Hello World"]
 
-[tasks.script]
+[tasks.hello_world_script]
 script = "echo Hello World"
 
-[tasks.program]
+[tasks.inline_python]
 program = "python"
-params = ["-c", "print(\"{out}\")"]
+params = ["-c", "{*}"]
 
 [tasks.python]  # Example of an interactive application
 program = "python"
