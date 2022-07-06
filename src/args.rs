@@ -185,7 +185,9 @@ impl YamisArgs {
 impl CommandArgs {
     fn new(mut args: Vec<String>) -> CommandArgs {
         let arg_regex: Regex =
-            Regex::new(r"(?P<key>[a-zA-Z\-]{1,2}[a-zA-Z_\-])=(?P<val>[\s\S]*)").unwrap();
+            // TODO: Check best way to implement
+            Regex::new(r"-{0,2}(?P<key>[a-zA-Z]+\w*)=(?P<val>[\s\S]*)")
+                .unwrap();
         let mut kwargs: HashMap<String, String> = HashMap::new();
         let mut file: Option<String> = None;
         let mut command: Option<String> = None;
