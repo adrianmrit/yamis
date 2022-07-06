@@ -6,18 +6,18 @@ use yamis::args::{
 
 #[test]
 fn test_format_string() {
-    let string = "{1} {2} {a} {a?} {--b} {c?} {hello_world} {{1}} {{{1}}} {{{{1}}}} {*}";
+    let string = "{1}{ 1} {2} {a} {a?} {b} {c?}{ c? } {hello_world} {{1}} {{{1}}} {{{{1}}}} {*}";
     let mut vars = HashMap::new();
     vars.insert("1".to_string(), "arg_1".to_string());
     vars.insert("2".to_string(), "arg_2".to_string());
     vars.insert("a".to_string(), "arg_a".to_string());
-    vars.insert("--b".to_string(), "arg_b".to_string());
+    vars.insert("b".to_string(), "arg_b".to_string());
     vars.insert("*".to_string(), "arg_*".to_string());
     vars.insert("hello_world".to_string(), "hello world".to_string());
     // optional not given
     // vars.insert("c".to_string(), "arg_c".to_string());
 
-    let expected = "arg_1 arg_2 arg_a arg_a arg_b  hello world {1} {arg_1} {{1}} arg_*";
+    let expected = "arg_1 arg_1 arg_2 arg_a arg_a arg_b  hello world {1} {arg_1} {{1}} arg_*";
     assert_eq!(format_string(&string, &vars).unwrap(), expected);
 }
 

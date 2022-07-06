@@ -1,5 +1,5 @@
 use lazy_static::lazy_static;
-use regex::{Regex, Replacer};
+use regex::{Captures, Regex, Replacer};
 use std::collections::HashMap;
 use std::env::Args;
 use std::fmt::Debug;
@@ -12,7 +12,6 @@ pub const CLOSE_TOKEN: char = '}';
 pub const OPTIONAL_TOKEN: char = '?';
 pub const UNESCAPED_OPEN_TOKEN_ERROR: &str = "Unescaped '{'.";
 pub const UNESCAPED_CLOSE_TOKEN_ERROR: &str = "Unescaped '}'.";
-pub const BAD_OPTIONAL_TOKEN_ERROR: &str = "'?' may only be added at the end of the argument.";
 pub const UNCLOSED_TAG_ERROR: &str = "Unclosed argument tag.";
 pub const EMPTY_TAG_ERROR: &str = "Empty argument tag.";
 pub const INVALID_ARG_CHAR_ERROR: &str = "Positional argument variables can only contain digits. \
@@ -33,6 +32,12 @@ pub struct CommandArgs {
     pub(crate) task: Option<String>,
     /// Args to run the command with
     pub(crate) args: HashMap<String, String>,
+}
+
+pub struct Arg {
+    arg: String,
+    prefix: String,
+    suffix: String,
 }
 
 // TODO: Implement second mode
@@ -64,22 +69,42 @@ impl error::Error for FormatError {
     }
 }
 
-fn is_valid_arg(arg: &str) -> bool {
+fn get_regex() -> Regex {
+    return Regex::new(
+        r"^(?P<spaces_before>\s*)(?P<arg>([a-zA-Z]+[a-zA-Z\d_\-]*)|\d+|\*)(?P<spaces_after>\s*)$",
+    )
+    .unwrap();
+}
+
+fn get_arg(arg: &str) -> Option<Arg> {
     lazy_static! {
-        static ref VALID_ARG_RE: Regex =
-            Regex::new(r"^(?:(?:-*[a-zA-Z]+[a-zA-Z0-9_\-]*)|[0-9]+|\*)$").unwrap();
+        static ref VALID_ARG_RE: Regex = get_regex();
     }
-    return VALID_ARG_RE.is_match(arg);
+    let capture = VALID_ARG_RE.captures(arg)?;
+    let arg = String::from(capture.name("arg").unwrap().as_str());
+    let prefix = String::from(capture.name("spaces_before").unwrap().as_str());
+    let suffix = String::from(capture.name("spaces_after").unwrap().as_str());
+    return Some(Arg {
+        arg,
+        prefix,
+        suffix,
+    });
 }
 
 /// Formats the given format string with the given args. This differs a bit to the classical string
 /// formats.
 ///
-/// Format arguments have to be surrounded by `{}`, i.e. `{1}`, `{a}`, `{-a}`. By adding the
+/// Format arguments have to be surrounded by `{}`, i.e. `{1}`, `{a}`, `{a}`. By adding the
 /// `?` char at the end of the arg name, i.e. `{a?}`, these can be made optional. "Positional
-/// argument variables can only contain digits. Keyword arguments my be prepended with
-/// '-', must start with english alphabetic characters, and can only contain english alphabetic
-/// and digit characters, '-' and '_'. Additionally, '{*}' is allowed.
+/// argument variables can only contain digits. Keyword arguments must start with english alphabetic
+/// characters, and can only contain english alphabetic
+/// and digit characters, '-' and '_'. Additionally, '{*}' is allowed. If you want to add spaces
+/// after or before an argument only if the argument is given, you can put the space inside the tag,
+/// i.e. for `hello{ a?}, take care` if a is `world` it will result in `hello world, take care`,
+/// but if a is not given it will result in `hello, take care`
+///
+/// Spaces at the beginning or end are ignored ig the key is optional, and added if the
+/// key is mandatory
 ///
 /// # Arguments
 /// * `fmtstr` - String to format
@@ -98,27 +123,27 @@ pub fn format_string(fmtstr: &str, args: &HashMap<String, String>) -> Result<Str
                 UNESCAPED_CLOSE_TOKEN_ERROR,
             )));
         }
-        // OPTIONAL_TOKEN not added at the end of parameter
-        if c != CLOSE_TOKEN && optional_arg {
-            return Err(FormatError::Invalid(String::from(BAD_OPTIONAL_TOKEN_ERROR)));
-        }
         // Found OPTIONAL_TOKEN, still waiting for tag closure
         if c == OPTIONAL_TOKEN && reading_arg {
             optional_arg = true;
         } else if c == CLOSE_TOKEN {
             if reading_arg {
-                if !is_valid_arg(&arg) {
-                    return Err(FormatError::Invalid(String::from(INVALID_ARG_CHAR_ERROR)));
-                }
-                match args.get(&arg) {
+                match get_arg(&arg) {
                     None => {
-                        if !optional_arg {
-                            return Err(FormatError::KeyError(arg));
+                        return Err(FormatError::Invalid(String::from(INVALID_ARG_CHAR_ERROR)));
+                    }
+                    Some(arg) => match args.get(&arg.arg) {
+                        None => {
+                            if !optional_arg {
+                                return Err(FormatError::KeyError(arg.arg));
+                            }
                         }
-                    }
-                    Some(val) => {
-                        out.push_str(val);
-                    }
+                        Some(val) => {
+                            out.push_str(&arg.prefix);
+                            out.push_str(val);
+                            out.push_str(&arg.suffix);
+                        }
+                    },
                 }
                 found_close_token = false;
                 optional_arg = false;
