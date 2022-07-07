@@ -1,10 +1,10 @@
 use std::collections::HashMap;
 use std::ffi::OsStr;
-use std::fs::read;
-use std::path::{Ancestors, Path, PathBuf};
-use std::process::{Command, ExitStatus, Stdio};
+use std::path::{Path, PathBuf};
+use std::process::ExitStatus;
 use std::{env, error, fmt, fs, result};
 
+use run_script::{IoOptions, ScriptOptions};
 use serde_derive::Deserialize;
 
 use crate::args::format_string;
@@ -71,16 +71,8 @@ pub struct Task {
     /// Name of the task.
     #[serde(skip)]
     name: String,
-    /// Name of the program to execute with command line arguments.
-    /// Note that this will not work with built in command-line commands.
-    program: Option<String>,
-    /// To be used to call command line commands. It will launch the command line
-    /// with the command and arg as command line arguments.
-    command: Option<String>,
-    /// Same as joining command and params in a single string.
+    /// Script to run.
     script: Option<String>,
-    /// Params to pass to the program or command. Not accepted by script.
-    params: Option<Vec<String>>,
 }
 
 #[derive(Deserialize)]
@@ -157,82 +149,25 @@ impl ConfigFilePaths {
 impl Task {
     /// Runs the task with the given arguments.
     pub fn run(&self, args: &HashMap<String, String>) -> Result<ExitStatus> {
-        let command = self.prepare_command(args)?;
-        self.run_and_print_output(command)
-    }
+        return if let Some(script) = &self.script {
+            let script = format_string(script, args)?;
+            let options = ScriptOptions {
+                runner: None,
+                working_directory: None,
+                input_redirection: IoOptions::Inherit,
+                output_redirection: IoOptions::Inherit,
+                exit_on_error: false,
+                print_commands: true,
+                env_vars: None,
+            };
 
-    /// Prepares the task command to run.
-    fn prepare_command(&self, args: &HashMap<String, String>) -> Result<Command> {
-        // TODO: Validate only one of program, command line or script is given
-        let task_command = if let Some(command) = &self.command {
-            // Get parsed params
-            let params = self.get_parsed_params(args)?;
+            let args = vec![];
 
-            // Prepare string with expected capacity
-            let lengths_vec: Vec<usize> = params.iter().map(|s| s.len()).collect();
-            let total_length =
-                command.len() + params.len() + lengths_vec.iter().fold(0, |t, v| t + v) + 1; // space between command and params
-            let mut script = String::with_capacity(total_length);
-
-            // Joins everything as a single argument since we are passing it to a program
-            script.push_str(command);
-            for param in params {
-                if param.is_empty() {
-                    continue;
-                }
-                script.push_str(" ");
-                script.push_str(&*param);
-            }
-            let mut command = Command::new(SHELL_PROGRAM);
-            command.arg(SHELL_PROGRAM_ARG);
-            if !script.is_empty() {
-                command.arg(script);
-            }
-            command
-        } else if let Some(script) = &self.script {
-            let script = format_string(script, args);
-            let mut command = Command::new(SHELL_PROGRAM);
-            // TODO: Handle empty script
-            command.arg(SHELL_PROGRAM_ARG).arg(script?);
-            command
-        } else if let Some(program) = &self.program {
-            let params: Vec<String> = self.get_parsed_params(args)?;
-            let mut non_empty_params: Vec<String> = Vec::with_capacity(params.len());
-            for param in params {
-                if !param.is_empty() {
-                    non_empty_params.push(param);
-                }
-            }
-            let mut command = Command::new(program);
-            if non_empty_params.len() > 0 {
-                command.args(non_empty_params);
-            }
-            command
+            let mut child = run_script::spawn(&script, &args, &options).unwrap();
+            Ok(child.wait()?)
         } else {
-            return Err(ConfigError::EmptyTask(String::from("nothing found")))?;
+            Err(ConfigError::EmptyTask(String::from("nothing found")))?
         };
-        Ok(task_command)
-    }
-
-    /// Runs the task, with stdout, stderr and stdin inherited.
-    fn run_and_print_output(&self, mut command: Command) -> Result<ExitStatus> {
-        command.stdout(Stdio::inherit());
-        command.stderr(Stdio::inherit());
-        command.stdin(Stdio::inherit());
-        let mut child = command.spawn()?;
-        Ok(child.wait()?)
-    }
-
-    /// Given a map of args, returns a vector of parsed parameters for the task.
-    fn get_parsed_params(&self, args: &HashMap<String, String>) -> Result<Vec<String>> {
-        let mut v: Vec<String> = Vec::new();
-        if let Some(params) = &self.params {
-            for param in params {
-                let result = format_string(param, args)?;
-                v.push(result);
-            }
-        }
-        Ok(v)
     }
 }
 

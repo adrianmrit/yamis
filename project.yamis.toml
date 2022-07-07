@@ -1,13 +1,18 @@
 [tasks.hello_world]
-command = "echo"
-params = ["Hello World"]
+script = "echo Hello World"
 
 [tasks.hello_world_script]
 script = "echo Hello World"
 
+[tasks.multiline_script]
+script = """
+echo Hello World
+echo Hello World again
+echo hello hello
+"""
+
 [tasks.inline_python]
-program = "python"
-params = ["-c", "{*}"]
+script = "python -c {*}"
 
 [tasks.python]  # Example of an interactive application
-program = "python"
+script = "python"
