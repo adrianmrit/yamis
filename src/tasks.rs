@@ -79,6 +79,10 @@ pub struct Task {
     name: String,
     /// Script to run.
     script: Option<String>,
+    /// Env options for the task
+    env: Option<HashMap<String, String>>,
+    /// Working dir
+    wd: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -111,7 +115,6 @@ impl Iterator for ConfigFilePaths {
         while !self.finished {
             let path = self.current.join(CONFIG_FILES_PRIO[self.index]);
             let is_last_index = CONFIG_FILES_PRIO.len() - 1 == self.index;
-            dbg!(&path);
             let is_file = path.is_file();
             if is_last_index {
                 if is_file {
@@ -154,20 +157,34 @@ impl ConfigFilePaths {
 
 impl Task {
     /// Runs the task with the given arguments.
-    pub fn run(&self, args: &HashMap<String, String>) -> Result<ExitStatus> {
+    pub fn run(
+        &self,
+        args: &HashMap<String, String>,
+        config_file: &ConfigFile,
+    ) -> Result<ExitStatus> {
         return if let Some(script) = &self.script {
             // let child handle it
             ctrlc::set_handler(move || {})?;
 
+            let working_dir = match &self.wd {
+                None => None,
+                Some(wd) => {
+                    let config_file_path = PathBuf::from(&config_file.filepath);
+                    let base_path = config_file_path.parent().unwrap();
+                    let wd = base_path.join(wd);
+                    Some(wd)
+                }
+            };
+
             let script = format_string(script, args)?;
             let options = ScriptOptions {
                 runner: None,
-                working_directory: None,
+                working_directory: working_dir,
                 input_redirection: IoOptions::Inherit,
                 output_redirection: IoOptions::Inherit,
                 exit_on_error: false,
                 print_commands: true,
-                env_vars: None,
+                env_vars: self.env.clone(),
             };
 
             let args = vec![];
@@ -237,10 +254,10 @@ impl ConfigFiles {
     }
 
     /// Returns a task for the given name.
-    pub fn get_task(&self, task_name: &str) -> Option<&Task> {
+    pub fn get_task(&self, task_name: &str) -> Option<(&Task, &ConfigFile)> {
         for conf in &self.configs {
             if let Some(task) = conf.get_task(task_name) {
-                return Some(task);
+                return Some((task, conf));
             }
         }
         return None;

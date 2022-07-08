@@ -16,3 +16,13 @@ script = "python -c \"{*}\""
 
 [tasks.python]  # Example of an interactive application
 script = "python"
+
+[tasks.working_dir]
+wd = "../yamis"
+script = "dir"
+
+[tasks.env_sample]
+script = "echo %SAMPLE_VAR% %PATH% %NON_EXISTING%"
+
+[tasks.env_sample.env]
+SAMPLE_VAR = "SAMPLE"

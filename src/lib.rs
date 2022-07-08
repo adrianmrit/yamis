@@ -21,11 +21,11 @@ pub fn program() -> Result<(), Box<dyn Error>> {
             match args.task {
                 None => Err("No task to run was given.")?,
                 Some(task_name) => {
-                    let task = config_files.get_task(&task_name);
-                    match task {
+                    let task_and_config = config_files.get_task(&task_name);
+                    match task_and_config {
                         None => Err(format!("Task {task_name} not found."))?,
-                        Some(task) => {
-                            task.run(&args.args)?;
+                        Some((task, config)) => {
+                            task.run(&args.args, config)?;
                             Ok(())
                         }
                     }
