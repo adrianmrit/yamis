@@ -12,7 +12,7 @@ echo hello hello
 """
 
 [tasks.inline_python]
-script = "python -c {*}"
+script = "python -c \"{*}\""
 
 [tasks.python]  # Example of an interactive application
 script = "python"

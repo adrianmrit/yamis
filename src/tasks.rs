@@ -1,7 +1,10 @@
 use std::collections::HashMap;
 use std::ffi::OsStr;
+use std::io::{stderr, stdin, stdout, Error, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitStatus;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::{env, error, fmt, fs, result};
 
 use run_script::{IoOptions, ScriptOptions};
@@ -33,6 +36,7 @@ type Result<T> = result::Result<T, Box<dyn error::Error>>;
 
 #[derive(Debug, PartialEq)]
 pub enum ConfigError {
+    Killed,               // Nothing to run
     EmptyTask(String),    // Nothing to run
     FileNotFound(String), // Given config file not found
     NoConfigFile,         // No config file was discovered
@@ -41,6 +45,7 @@ pub enum ConfigError {
 impl fmt::Display for ConfigError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
+            ConfigError::Killed => write!(f, "Task was killed."),
             ConfigError::EmptyTask(ref s) => write!(f, "Task {} is empty.", s),
             ConfigError::FileNotFound(ref s) => write!(f, "File {} not found.", s),
             ConfigError::NoConfigFile => write!(f, "No config file found."),
@@ -51,6 +56,7 @@ impl fmt::Display for ConfigError {
 impl error::Error for ConfigError {
     fn description(&self) -> &str {
         match *self {
+            ConfigError::Killed => "task killed",
             ConfigError::EmptyTask(_) => "nothing to run",
             ConfigError::FileNotFound(_) => "file not found",
             ConfigError::NoConfigFile => "no config discovered",
@@ -150,6 +156,9 @@ impl Task {
     /// Runs the task with the given arguments.
     pub fn run(&self, args: &HashMap<String, String>) -> Result<ExitStatus> {
         return if let Some(script) = &self.script {
+            // let child handle it
+            ctrlc::set_handler(move || {})?;
+
             let script = format_string(script, args)?;
             let options = ScriptOptions {
                 runner: None,
