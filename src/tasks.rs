@@ -1,14 +1,14 @@
 use std::collections::HashMap;
+use std::env::temp_dir;
 use std::ffi::OsStr;
+use std::fs::File;
 use std::io::{stderr, stdin, stdout, Error, Write};
 use std::path::{Path, PathBuf};
-use std::process::ExitStatus;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::process::{Command, ExitStatus, Stdio};
 use std::{env, error, fmt, fs, result};
 
-use run_script::{IoOptions, ScriptOptions};
 use serde_derive::Deserialize;
+use uuid::Uuid;
 
 use crate::args::format_string;
 
@@ -21,12 +21,15 @@ cfg_if::cfg_if! {
     if #[cfg(target_os = "windows")] {
         const SHELL_PROGRAM: &str = "cmd";
         const SHELL_PROGRAM_ARG: &str = "/C";
+        const SCRIPT_EXTENSION: &str = "bat";
     } else if #[cfg(target_os = "linux")] {
         const SHELL_PROGRAM: &str = "bash";
         const SHELL_PROGRAM_ARG: &str = "-c";
+        const SCRIPT_EXTENSION: &str = "sh";
     } else if #[cfg(target_os = "macos")] {
         const SHELL_PROGRAM: &str = "bash";
         const SHELL_PROGRAM_ARG: &str = "-c";
+        const SCRIPT_EXTENSION: &str = "sh";
     }else {
         compile_error!("Unsupported platform.");
     }
@@ -155,6 +158,17 @@ impl ConfigFilePaths {
     }
 }
 
+fn get_temp_script(content: String) -> Result<PathBuf> {
+    let mut dir = temp_dir();
+
+    let file_name = format!("{}.yamis.{}", Uuid::new_v4(), SCRIPT_EXTENSION);
+    dir.push(file_name);
+
+    let mut file = File::create(&dir)?;
+    file.write_all(content.as_bytes())?;
+    Ok(dir)
+}
+
 impl Task {
     /// Runs the task with the given arguments.
     pub fn run(
@@ -163,33 +177,38 @@ impl Task {
         config_file: &ConfigFile,
     ) -> Result<ExitStatus> {
         return if let Some(script) = &self.script {
-            // let child handle it
-            ctrlc::set_handler(move || {})?;
+            let mut command = Command::new(SHELL_PROGRAM);
+            command.arg(SHELL_PROGRAM_ARG);
+            command.stdout(Stdio::inherit());
+            command.stderr(Stdio::inherit());
+            command.stdin(Stdio::inherit());
 
-            let working_dir = match &self.wd {
-                None => None,
+            match &self.wd {
+                None => {}
                 Some(wd) => {
                     let config_file_path = PathBuf::from(&config_file.filepath);
                     let base_path = config_file_path.parent().unwrap();
                     let wd = base_path.join(wd);
-                    Some(wd)
+                    command.current_dir(wd);
                 }
             };
 
+            match &self.env {
+                None => {}
+                Some(env) => {
+                    command.envs(env);
+                }
+            }
+
             let script = format_string(script, args)?;
-            let options = ScriptOptions {
-                runner: None,
-                working_directory: working_dir,
-                input_redirection: IoOptions::Inherit,
-                output_redirection: IoOptions::Inherit,
-                exit_on_error: false,
-                print_commands: true,
-                env_vars: self.env.clone(),
-            };
+            let script_file = get_temp_script(script)?;
+            command.arg(script_file.to_str().unwrap());
 
-            let args = vec![];
+            let mut child = command.spawn()?;
 
-            let mut child = run_script::spawn(&script, &args, &options).unwrap();
+            // let child handle ctrl-c to prevent dropping the parent and leaving the child running
+            ctrlc::set_handler(move || {})?;
+
             Ok(child.wait()?)
         } else {
             Err(ConfigError::EmptyTask(String::from("nothing found")))?
