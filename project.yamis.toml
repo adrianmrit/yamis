@@ -1,3 +1,7 @@
+[env]
+GLOBAL_SAMPLE_VAR = "global sample var"
+SAMPLE_VAR = "global sample var"
+
 [tasks.hello_world]
 script = "echo Hello World"
 
@@ -21,11 +25,11 @@ script = "python"
 wd = "../yamis"
 script = "dir"
 
-[tasks.env_sample]
-script = "echo %SAMPLE_VAR% %PATH% %NON_EXISTING%"
+[tasks.env_sample.windows]
+script = "echo %SAMPLE_VAR% %GLOBAL_SAMPLE_VAR%"
 
-[tasks.env_sample.env]
-SAMPLE_VAR = "SAMPLE"
+[tasks.env_sample.windows.env]
+SAMPLE_VAR = "sample var"
 
 [tasks.os_sample]
 script = "echo hello linux"

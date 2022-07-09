@@ -82,15 +82,15 @@ impl error::Error for ConfigError {
 pub struct Task {
     /// Script to run.
     script: Option<String>,
-    /// Env options for the task
+    /// Env variables for the task.
     env: Option<HashMap<String, String>>,
-    /// Working dir
+    /// Working dir.
     wd: Option<String>,
-    /// Task to run instead if the OS is linux
+    /// Task to run instead if the OS is linux.
     linux: Option<Box<Task>>,
-    /// Task to run instead if the OS is windows
+    /// Task to run instead if the OS is windows.
     windows: Option<Box<Task>>,
-    /// Task to run instead if the OS is macos
+    /// Task to run instead if the OS is macos.
     macos: Option<Box<Task>>,
 }
 
@@ -99,11 +99,13 @@ pub struct Task {
 // #[serde(deny_unknown_fields)]
 /// Represents a config file.
 pub struct ConfigFile {
-    /// Path of the file
+    /// Path of the file.
     #[serde(skip)]
     filepath: PathBuf,
     /// Tasks inside the config file.
     tasks: Option<HashMap<String, Task>>,
+    /// Env variables for all the tasks.
+    env: Option<HashMap<String, String>>,
 }
 
 /// Used to discover files.
@@ -218,6 +220,13 @@ impl Task {
                     command.current_dir(wd);
                 }
             };
+
+            match &config_file.env {
+                None => {}
+                Some(env) => {
+                    command.envs(env);
+                }
+            }
 
             match &self.env {
                 None => {}
