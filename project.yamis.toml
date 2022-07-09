@@ -26,3 +26,12 @@ script = "echo %SAMPLE_VAR% %PATH% %NON_EXISTING%"
 
 [tasks.env_sample.env]
 SAMPLE_VAR = "SAMPLE"
+
+[tasks.os_sample]
+script = "echo hello linux"
+
+[tasks.os_sample.windows]
+script = "echo hello windows"
+
+[tasks.os_sample.macos]
+script = "echo hello macos"

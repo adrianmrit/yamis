@@ -19,6 +19,7 @@ const CONFIG_FILES_PRIO: &[&str] = &["local.yamis.toml", "yamis.toml", "project.
 
 cfg_if::cfg_if! {
     if #[cfg(target_os = "windows")] {
+
         const SHELL_PROGRAM: &str = "cmd";
         const SHELL_PROGRAM_ARG: &str = "/C";
         const SCRIPT_EXTENSION: &str = "bat";
@@ -86,6 +87,9 @@ pub struct Task {
     env: Option<HashMap<String, String>>,
     /// Working dir
     wd: Option<String>,
+    linux: Option<Box<Task>>,
+    windows: Option<Box<Task>>,
+    macos: Option<Box<Task>>,
 }
 
 #[derive(Deserialize)]
@@ -276,6 +280,19 @@ impl ConfigFiles {
     pub fn get_task(&self, task_name: &str) -> Option<(&Task, &ConfigFile)> {
         for conf in &self.configs {
             if let Some(task) = conf.get_task(task_name) {
+                if env::consts::OS == "linux" {
+                    if let Some(linux_task) = &task.linux {
+                        return Some((&*linux_task, conf));
+                    }
+                } else if env::consts::OS == "windows" {
+                    if let Some(windows_task) = &task.windows {
+                        return Some((&*windows_task, conf));
+                    }
+                } else if env::consts::OS == "macos" {
+                    if let Some(macos_task) = &task.macos {
+                        return Some((&*macos_task, conf));
+                    }
+                }
                 return Some((task, conf));
             }
         }
@@ -290,7 +307,7 @@ fn test_discovery() {
 
     match config.get_task("non_existent") {
         None => {}
-        Some(_) => {
+        Some((_, _)) => {
             assert!(false, "task non_existent should not exist");
         }
     }
@@ -299,9 +316,37 @@ fn test_discovery() {
         None => {
             assert!(false, "task hello_world should exist");
         }
-        Some(_) => {}
+        Some((_, _)) => {}
     }
 
     let config = ConfigFiles::for_path("project.yamis.toml").unwrap();
     assert_eq!(config.configs.len(), 1);
+}
+
+#[test]
+fn test_task_by_platform() {
+    let config = ConfigFiles::discover().unwrap();
+    assert_eq!(config.configs.len(), 1);
+
+    match config.get_task("os_sample") {
+        None => {}
+        Some((task, config)) => {
+            if cfg!(target_os = "windows") {
+                assert_eq!(
+                    task.script.clone().unwrap(),
+                    String::from("echo hello windows")
+                );
+            } else if cfg!(target_os = "linux") {
+                assert_eq!(
+                    task.script.clone().unwrap(),
+                    String::from("echo hello linux")
+                );
+            } else {
+                assert_eq!(
+                    task.script.clone().unwrap(),
+                    String::from("echo hello linux")
+                );
+            }
+        }
+    }
 }
