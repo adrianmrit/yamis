@@ -12,14 +12,14 @@ use uuid::Uuid;
 
 use crate::args::format_string;
 
-const ROOT_PROJECT_CONF_NAME: &str = "project.yamis.toml";
-const CONF_NAME: &str = "yamis.toml";
-const PRIVATE_CONF_NAME: &str = "local.yamis.toml";
+/// Config file names by order of priority. The first one refers to local config and
+/// should not be committed to the repository. The program should discover config files
+/// by looping on the parent folders and current directory until reaching the root path
+/// or a the project config (last one on the list) is found.
 const CONFIG_FILES_PRIO: &[&str] = &["local.yamis.toml", "yamis.toml", "project.yamis.toml"];
 
 cfg_if::cfg_if! {
     if #[cfg(target_os = "windows")] {
-
         const SHELL_PROGRAM: &str = "cmd";
         const SHELL_PROGRAM_ARG: &str = "/C";
         const SCRIPT_EXTENSION: &str = "bat";
@@ -36,20 +36,24 @@ cfg_if::cfg_if! {
     }
 }
 
+/// Alias the result type for convenience. We simply return a dynamic error as these should
+/// be displayed to the user as they are.
 type Result<T> = result::Result<T, Box<dyn error::Error>>;
 
+/// Errors related to config files and tasks.
 #[derive(Debug, PartialEq)]
 pub enum ConfigError {
-    Killed,               // Nothing to run
-    EmptyTask(String),    // Nothing to run
+    /// Raised when trying to run an empty task.
+    EmptyTask(String), // Nothing to run
+    /// Raised when a config file is not found for a given path.
     FileNotFound(String), // Given config file not found
-    NoConfigFile,         // No config file was discovered
+    /// Raised when no config file is found during auto-discovery.
+    NoConfigFile, // No config file was discovered
 }
 
 impl fmt::Display for ConfigError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
-            ConfigError::Killed => write!(f, "Task was killed."),
             ConfigError::EmptyTask(ref s) => write!(f, "Task {} is empty.", s),
             ConfigError::FileNotFound(ref s) => write!(f, "File {} not found.", s),
             ConfigError::NoConfigFile => write!(f, "No config file found."),
@@ -60,7 +64,6 @@ impl fmt::Display for ConfigError {
 impl error::Error for ConfigError {
     fn description(&self) -> &str {
         match *self {
-            ConfigError::Killed => "task killed",
             ConfigError::EmptyTask(_) => "nothing to run",
             ConfigError::FileNotFound(_) => "file not found",
             ConfigError::NoConfigFile => "no config discovered",
@@ -73,33 +76,34 @@ impl error::Error for ConfigError {
 }
 
 #[derive(Debug, Deserialize)]
-// Do not deny for now
+// TODO: Deny invalid fields
 // #[serde(deny_unknown_fields)]
-// Minimal for now
-/// Represents a Task. Should have only program, command or script at the same time.
+/// Represents a Task.
 pub struct Task {
-    /// Name of the task.
-    #[serde(skip)]
-    name: String,
     /// Script to run.
     script: Option<String>,
     /// Env options for the task
     env: Option<HashMap<String, String>>,
     /// Working dir
     wd: Option<String>,
+    /// Task to run instead if the OS is linux
     linux: Option<Box<Task>>,
+    /// Task to run instead if the OS is windows
     windows: Option<Box<Task>>,
+    /// Task to run instead if the OS is macos
     macos: Option<Box<Task>>,
 }
 
 #[derive(Deserialize)]
+// TODO: Deny invalid fields
 // #[serde(deny_unknown_fields)]
 /// Represents a config file.
 pub struct ConfigFile {
+    /// Path of the file
     #[serde(skip)]
-    filepath: String,
+    filepath: PathBuf,
     /// Tasks inside the config file.
-    pub tasks: Option<HashMap<String, Task>>,
+    tasks: Option<HashMap<String, Task>>,
 }
 
 /// Used to discover files.
@@ -162,9 +166,17 @@ impl ConfigFilePaths {
     }
 }
 
+/// Creates a temporal script returns the path to it.
+/// The OS should take care of cleaning the file.
+///
+/// # Arguments
+///
+/// * `content` - Content of the script file
 fn get_temp_script(content: String) -> Result<PathBuf> {
     let mut dir = temp_dir();
 
+    // Alternatives to uuid are timestamp and random number, or those together,
+    // so this might change in the future.
     let file_name = format!("{}.yamis.{}", Uuid::new_v4(), SCRIPT_EXTENSION);
     dir.push(file_name);
 
@@ -174,7 +186,14 @@ fn get_temp_script(content: String) -> Result<PathBuf> {
 }
 
 impl Task {
-    /// Runs the task with the given arguments.
+    /// Runs the task. Stdout, stdin and stderr are inherited. Also, adds a handler to
+    /// the ctrl-c signal that basically does nothing, such that the child process is the
+    /// one handling the signal.
+    ///
+    /// # Arguments
+    ///  
+    /// * `args` - Arguments to return the script with
+    /// * `config_file` - Config file the task belongs to
     pub fn run(
         &self,
         args: &HashMap<String, String>,
@@ -190,7 +209,7 @@ impl Task {
             match &self.wd {
                 None => {}
                 Some(wd) => {
-                    let config_file_path = PathBuf::from(&config_file.filepath);
+                    let config_file_path = &config_file.filepath;
                     let base_path = config_file_path.parent().unwrap();
                     let wd = base_path.join(wd);
                     command.current_dir(wd);
@@ -222,6 +241,10 @@ impl Task {
 
 impl ConfigFile {
     /// Loads a config file from the TOML representation.
+    ///
+    /// # Arguments
+    ///
+    /// * path - path of the toml file to load
     pub fn load(path: &Path) -> Result<ConfigFile> {
         let contents = match fs::read_to_string(&path) {
             Ok(file_contents) => file_contents,
@@ -238,11 +261,15 @@ impl ConfigFile {
                 ))?
             }
         };
-        conf.filepath = path.to_str().unwrap().to_string();
+        conf.filepath = path.to_path_buf();
         Ok(conf)
     }
 
-    /// Finds a task by name on this config file or the next.
+    /// Finds a task by name on this config file if it exists.
+    ///
+    /// # Arguments
+    ///
+    /// * task_name - Name of the task to search for
     fn get_task(&self, task_name: &str) -> Option<&Task> {
         if let Some(tasks) = &self.tasks {
             if let Some(task) = tasks.get(task_name) {
@@ -269,6 +296,10 @@ impl ConfigFiles {
     }
 
     /// Only loads the config file for the given path.
+    ///
+    /// # Arguments
+    ///
+    /// * path - Config file to load
     pub fn for_path<S: AsRef<OsStr> + ?Sized>(path: &S) -> Result<ConfigFiles> {
         let config = ConfigFile::load(Path::new(path))?;
         return Ok(ConfigFiles {
@@ -276,7 +307,11 @@ impl ConfigFiles {
         });
     }
 
-    /// Returns a task for the given name.
+    /// Returns a task for the given name and the config file that contains it.
+    ///
+    /// # Arguments
+    ///
+    /// * task_name - Name of the task to search for
     pub fn get_task(&self, task_name: &str) -> Option<(&Task, &ConfigFile)> {
         for conf in &self.configs {
             if let Some(task) = conf.get_task(task_name) {
