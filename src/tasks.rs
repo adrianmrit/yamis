@@ -209,9 +209,12 @@ impl Task {
             match &self.wd {
                 None => {}
                 Some(wd) => {
-                    let config_file_path = &config_file.filepath;
-                    let base_path = config_file_path.parent().unwrap();
-                    let wd = base_path.join(wd);
+                    let mut wd = PathBuf::from(wd);
+                    if !wd.is_absolute() {
+                        let config_file_path = &config_file.filepath;
+                        let base_path = config_file_path.parent().unwrap();
+                        wd = base_path.join(wd);
+                    }
                     command.current_dir(wd);
                 }
             };
