@@ -10,7 +10,7 @@ use std::{env, error, fmt, fs, result};
 use serde_derive::Deserialize;
 use uuid::Uuid;
 
-use crate::args::format_string;
+use crate::args::{format_string, ArgsMap};
 
 /// Config file names by order of priority. The first one refers to local config and
 /// should not be committed to the repository. The program should discover config files
@@ -196,11 +196,7 @@ impl Task {
     ///  
     /// * `args` - Arguments to return the script with
     /// * `config_file` - Config file the task belongs to
-    pub fn run(
-        &self,
-        args: &HashMap<String, String>,
-        config_file: &ConfigFile,
-    ) -> Result<ExitStatus> {
+    pub fn run(&self, args: &ArgsMap, config_file: &ConfigFile) -> Result<ExitStatus> {
         return if let Some(script) = &self.script {
             let mut command = Command::new(SHELL_PROGRAM);
             command.arg(SHELL_PROGRAM_ARG);

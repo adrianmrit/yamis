@@ -25,13 +25,15 @@ pub enum FormatError {
     KeyError(String), // Missing mandatory argument
 }
 
+pub type ArgsMap = HashMap<String, Vec<String>>;
+
 pub struct CommandArgs {
     /// Manually set config file
-    pub(crate) file: Option<String>,
+    pub file: Option<String>,
     /// Command to run, if given
-    pub(crate) task: Option<String>,
+    pub task: Option<String>,
     /// Args to run the command with
-    pub(crate) args: HashMap<String, String>,
+    pub args: ArgsMap,
 }
 
 pub struct Arg {
@@ -109,7 +111,7 @@ fn get_arg(arg: &str) -> Option<Arg> {
 /// # Arguments
 /// * `fmtstr` - String to format
 /// * `args` - HashMap containing the arguments
-pub fn format_string(fmtstr: &str, args: &HashMap<String, String>) -> Result<String, FormatError> {
+pub fn format_string(fmtstr: &str, args: &ArgsMap) -> Result<String, FormatError> {
     let mut out = String::with_capacity(fmtstr.len() * 2);
     let mut arg = String::with_capacity(10);
     let mut reading_arg = false;
@@ -138,10 +140,18 @@ pub fn format_string(fmtstr: &str, args: &HashMap<String, String>) -> Result<Str
                                 return Err(FormatError::KeyError(arg.arg));
                             }
                         }
-                        Some(val) => {
-                            out.push_str(&arg.prefix);
-                            out.push_str(val);
-                            out.push_str(&arg.suffix);
+                        Some(values) => {
+                            let last_val_index = values.len() - 1;
+                            for (i, val) in values.iter().enumerate() {
+                                out.push_str(&arg.prefix);
+                                out.push_str(val);
+                                out.push_str(&arg.suffix);
+                                /// Values are separated by spaces but the
+                                /// last value should not be
+                                if i != last_val_index {
+                                    out.push(' ');
+                                }
+                            }
                         }
                     },
                 }
@@ -211,9 +221,9 @@ impl CommandArgs {
     fn new(mut args: Vec<String>) -> CommandArgs {
         let arg_regex: Regex =
             // TODO: Check best way to implement
-            Regex::new(r"-{0,2}(?P<key>[a-zA-Z]+\w*)=(?P<val>[\s\S]*)")
+            Regex::new(r"-*(?P<key>[a-zA-Z]+\w*)=(?P<val>[\s\S]*)")
                 .unwrap();
-        let mut kwargs: HashMap<String, String> = HashMap::new();
+        let mut kwargs = ArgsMap::new();
         let mut file: Option<String> = None;
         let mut command: Option<String> = None;
 
@@ -226,22 +236,21 @@ impl CommandArgs {
             }
         }
 
-        for arg in args.iter().enumerate() {
-            kwargs.insert(arg.0.to_string(), arg.1.clone());
-        }
-
-        kwargs.insert(String::from("*"), args.join(" "));
-
-        for arg in args {
-            let arg_match = arg_regex.captures(&arg);
+        for arg in &args {
+            let arg_match = arg_regex.captures(arg);
             if let Some(arg_match) = arg_match {
-                // TODO: Handle unwraps
-                kwargs.insert(
-                    String::from(arg_match.name("key").unwrap().as_str()),
-                    String::from(arg_match.name("val").unwrap().as_str()),
-                );
+                let key = String::from(arg_match.name("key").unwrap().as_str());
+                let val = String::from(arg_match.name("val").unwrap().as_str());
+                if kwargs.contains_key(&key) {
+                    kwargs.get_mut(&key).unwrap().push(val);
+                } else {
+                    let args_vec: Vec<String> = vec![val];
+                    kwargs.insert(key, args_vec);
+                }
             }
         }
+
+        kwargs.insert(String::from("*"), args);
 
         return CommandArgs {
             file,

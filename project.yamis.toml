@@ -29,7 +29,7 @@ script = "dir"
 script = "echo %SAMPLE_VAR% %GLOBAL_SAMPLE_VAR%"
 
 [tasks.env_sample.windows.env]
-SAMPLE_VAR = "sample var"
+SAMPLE_VAR = "sample var {files}"
 
 [tasks.os_sample]
 script = "echo hello linux"
