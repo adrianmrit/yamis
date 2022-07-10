@@ -14,35 +14,42 @@ pub const UNESCAPED_OPEN_TOKEN_ERROR: &str = "Unescaped '{'.";
 pub const UNESCAPED_CLOSE_TOKEN_ERROR: &str = "Unescaped '}'.";
 pub const UNCLOSED_TAG_ERROR: &str = "Unclosed argument tag.";
 pub const EMPTY_TAG_ERROR: &str = "Empty argument tag.";
-pub const INVALID_ARG_CHAR_ERROR: &str = "Positional argument variables can only contain digits. \
-Keyword arguments my be prepended with '-', must start with english alphabetic characters, \
-and can only contain english alphabetic and digit characters, '-' and '_'. \
-Additionally, you can use '{*}' to pass all arguments as given.";
+pub const INVALID_ARG_CHAR_ERROR: &str = "Invalid argument tag.";
 
+/// Represent string format errors.
 #[derive(Debug, PartialEq)]
 pub enum FormatError {
-    Invalid(String),  // Invalid format string
+    /// Raised when an invalid format string is given
+    Invalid(String), // Invalid format string
+    /// Raised when a required argument was not given
     KeyError(String), // Missing mandatory argument
 }
 
+/// Extra args passed that will be mapped to the task.
 pub type ArgsMap = HashMap<String, Vec<String>>;
 
+/// Holds the data for running the given task.
 pub struct CommandArgs {
     /// Manually set config file
     pub file: Option<String>,
-    /// Command to run, if given
+    /// Task to run, if given
     pub task: Option<String>,
     /// Args to run the command with
     pub args: ArgsMap,
 }
 
-pub struct Arg {
+/// Represents an argument tag
+struct ArgumentTag {
+    required: bool,
+    /// Argument name that would be replaced with the value
     arg: String,
+    /// Prefix to be added before the replaced value.
     prefix: String,
+    /// Suffix to be added before the replaced value.
     suffix: String,
 }
 
-// TODO: Implement second mode
+// TODO: Implement second mode (still undefined)
 /// We can run the program in two different modes, one is to run a command with args
 /// amd the other mode is to run other things like help, list commands etc
 pub enum YamisArgs {
@@ -71,22 +78,35 @@ impl error::Error for FormatError {
     }
 }
 
-fn get_regex() -> Regex {
+/// Returns the regex used to parse argument tags
+fn get_argument_tag_regex() -> Regex {
     return Regex::new(
-        r"^(?P<spaces_before>\s*)(?P<arg>([a-zA-Z]+[a-zA-Z\d_\-]*)|\d+|\*)(?P<spaces_after>\s*)$",
+        r"^(?:\((?P<prefix>.*?)\))?(?P<arg>([a-zA-Z]+[a-zA-Z\d_\-]*)|\d+|\*)(?P<optional>\?)?(?:\((?P<suffix>.*?)\))?$",
     )
     .unwrap();
 }
 
-fn get_arg(arg: &str) -> Option<Arg> {
+/// Given the content of an argument tag, returns a representation of it
+fn get_argument_tag(arg: &str) -> Option<ArgumentTag> {
     lazy_static! {
-        static ref VALID_ARG_RE: Regex = get_regex();
+        static ref VALID_ARG_RE: Regex = get_argument_tag_regex();
     }
     let capture = VALID_ARG_RE.captures(arg)?;
     let arg = String::from(capture.name("arg").unwrap().as_str());
-    let prefix = String::from(capture.name("spaces_before").unwrap().as_str());
-    let suffix = String::from(capture.name("spaces_after").unwrap().as_str());
-    return Some(Arg {
+    let prefix = match capture.name("prefix") {
+        None => String::from(""),
+        Some(val) => String::from(val.as_str()),
+    };
+    let suffix = match capture.name("suffix") {
+        None => String::from(""),
+        Some(val) => String::from(val.as_str()),
+    };
+    let required = match capture.name("optional") {
+        None => true,
+        Some(_) => false,
+    };
+    return Some(ArgumentTag {
+        required,
         arg,
         prefix,
         suffix,
@@ -99,16 +119,14 @@ fn get_arg(arg: &str) -> Option<Arg> {
 /// Format arguments have to be surrounded by `{}`, i.e. `{1}`, `{a}`, `{a}`. By adding the
 /// `?` char at the end of the arg name, i.e. `{a?}`, these can be made optional. "Positional
 /// argument variables can only contain digits. Keyword arguments must start with english alphabetic
-/// characters, and can only contain english alphabetic
-/// and digit characters, '-' and '_'. Additionally, '{*}' is allowed. If you want to add spaces
-/// after or before an argument only if the argument is given, you can put the space inside the tag,
-/// i.e. for `hello{ a?}, take care` if a is `world` it will result in `hello world, take care`,
-/// but if a is not given it will result in `hello, take care`
-///
-/// Spaces at the beginning or end are ignored ig the key is optional, and added if the
-/// key is mandatory
+/// characters, and can only contain english alphabetic and digit characters. Additionally, `{*}` is
+/// allowed. If you want to add a prefix or a suffix only if the value is given, you might put them
+/// surrounded by parenthesis after or before an argument, i.e. `{(-f=)out?(.txt)}`. Also, if the same
+/// named value is passed multiple time in the arguments, the argument tag will be used to parse
+/// each value and will add them separated by spaces.
 ///
 /// # Arguments
+///
 /// * `fmtstr` - String to format
 /// * `args` - HashMap containing the arguments
 pub fn format_string(fmtstr: &str, args: &ArgsMap) -> Result<String, FormatError> {
@@ -117,7 +135,6 @@ pub fn format_string(fmtstr: &str, args: &ArgsMap) -> Result<String, FormatError
     let mut reading_arg = false;
     let mut found_open_token = false;
     let mut found_close_token = false;
-    let mut optional_arg = false;
     for c in fmtstr.chars() {
         // unescaped close token that doesn't close a tag
         if c != CLOSE_TOKEN && found_close_token {
@@ -126,17 +143,15 @@ pub fn format_string(fmtstr: &str, args: &ArgsMap) -> Result<String, FormatError
             )));
         }
         // Found OPTIONAL_TOKEN, still waiting for tag closure
-        if c == OPTIONAL_TOKEN && reading_arg {
-            optional_arg = true;
-        } else if c == CLOSE_TOKEN {
+        if c == CLOSE_TOKEN {
             if reading_arg {
-                match get_arg(&arg) {
+                match get_argument_tag(&arg) {
                     None => {
                         return Err(FormatError::Invalid(String::from(INVALID_ARG_CHAR_ERROR)));
                     }
                     Some(arg) => match args.get(&arg.arg) {
                         None => {
-                            if !optional_arg {
+                            if arg.required {
                                 return Err(FormatError::KeyError(arg.arg));
                             }
                         }
@@ -156,7 +171,6 @@ pub fn format_string(fmtstr: &str, args: &ArgsMap) -> Result<String, FormatError
                     },
                 }
                 found_close_token = false;
-                optional_arg = false;
                 reading_arg = false;
                 arg.clear();
             } else if found_close_token {
