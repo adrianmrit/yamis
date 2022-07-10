@@ -80,6 +80,8 @@ impl error::Error for ConfigError {
 // #[serde(deny_unknown_fields)]
 /// Represents a Task.
 pub struct Task {
+    /// Whether to automatically quote argument with spaces
+    quote: Option<bool>,
     /// Script to run.
     script: Option<String>,
     /// Env variables for the task.
@@ -94,6 +96,10 @@ pub struct Task {
     macos: Option<Box<Task>>,
 }
 
+fn default_quote() -> bool {
+    true
+}
+
 #[derive(Deserialize)]
 // TODO: Deny invalid fields
 // #[serde(deny_unknown_fields)]
@@ -102,6 +108,9 @@ pub struct ConfigFile {
     /// Path of the file.
     #[serde(skip)]
     filepath: PathBuf,
+    /// Whether to automatically quote argument with spaces unless task specified
+    #[serde(default = "default_quote")]
+    quote: bool,
     /// Tasks inside the config file.
     tasks: Option<HashMap<String, Task>>,
     /// Env variables for all the tasks.
@@ -231,7 +240,12 @@ impl Task {
                 }
             }
 
-            let script = format_string(script, args)?;
+            let quote = match self.quote {
+                None => config_file.quote,
+                Some(quote) => quote,
+            };
+
+            let script = format_string(script, args, quote)?;
             let script_file = get_temp_script(script)?;
             command.arg(script_file.to_str().unwrap());
 

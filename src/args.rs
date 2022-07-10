@@ -129,7 +129,7 @@ fn get_argument_tag(arg: &str) -> Option<ArgumentTag> {
 ///
 /// * `fmtstr` - String to format
 /// * `args` - HashMap containing the arguments
-pub fn format_string(fmtstr: &str, args: &ArgsMap) -> Result<String, FormatError> {
+pub fn format_string(fmtstr: &str, args: &ArgsMap, quote: bool) -> Result<String, FormatError> {
     let mut out = String::with_capacity(fmtstr.len() * 2);
     let mut arg = String::with_capacity(10);
     let mut reading_arg = false;
@@ -158,9 +158,16 @@ pub fn format_string(fmtstr: &str, args: &ArgsMap) -> Result<String, FormatError
                         Some(values) => {
                             let last_val_index = values.len() - 1;
                             for (i, val) in values.iter().enumerate() {
+                                let escape = quote && val.contains(' ');
                                 out.push_str(&arg.prefix);
+                                if escape {
+                                    out.push('"');
+                                }
                                 out.push_str(val);
                                 out.push_str(&arg.suffix);
+                                if escape {
+                                    out.push('"');
+                                }
                                 /// Values are separated by spaces but the
                                 /// last value should not be
                                 if i != last_val_index {

@@ -45,6 +45,18 @@ After having a config file, you can run a task by calling `yamis`, the name of t
 You can add a prefix and suffix surrounded by parenthesis after and before the argument name inside the tag, i.e.
 `{(-o )file?(.txt)}`, if `file=sample` is passed, it will add `-o sample.txt` to the script.
 
+### Auto quoting
+By default, if the passed argument contains spaces, the argument and the suffix are quoted together. The reason
+the prefix is not quoted together as well is that it was intended for keyword arguments, i.e., assuming `-f=` is the
+prefix and `.txt` is the suffix, `-f="hello world.txt"` makes sense but `"-f hello world.txt"` does not. To override
+this behavior you can pass `quote=false` at the task level or global level, but then you will have to manually quote
+the argument in the script, i.e.
+```toml
+[tasks.folder_content]
+quote=false
+script = "ls {(\")path?(\")}"  # manually adds quotes if path is guiven
+```
+
 ### Task files discovery
 The program will look at the directory where it was invoked and its parents until a `project.yamis.toml` is
 discovered or the root folder is reached. Valid filenames are the following:
