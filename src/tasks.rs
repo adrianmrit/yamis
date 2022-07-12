@@ -175,6 +175,23 @@ impl ConfigFilePaths {
     }
 }
 
+cfg_if::cfg_if! {
+    if #[cfg(target_os = "windows")] {
+        fn create_script_file<P: AsRef<Path>>(path: P) -> DynErrResult<File> {
+            Ok(File::create(&path)?)
+        }
+    } else {
+        use std::os::unix::fs::OpenOptionsExt;
+        fn create_script_file<P: AsRef<Path>>(path: P) -> DynErrResult<File> {
+            Ok(fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .mode(0o770)  // Create with appropriate permission
+            .open(path)?)
+        }
+    }
+}
+
 /// Creates a temporal script returns the path to it.
 /// The OS should take care of cleaning the file.
 ///
@@ -182,16 +199,16 @@ impl ConfigFilePaths {
 ///
 /// * `content` - Content of the script file
 fn get_temp_script(content: String) -> DynErrResult<PathBuf> {
-    let mut dir = temp_dir();
+    let mut path = temp_dir();
 
     // Alternatives to uuid are timestamp and random number, or those together,
     // so this might change in the future.
     let file_name = format!("{}.yamis.{}", Uuid::new_v4(), SCRIPT_EXTENSION);
-    dir.push(file_name);
+    path.push(file_name);
 
-    let mut file = File::create(&dir)?;
+    let mut file = create_script_file(&path)?;
     file.write_all(content.as_bytes())?;
-    Ok(dir)
+    Ok(path)
 }
 
 impl Task {
