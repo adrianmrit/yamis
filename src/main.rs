@@ -2,7 +2,7 @@ use colored::Colorize;
 use std::env;
 use std::error::Error;
 use yamis::args::YamisArgs;
-use yamis::tasks::{ConfigFile, ConfigFiles};
+use yamis::tasks::ConfigFiles;
 
 /// Runs the program but returns errors. The main method should be
 /// the one to print the actual error.
@@ -11,7 +11,7 @@ fn program() -> Result<(), Box<dyn Error>> {
     return match args {
         YamisArgs::CommandArgs(args) => {
             let config_files = match args.file {
-                None => ConfigFiles::discover()?,
+                None => ConfigFiles::discover(&env::current_dir()?)?,
                 Some(file_path) => ConfigFiles::for_path(&file_path)?,
             };
             match args.task {
@@ -40,7 +40,7 @@ fn main() {
             for line in err_msg.lines() {
                 eprintln!("{} {}", prefix, line.red());
             }
-            return;
+            std::process::exit(1);
         }
     }
 }

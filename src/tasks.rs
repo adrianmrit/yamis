@@ -11,6 +11,7 @@ use serde_derive::Deserialize;
 use uuid::Uuid;
 
 use crate::args::{format_string, ArgsMap};
+use crate::types::DynErrResult;
 
 /// Config file names by order of priority. The first one refers to local config and
 /// should not be committed to the repository. The program should discover config files
@@ -35,10 +36,6 @@ cfg_if::cfg_if! {
         compile_error!("Unsupported platform.");
     }
 }
-
-/// Alias the result type for convenience. We simply return a dynamic error as these should
-/// be displayed to the user as they are.
-type Result<T> = result::Result<T, Box<dyn error::Error>>;
 
 /// Errors related to config files and tasks.
 #[derive(Debug, PartialEq)]
@@ -83,7 +80,7 @@ pub struct Task {
     /// Whether to automatically quote argument with spaces
     quote: Option<bool>,
     /// Script to run.
-    script: Option<String>,
+    pub script: Option<String>,
     /// Env variables for the task.
     env: Option<HashMap<String, String>>,
     /// Working dir.
@@ -120,7 +117,7 @@ pub struct ConfigFile {
 /// Used to discover files.
 pub struct ConfigFiles {
     /// First config file to check.
-    configs: Vec<ConfigFile>,
+    pub configs: Vec<ConfigFile>,
 }
 
 /// Iterates over existing config file paths, in order of priority.
@@ -168,11 +165,12 @@ impl Iterator for ConfigFilePaths {
 
 impl ConfigFilePaths {
     /// Returns a new iterator that starts at the given path.
-    fn new(path: PathBuf) -> ConfigFilePaths {
+    fn new<S: AsRef<OsStr> + ?Sized>(path: &S) -> ConfigFilePaths {
+        let current = PathBuf::from(&path);
         ConfigFilePaths {
             index: 0,
             finished: false,
-            current: path,
+            current,
         }
     }
 }
@@ -183,7 +181,7 @@ impl ConfigFilePaths {
 /// # Arguments
 ///
 /// * `content` - Content of the script file
-fn get_temp_script(content: String) -> Result<PathBuf> {
+fn get_temp_script(content: String) -> DynErrResult<PathBuf> {
     let mut dir = temp_dir();
 
     // Alternatives to uuid are timestamp and random number, or those together,
@@ -205,7 +203,7 @@ impl Task {
     ///  
     /// * `args` - Arguments to return the script with
     /// * `config_file` - Config file the task belongs to
-    pub fn run(&self, args: &ArgsMap, config_file: &ConfigFile) -> Result<ExitStatus> {
+    pub fn run(&self, args: &ArgsMap, config_file: &ConfigFile) -> DynErrResult<ExitStatus> {
         return if let Some(script) = &self.script {
             let mut command = Command::new(SHELL_PROGRAM);
             command.arg(SHELL_PROGRAM_ARG);
@@ -267,7 +265,7 @@ impl ConfigFile {
     /// # Arguments
     ///
     /// * path - path of the toml file to load
-    pub fn load(path: &Path) -> Result<ConfigFile> {
+    pub fn load(path: &Path) -> DynErrResult<ConfigFile> {
         let contents = match fs::read_to_string(&path) {
             Ok(file_contents) => file_contents,
             Err(e) => Err(format!("There was an error reading the file:\n{}", e))?,
@@ -304,10 +302,9 @@ impl ConfigFile {
 
 impl ConfigFiles {
     /// Discovers the config files.
-    pub fn discover() -> Result<ConfigFiles> {
+    pub fn discover<S: AsRef<OsStr> + ?Sized>(path: &S) -> DynErrResult<ConfigFiles> {
         let mut confs: Vec<ConfigFile> = Vec::new();
-        let working_dir = env::current_dir()?;
-        for config_path in ConfigFilePaths::new(working_dir) {
+        for config_path in ConfigFilePaths::new(path) {
             let config = ConfigFile::load(config_path.as_path())?;
             confs.push(config);
         }
@@ -322,7 +319,7 @@ impl ConfigFiles {
     /// # Arguments
     ///
     /// * path - Config file to load
-    pub fn for_path<S: AsRef<OsStr> + ?Sized>(path: &S) -> Result<ConfigFiles> {
+    pub fn for_path<S: AsRef<OsStr> + ?Sized>(path: &S) -> DynErrResult<ConfigFiles> {
         let config = ConfigFile::load(Path::new(path))?;
         return Ok(ConfigFiles {
             configs: vec![config],
@@ -354,56 +351,5 @@ impl ConfigFiles {
             }
         }
         return None;
-    }
-}
-
-#[test]
-fn test_discovery() {
-    let config = ConfigFiles::discover().unwrap();
-    assert_eq!(config.configs.len(), 1);
-
-    match config.get_task("non_existent") {
-        None => {}
-        Some((_, _)) => {
-            assert!(false, "task non_existent should not exist");
-        }
-    }
-
-    match config.get_task("hello_world") {
-        None => {
-            assert!(false, "task hello_world should exist");
-        }
-        Some((_, _)) => {}
-    }
-
-    let config = ConfigFiles::for_path("project.yamis.toml").unwrap();
-    assert_eq!(config.configs.len(), 1);
-}
-
-#[test]
-fn test_task_by_platform() {
-    let config = ConfigFiles::discover().unwrap();
-    assert_eq!(config.configs.len(), 1);
-
-    match config.get_task("os_sample") {
-        None => {}
-        Some((task, config)) => {
-            if cfg!(target_os = "windows") {
-                assert_eq!(
-                    task.script.clone().unwrap(),
-                    String::from("echo hello windows")
-                );
-            } else if cfg!(target_os = "linux") {
-                assert_eq!(
-                    task.script.clone().unwrap(),
-                    String::from("echo hello linux")
-                );
-            } else {
-                assert_eq!(
-                    task.script.clone().unwrap(),
-                    String::from("echo hello linux")
-                );
-            }
-        }
     }
 }

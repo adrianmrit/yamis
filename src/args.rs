@@ -1,11 +1,10 @@
-use lazy_static::lazy_static;
-use regex::{Captures, Regex, Replacer};
 use std::collections::HashMap;
 use std::env::Args;
 use std::fmt::Debug;
-use std::fs::read;
-use std::ops::Add;
-use std::{env, error, fmt};
+use std::{error, fmt};
+
+use lazy_static::lazy_static;
+use regex::Regex;
 
 pub const OPEN_TOKEN: char = '{';
 pub const CLOSE_TOKEN: char = '}';
