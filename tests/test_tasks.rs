@@ -23,13 +23,13 @@ fn test_discovery() -> DynErrResult<()> {
     match config.get_task("non_existent") {
         None => {}
         Some((_, _)) => {
-            assert!(false, "task non_existent should not exist");
+            panic!("task non_existent should not exist");
         }
     }
 
     match config.get_task("hello_world") {
         None => {
-            assert!(false, "task hello_world should exist");
+            panic!("task hello_world should exist");
         }
         Some((_, _)) => {}
     }
@@ -66,22 +66,15 @@ fn test_task_by_platform() -> DynErrResult<()> {
     match config.get_task("os_sample") {
         None => {}
         Some((task, _)) => {
-            if cfg!(target_os = "windows") {
-                assert_eq!(
-                    task.script.clone().unwrap(),
-                    String::from("echo hello windows")
-                );
+            let actual = task.script.clone().unwrap();
+            let expected = if cfg!(target_os = "windows") {
+                String::from("echo hello windows")
             } else if cfg!(target_os = "linux") {
-                assert_eq!(
-                    task.script.clone().unwrap(),
-                    String::from("echo hello linux")
-                );
+                String::from("echo hello linux")
             } else {
-                assert_eq!(
-                    task.script.clone().unwrap(),
-                    String::from("echo hello linux")
-                );
-            }
+                String::from("echo hello macos")
+            };
+            assert_eq!(actual, expected);
         }
     }
     Ok(())

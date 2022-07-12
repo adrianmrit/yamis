@@ -21,7 +21,7 @@ fn test_format_string() {
     // vars.insert("c".to_string(), "arg_c".to_string());
 
     let expected = "arg_1 arg_2 arg_a arg_a arg_b  \"hello world\" {1} {arg_1} {{1}} arg_*";
-    assert_eq!(format_string(&string, &vars, true).unwrap(), expected);
+    assert_eq!(format_string(string, &vars, true).unwrap(), expected);
 }
 
 #[test]
@@ -40,7 +40,7 @@ fn test_format_string_multiple_values() {
     );
 
     let expected = "arg_1 arg_2 --v=arg_1 --v=arg_2";
-    assert_eq!(format_string(&string, &vars, true).unwrap(), expected);
+    assert_eq!(format_string(string, &vars, true).unwrap(), expected);
 }
 
 #[test]
@@ -59,7 +59,7 @@ fn test_format_string_prefix_suffix() {
     );
 
     let expected = "-f arg_1.txt -f arg_2.txt --v=arg_1 --v=arg_2";
-    assert_eq!(format_string(&string, &vars, true).unwrap(), expected);
+    assert_eq!(format_string(string, &vars, true).unwrap(), expected);
 }
 
 #[test]
@@ -71,10 +71,10 @@ fn test_format_string_unclosed_tag() {
     vars.insert(String::from("2"), vec![String::from("arg_2")]);
 
     let string = "{1} {2 {1}";
-    assert_eq!(format_string(&string, &vars, true), expected_err);
+    assert_eq!(format_string(string, &vars, true), expected_err);
 
     let string = "{1} {2} {1";
-    assert_eq!(format_string(&string, &vars, true), expected_err);
+    assert_eq!(format_string(string, &vars, true), expected_err);
 }
 
 #[test]
@@ -87,7 +87,7 @@ fn test_format_string_unescaped_open_token() {
     vars.insert(String::from("2"), vec![String::from("arg_2")]);
 
     let string = "{1} {2} {";
-    assert_eq!(format_string(&string, &vars, true), expected_err);
+    assert_eq!(format_string(string, &vars, true), expected_err);
 }
 
 #[test]
@@ -100,9 +100,9 @@ fn test_format_string_unescaped_close_token() {
     vars.insert(String::from("2"), vec![String::from("arg_2")]);
 
     let string = "}{1} {2}";
-    assert_eq!(format_string(&string, &vars, true), expected_err);
+    assert_eq!(format_string(string, &vars, true), expected_err);
     let string = "{1} {2}}";
-    assert_eq!(format_string(&string, &vars, true), expected_err);
+    assert_eq!(format_string(string, &vars, true), expected_err);
 }
 
 #[test]
@@ -114,13 +114,13 @@ fn test_format_string_invalid_arg() {
     vars.insert(String::from("2"), vec![String::from("arg_2")]);
 
     let string = "{1} {-2} {1}";
-    assert_eq!(format_string(&string, &vars, true), expected_err);
+    assert_eq!(format_string(string, &vars, true), expected_err);
     let string = "{1} {-} {1}";
-    assert_eq!(format_string(&string, &vars, true), expected_err);
+    assert_eq!(format_string(string, &vars, true), expected_err);
     let string = "{1} { } {1}";
-    assert_eq!(format_string(&string, &vars, true), expected_err);
+    assert_eq!(format_string(string, &vars, true), expected_err);
     let string = "{1} {_a} {1}";
-    assert_eq!(format_string(&string, &vars, true), expected_err);
+    assert_eq!(format_string(string, &vars, true), expected_err);
     let string = "{1} {-_a} {1}";
-    assert_eq!(format_string(&string, &vars, true), expected_err);
+    assert_eq!(format_string(string, &vars, true), expected_err);
 }

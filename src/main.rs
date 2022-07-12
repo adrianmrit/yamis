@@ -15,11 +15,11 @@ fn program() -> Result<(), Box<dyn Error>> {
                 Some(file_path) => ConfigFiles::for_path(&file_path)?,
             };
             match args.task {
-                None => Err("No task to run was given.")?,
+                None => return Err("No task to run was given.".into()),
                 Some(task_name) => {
                     let task_and_config = config_files.get_task(&task_name);
                     match task_and_config {
-                        None => Err(format!("Task {task_name} not found."))?,
+                        None => return Err(format!("Task {task_name} not found.").into()),
                         Some((task, config)) => {
                             task.run(&args.args, config)?;
                             Ok(())

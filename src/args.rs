@@ -1,3 +1,4 @@
+use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::env::Args;
 use std::fmt::Debug;
@@ -79,10 +80,10 @@ impl error::Error for FormatError {
 
 /// Returns the regex used to parse argument tags
 fn get_argument_tag_regex() -> Regex {
-    return Regex::new(
+    Regex::new(
         r"^(?:\((?P<prefix>.*?)\))?(?P<arg>([a-zA-Z]+[a-zA-Z\d_\-]*)|\d+|\*)(?P<optional>\?)?(?:\((?P<suffix>.*?)\))?$",
     )
-    .unwrap();
+    .unwrap()
 }
 
 /// Given the content of an argument tag, returns a representation of it
@@ -104,12 +105,12 @@ fn get_argument_tag(arg: &str) -> Option<ArgumentTag> {
         None => true,
         Some(_) => false,
     };
-    return Some(ArgumentTag {
+    Some(ArgumentTag {
         required,
         arg,
         prefix,
         suffix,
-    });
+    })
 }
 
 /// Formats the given format string with the given args. This differs a bit to the classical string
@@ -200,14 +201,12 @@ pub fn format_string(fmtstr: &str, args: &ArgsMap, quote: bool) -> Result<String
             }
         } else if reading_arg {
             arg.push(c);
+        } else if found_open_token {
+            arg.push(c);
+            reading_arg = true;
+            found_open_token = false;
         } else {
-            if found_open_token {
-                arg.push(c);
-                reading_arg = true;
-                found_open_token = false;
-            } else {
-                out.push(c);
-            }
+            out.push(c);
         }
     }
     if found_open_token {
@@ -223,17 +222,17 @@ pub fn format_string(fmtstr: &str, args: &ArgsMap, quote: bool) -> Result<String
             UNESCAPED_CLOSE_TOKEN_ERROR,
         )));
     }
-    return Ok(out);
+    Ok(out)
 }
 
 impl YamisArgs {
     pub fn new(mut args: Args) -> YamisArgs {
         args.next(); // ignore the program name arg
         let args: Vec<String> = args.collect();
-        if args.len() > 0 && args[0].starts_with("-") {
+        if !args.is_empty() && args[0].starts_with('-') {
             panic!("Not implemented yet");
         }
-        return YamisArgs::CommandArgs(CommandArgs::new(args));
+        YamisArgs::CommandArgs(CommandArgs::new(args))
     }
 }
 
@@ -251,7 +250,7 @@ impl CommandArgs {
             if first_arg.to_lowercase().ends_with(".toml") {
                 file = Some(args.remove(0));
             }
-            if let Some(_) = args.get(0) {
+            if args.get(0).is_some() {
                 command = Some(args.remove(0));
             }
         }
@@ -261,21 +260,24 @@ impl CommandArgs {
             if let Some(arg_match) = arg_match {
                 let key = String::from(arg_match.name("key").unwrap().as_str());
                 let val = String::from(arg_match.name("val").unwrap().as_str());
-                if kwargs.contains_key(&key) {
-                    kwargs.get_mut(&key).unwrap().push(val);
-                } else {
-                    let args_vec: Vec<String> = vec![val];
-                    kwargs.insert(key, args_vec);
+                match kwargs.entry(key) {
+                    Entry::Occupied(mut e) => {
+                        e.get_mut().push(val);
+                    }
+                    Entry::Vacant(e) => {
+                        let args_vec: Vec<String> = vec![val];
+                        e.insert(args_vec);
+                    }
                 }
             }
         }
 
         kwargs.insert(String::from("*"), args);
 
-        return CommandArgs {
+        CommandArgs {
             file,
             task: command,
             args: kwargs,
-        };
+        }
     }
 }

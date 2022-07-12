@@ -159,7 +159,7 @@ impl Iterator for ConfigFilePaths {
                 return Some(path);
             }
         }
-        return None;
+        None
     }
 }
 
@@ -254,7 +254,7 @@ impl Task {
 
             Ok(child.wait()?)
         } else {
-            Err(ConfigError::EmptyTask(String::from("nothing found")))?
+            Err(ConfigError::EmptyTask(String::from("nothing found")).into())
         };
     }
 }
@@ -268,17 +268,18 @@ impl ConfigFile {
     pub fn load(path: &Path) -> DynErrResult<ConfigFile> {
         let contents = match fs::read_to_string(&path) {
             Ok(file_contents) => file_contents,
-            Err(e) => Err(format!("There was an error reading the file:\n{}", e))?,
+            Err(e) => return Err(format!("There was an error reading the file:\n{}", e).into()),
         };
         let mut conf: ConfigFile = match toml::from_str(&*contents) {
             Ok(conf) => conf,
             Err(e) => {
                 let err_msg = e.to_string();
-                Err(format!(
+                return Err(format!(
                     "There was an error parsing the toml file:\n{}{}",
                     &err_msg[..1].to_uppercase(),
                     &err_msg[1..]
-                ))?
+                )
+                .into());
             }
         };
         conf.filepath = path.to_path_buf();
@@ -296,7 +297,7 @@ impl ConfigFile {
                 return Some(task);
             }
         }
-        return None;
+        None
     }
 }
 
@@ -309,7 +310,7 @@ impl ConfigFiles {
             confs.push(config);
         }
         if confs.is_empty() {
-            Err(ConfigError::NoConfigFile)?
+            return Err(ConfigError::NoConfigFile.into());
         }
         Ok(ConfigFiles { configs: confs })
     }
@@ -321,9 +322,9 @@ impl ConfigFiles {
     /// * path - Config file to load
     pub fn for_path<S: AsRef<OsStr> + ?Sized>(path: &S) -> DynErrResult<ConfigFiles> {
         let config = ConfigFile::load(Path::new(path))?;
-        return Ok(ConfigFiles {
+        Ok(ConfigFiles {
             configs: vec![config],
-        });
+        })
     }
 
     /// Returns a task for the given name and the config file that contains it.
@@ -350,6 +351,6 @@ impl ConfigFiles {
                 return Some((task, conf));
             }
         }
-        return None;
+        None
     }
 }
