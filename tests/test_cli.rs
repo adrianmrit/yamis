@@ -25,7 +25,7 @@ fn test_run_simple_task() -> Result<(), Box<dyn std::error::Error>> {
     file.write_all(
         r#"
     [tasks.hello]
-    script = "echo hello world"
+    script = "echo \"hello world\""
     "#
         .as_bytes(),
     )?;
