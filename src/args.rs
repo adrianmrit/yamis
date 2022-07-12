@@ -167,8 +167,8 @@ pub fn format_string(fmtstr: &str, args: &ArgsMap, quote: bool) -> Result<String
                                 if escape {
                                     out.push('"');
                                 }
-                                /// Values are separated by spaces but the
-                                /// last value should not be
+                                // Values are separated by spaces but the
+                                // last value should not be
                                 if i != last_val_index {
                                     out.push(' ');
                                 }

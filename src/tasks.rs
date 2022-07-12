@@ -2,10 +2,10 @@ use std::collections::HashMap;
 use std::env::temp_dir;
 use std::ffi::OsStr;
 use std::fs::File;
-use std::io::{stderr, stdin, stdout, Error, Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
-use std::{env, error, fmt, fs, result};
+use std::{env, error, fmt, fs};
 
 use serde_derive::Deserialize;
 use uuid::Uuid;
