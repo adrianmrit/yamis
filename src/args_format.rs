@@ -90,7 +90,7 @@ impl<'a> Iterator for Tokens<'a> {
 
     /// Returns the next token
     fn next(&mut self) -> Option<Self::Item> {
-        while let Some(char) = self.chars.next() {
+        for char in self.chars.by_ref() {
             let last_special_char = *self.stack.last().unwrap();
             let is_tag = last_special_char == '_';
             match last_special_char {
