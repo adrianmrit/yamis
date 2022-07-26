@@ -7,10 +7,11 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
 use std::{env, error, fmt, fs};
 
+use crate::args::ArgsMap;
+use crate::args_format::{format_script, EscapeMode};
 use serde_derive::Deserialize;
 use uuid::Uuid;
 
-use crate::args::{format_string, ArgsMap};
 use crate::types::DynErrResult;
 
 /// Config file names by order of priority. The first one refers to local config and
@@ -46,6 +47,8 @@ pub enum ConfigError {
     FileNotFound(String), // Given config file not found
     /// Raised when no config file is found during auto-discovery.
     NoConfigFile, // No config file was discovered
+    /// Bad Config error
+    BadConfigFile(String),
 }
 
 impl fmt::Display for ConfigError {
@@ -54,6 +57,7 @@ impl fmt::Display for ConfigError {
             ConfigError::EmptyTask(ref s) => write!(f, "Task {} is empty.", s),
             ConfigError::FileNotFound(ref s) => write!(f, "File {} not found.", s),
             ConfigError::NoConfigFile => write!(f, "No config file found."),
+            ConfigError::BadConfigFile(ref s) => write!(f, "Bad config file. {}", s),
         }
     }
 }
@@ -64,6 +68,7 @@ impl error::Error for ConfigError {
             ConfigError::EmptyTask(_) => "nothing to run",
             ConfigError::FileNotFound(_) => "file not found",
             ConfigError::NoConfigFile => "no config discovered",
+            ConfigError::BadConfigFile(_) => "bad config file",
         }
     }
 
@@ -78,7 +83,7 @@ impl error::Error for ConfigError {
 /// Represents a Task.
 pub struct Task {
     /// Whether to automatically quote argument with spaces
-    quote: Option<bool>,
+    quote: Option<String>,
     /// Script to run.
     pub script: Option<String>,
     /// Env variables for the task.
@@ -93,8 +98,8 @@ pub struct Task {
     macos: Option<Box<Task>>,
 }
 
-fn default_quote() -> bool {
-    true
+fn default_quote() -> String {
+    String::from("always")
 }
 
 #[derive(Deserialize)]
@@ -107,7 +112,7 @@ pub struct ConfigFile {
     filepath: PathBuf,
     /// Whether to automatically quote argument with spaces unless task specified
     #[serde(default = "default_quote")]
-    quote: bool,
+    quote: String,
     /// Tasks inside the config file.
     tasks: Option<HashMap<String, Task>>,
     /// Env variables for all the tasks.
@@ -255,12 +260,28 @@ impl Task {
                 }
             }
 
-            let quote = match self.quote {
-                None => config_file.quote,
+            let quote = match &self.quote {
+                None => &config_file.quote,
                 Some(quote) => quote,
             };
+            let quote = match quote.to_lowercase().as_str() {
+                "always" => EscapeMode::Always,
+                "never" => EscapeMode::Never,
+                "spaces" => EscapeMode::OnSpace,
+                _ => {
+                    let plain_val = match &self.quote {
+                        None => &config_file.quote,
+                        Some(val) => val,
+                    };
+                    return Err(ConfigError::BadConfigFile(format!(
+                        "Invalid quote option `{}`. Allowed values are `always`, `never` and `spaces`",
+                        plain_val
+                    ))
+                    .into());
+                }
+            };
 
-            let script = format_string(script, args, quote)?;
+            let script = format_script(script, args, quote)?;
             let script_file = get_temp_script(script)?;
             command.arg(script_file.to_str().unwrap());
 
