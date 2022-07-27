@@ -1,7 +1,7 @@
 use crate::args::ArgsMap;
 use lazy_static::lazy_static;
 use regex::Regex;
-use std::str::Chars;
+use std::str::{Chars, FromStr};
 use std::{error, fmt, mem};
 
 // Symbols used to identify the state on the stack
@@ -237,38 +237,75 @@ pub fn format_script(
                     )))
                 }
                 Some(arg) => {
-                    match args.get(&arg.arg) {
+                    let index_arg = usize::from_str(&arg.arg).unwrap_or(0);
+                    let key = if index_arg > 0 {
+                        String::from("*")
+                    } else {
+                        arg.arg
+                    };
+                    match args.get(&key) {
                         None => {
-                            if arg.required {
-                                return Err(FormatError::KeyError(format!(
-                                    "Argument `{}` is required.",
-                                    arg.arg
-                                )));
-                            }
+                            let arg_name = if index_arg > 0 {
+                                index_arg.to_string()
+                            } else {
+                                key
+                            };
+                            return Err(FormatError::KeyError(arg_name));
                         }
                         Some(values) => {
-                            let last_val_index = values.len() - 1;
-                            for (i, val) in values.iter().enumerate() {
-                                let escape = match escape_mode {
-                                    EscapeMode::Always => true,
-                                    EscapeMode::OnSpace => val.contains(' '),
-                                    EscapeMode::Never => false,
-                                };
-                                out.push_str(&arg.prefix);
-                                if escape {
-                                    out.push('"');
+                            if index_arg > 0 {
+                                match values.get(index_arg - 1) {
+                                    None => {
+                                        if arg.required {
+                                            return Err(FormatError::KeyError(
+                                                index_arg.to_string(),
+                                            ));
+                                        }
+                                    }
+                                    Some(val) => {
+                                        let escape = match escape_mode {
+                                            EscapeMode::Always => true,
+                                            EscapeMode::OnSpace => val.contains(' '),
+                                            EscapeMode::Never => false,
+                                        };
+                                        if escape {
+                                            out.push('"');
+                                        }
+                                        out.push_str(&arg.prefix);
+                                        out.push_str(val);
+                                        out.push_str(&arg.suffix);
+                                        if escape {
+                                            out.push('"');
+                                        }
+                                    }
                                 }
-                                out.push_str(val);
-                                out.push_str(&arg.suffix);
-                                if escape {
-                                    out.push('"');
+                            } else {
+                                let last_val_index = values.len() - 1;
+
+                                for (i, val) in values.iter().enumerate() {
+                                    let escape = match escape_mode {
+                                        EscapeMode::Always => true,
+                                        EscapeMode::OnSpace => val.contains(' '),
+                                        EscapeMode::Never => false,
+                                    };
+
+                                    if escape {
+                                        out.push('"');
+                                    }
+                                    out.push_str(&arg.prefix);
+                                    out.push_str(val);
+                                    out.push_str(&arg.suffix);
+                                    if escape {
+                                        out.push('"');
+                                    }
+
+                                    // Values are separated by spaces but the
+                                    // last value should not be
+                                    if i != last_val_index {
+                                        out.push(' ');
+                                    }
                                 }
-                                // Values are separated by spaces but the
-                                // last value should not be
-                                if i != last_val_index {
-                                    out.push(' ');
-                                }
-                            }
+                            };
                         }
                     }
                 }
