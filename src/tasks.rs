@@ -85,7 +85,7 @@ pub struct Task {
     /// Whether to automatically quote argument with spaces
     quote: Option<String>,
     /// Script to run.
-    pub script: Option<String>,
+    script: Option<String>,
     /// Env variables for the task.
     env: Option<HashMap<String, String>>,
     /// Working dir.
