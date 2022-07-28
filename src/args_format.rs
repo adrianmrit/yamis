@@ -236,27 +236,29 @@ pub fn format_script(
                         token
                     )))
                 }
-                Some(arg) => {
-                    let index_arg = usize::from_str(&arg.arg).unwrap_or(0);
+                Some(tag) => {
+                    let index_arg = usize::from_str(&tag.arg).unwrap_or(0);
                     let key = if index_arg > 0 {
                         String::from("*")
                     } else {
-                        arg.arg
+                        tag.arg
                     };
                     match args.get(&key) {
                         None => {
-                            let arg_name = if index_arg > 0 {
-                                index_arg.to_string()
-                            } else {
-                                key
-                            };
-                            return Err(FormatError::KeyError(arg_name));
+                            if tag.required {
+                                let arg_name = if index_arg > 0 {
+                                    index_arg.to_string()
+                                } else {
+                                    key
+                                };
+                                return Err(FormatError::KeyError(arg_name));
+                            }
                         }
                         Some(values) => {
                             if index_arg > 0 {
                                 match values.get(index_arg - 1) {
                                     None => {
-                                        if arg.required {
+                                        if tag.required {
                                             return Err(FormatError::KeyError(
                                                 index_arg.to_string(),
                                             ));
@@ -271,9 +273,9 @@ pub fn format_script(
                                         if escape {
                                             out.push('"');
                                         }
-                                        out.push_str(&arg.prefix);
+                                        out.push_str(&tag.prefix);
                                         out.push_str(val);
-                                        out.push_str(&arg.suffix);
+                                        out.push_str(&tag.suffix);
                                         if escape {
                                             out.push('"');
                                         }
@@ -292,9 +294,9 @@ pub fn format_script(
                                     if escape {
                                         out.push('"');
                                     }
-                                    out.push_str(&arg.prefix);
+                                    out.push_str(&tag.prefix);
                                     out.push_str(val);
-                                    out.push_str(&arg.suffix);
+                                    out.push_str(&tag.suffix);
                                     if escape {
                                         out.push('"');
                                     }
@@ -313,6 +315,127 @@ pub fn format_script(
         } else {
             out.push_str(&token);
         }
+    }
+    Ok(out)
+}
+
+/// Formats a single arg string returning the multiple passed
+/// values if applicable. This is intended to be used to commands
+/// where we have an actual list of parameters to pass to it.
+///
+/// # Arguments
+///
+/// * `fmtstr`: Script string
+/// * `args`: Values to format the script with
+pub fn format_arg(fmtstr: &str, args: &ArgsMap) -> Result<Vec<String>, FormatError> {
+    let mut out: Vec<String> = Vec::new();
+    if fmtstr.is_empty() {
+        return Ok(out);
+    }
+
+    let (prefix, tag, suffix) = {
+        let mut prefix: Option<String> = None;
+        let mut tag: Option<String> = None;
+        let mut suffix: Option<String> = None;
+
+        let mut tokens = Tokens::new(fmtstr);
+        if let Some(token_result) = tokens.next() {
+            let (is_tag, token) = token_result?;
+            if is_tag {
+                tag = Some(token);
+            } else {
+                prefix = Some(token);
+            }
+        }
+
+        // Because non tags can only occupy the entire string or exist between tokens,
+        // we can only partition the string in 3 pieces without two tags. The possible
+        // combinations are:
+        // - <tag>
+        // - <non_tag>
+        // - <non_tag><tag>
+        // - <tag><non_tag>
+        // - <non_tag><tag><non_tag>
+        // This means that a fourth token would result in an error, and therefore,
+        // because we already extracted a token, this loops runs at most 3 times.
+        for token_result in tokens {
+            let (is_tag, token) = token_result?;
+            if is_tag && tag.is_some() {
+                return Err(FormatError::Invalid(String::from(
+                    "Arguments of commands can only have an argument tag.",
+                )));
+            } else if is_tag {
+                tag = Some(token);
+            } else {
+                suffix = Some(token)
+            }
+        }
+
+        (prefix, tag, suffix)
+    };
+
+    if let Some(tag) = tag {
+        let empty_string = String::with_capacity(0);
+        let prefix = prefix.as_ref().unwrap_or(&empty_string);
+        let suffix = suffix.as_ref().unwrap_or(&empty_string);
+        match get_argument_tag(&tag) {
+            None => {
+                return Err(FormatError::Invalid(format!(
+                    "Invalid argument tag `{{{}}}`.",
+                    tag
+                )))
+            }
+            Some(tag) => {
+                let index_arg = usize::from_str(&tag.arg).unwrap_or(0);
+                let key = if index_arg > 0 {
+                    String::from("*")
+                } else {
+                    tag.arg
+                };
+                match args.get(&key) {
+                    None => {
+                        if tag.required {
+                            let arg_name = if index_arg > 0 {
+                                index_arg.to_string()
+                            } else {
+                                key
+                            };
+                            return Err(FormatError::KeyError(arg_name));
+                        } else {
+                            out.push(format!("{}{}", prefix, suffix));
+                        }
+                    }
+                    Some(values) => {
+                        if index_arg > 0 {
+                            match values.get(index_arg - 1) {
+                                None => {
+                                    if tag.required {
+                                        return Err(FormatError::KeyError(index_arg.to_string()));
+                                    }
+                                }
+                                Some(val) => {
+                                    let arg = format!(
+                                        "{}{}{}{}{}",
+                                        prefix, tag.prefix, val, tag.suffix, suffix
+                                    );
+                                    out.push(arg);
+                                }
+                            }
+                        } else {
+                            for val in values {
+                                let arg = format!(
+                                    "{}{}{}{}{}",
+                                    prefix, tag.prefix, val, tag.suffix, suffix
+                                );
+                                out.push(arg);
+                            }
+                        };
+                    }
+                }
+            }
+        }
+    } else if let Some(prefix) = prefix {
+        out.push(prefix);
     }
     Ok(out)
 }
