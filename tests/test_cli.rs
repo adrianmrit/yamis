@@ -41,7 +41,8 @@ fn test_run_simple_task() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
-fn test_escape_always() -> Result<(), Box<dyn std::error::Error>> {
+#[cfg(windows)] // echo does not prints the quotes in unix
+fn test_escape_always_windows() -> Result<(), Box<dyn std::error::Error>> {
     let tmp_dir = TempDir::new().unwrap();
     let mut file = File::create(tmp_dir.join("project.yamis.toml"))?;
     file.write_all(
@@ -64,7 +65,8 @@ fn test_escape_always() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
-fn test_escape_on_space() -> Result<(), Box<dyn std::error::Error>> {
+#[cfg(windows)] // echo does not prints the quotes in unix
+fn test_escape_on_space_windows() -> Result<(), Box<dyn std::error::Error>> {
     let tmp_dir = TempDir::new().unwrap();
     let mut file = File::create(tmp_dir.join("project.yamis.toml"))?;
     file.write_all(
@@ -85,6 +87,9 @@ fn test_escape_on_space() -> Result<(), Box<dyn std::error::Error>> {
     ));
     Ok(())
 }
+
+// TODO: Test escaping in Unix
+//   Not critical since we already test the script formatter
 
 #[test]
 fn test_escape_never() -> Result<(), Box<dyn std::error::Error>> {
@@ -191,5 +196,39 @@ fn test_set_env() -> Result<(), Box<dyn std::error::Error>> {
     cmd.assert()
         .success()
         .stdout(predicate::str::contains("hi world, one plus one is two"));
+    Ok(())
+}
+
+#[test]
+fn test_run_program() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp_dir = TempDir::new().unwrap();
+    let (program, param, batch_file_name, batch_file_content) = if cfg!(target_os = "windows") {
+        ("cmd", "/C", "echo_args.cmd", "echo %1 %2 %*".as_bytes())
+    } else {
+        ("bash", "", "echo_args.bash", "echo $1 $2 $*".as_bytes())
+    };
+    let mut batch_file = File::create(tmp_dir.join(batch_file_name))?;
+    batch_file.write_all(batch_file_content);
+
+    let mut file = File::create(tmp_dir.join("project.yamis.toml"))?;
+    file.write_all(
+        format!(
+            r#"
+            [tasks.hello]
+            program = "{}"
+            args = ["{}", "{}", "hello", "world"]
+            "#,
+            program, param, batch_file_name
+        )
+        .as_bytes(),
+    )?;
+
+    let mut cmd = Command::cargo_bin("yamis")?;
+    cmd.current_dir(tmp_dir.path());
+    cmd.arg("hello");
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("hello world hello world"));
+
     Ok(())
 }
