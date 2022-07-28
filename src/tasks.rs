@@ -8,7 +8,7 @@ use std::process::{Command, ExitStatus, Stdio};
 use std::{env, error, fmt, fs};
 
 use crate::args::ArgsMap;
-use crate::args_format::{format_script, EscapeMode};
+use crate::args_format::{format_arg, format_script, EscapeMode};
 use serde_derive::Deserialize;
 use uuid::Uuid;
 
@@ -86,6 +86,10 @@ pub struct Task {
     quote: Option<String>,
     /// Script to run.
     script: Option<String>,
+    /// A program to run.
+    program: Option<String>,
+    /// Args to pass to a command
+    args: Option<Vec<String>>,
     /// Env variables for the task.
     env: Option<HashMap<String, String>>,
     /// Working dir.
@@ -225,72 +229,125 @@ impl Task {
     ///  
     /// * `args` - Arguments to return the script with
     /// * `config_file` - Config file the task belongs to
+
+    /// Validates the Task configuration
+    pub fn validate(&self) -> Result<(), ConfigError> {
+        if self.script.is_some() && self.program.is_some() {
+            return Err(ConfigError::BadConfigFile(String::from(
+                "Task cannot specify `script` and `program` at the same time.",
+            )));
+        }
+        if self.script.is_some() && self.args.is_some() {
+            return Err(ConfigError::BadConfigFile(String::from(
+                "Cannot specify `args` on scripts.",
+            )));
+        }
+
+        if self.program.is_some() && self.quote.is_some() {
+            return Err(ConfigError::BadConfigFile(String::from(
+                "Cannot specify `quote` on commands.",
+            )));
+        }
+        Ok(())
+    }
+
+    fn set_command_basics(&self, command: &mut Command, config_file: &ConfigFile) {
+        command.stdout(Stdio::inherit());
+        command.stderr(Stdio::inherit());
+        command.stdin(Stdio::inherit());
+
+        match &self.wd {
+            None => {}
+            Some(wd) => {
+                let mut wd = PathBuf::from(wd);
+                if !wd.is_absolute() {
+                    let config_file_path = &config_file.filepath;
+                    let base_path = config_file_path.parent().unwrap();
+                    wd = base_path.join(wd);
+                }
+                command.current_dir(wd);
+            }
+        };
+
+        match &config_file.env {
+            None => {}
+            Some(env) => {
+                command.envs(env);
+            }
+        }
+
+        match &self.env {
+            None => {}
+            Some(env) => {
+                command.envs(env);
+            }
+        }
+    }
+
+    fn spawn_command(&self, command: &mut Command) -> DynErrResult<ExitStatus> {
+        let mut child = command.spawn()?;
+
+        // let child handle ctrl-c to prevent dropping the parent and leaving the child running
+        ctrlc::set_handler(move || {})?;
+
+        Ok(child.wait()?)
+    }
+
+    fn run_program(&self, args: &ArgsMap, config_file: &ConfigFile) -> DynErrResult<ExitStatus> {
+        let program = self.program.as_ref().unwrap();
+        let mut command = Command::new(program);
+        self.set_command_basics(&mut command, config_file);
+
+        if let Some(task_args) = &self.args {
+            for task_arg in task_args {
+                let task_args = format_arg(task_arg, args)?;
+                command.args(task_args);
+            }
+        }
+
+        self.spawn_command(&mut command)
+    }
+
+    fn run_script(&self, args: &ArgsMap, config_file: &ConfigFile) -> DynErrResult<ExitStatus> {
+        let script = self.script.as_ref().unwrap();
+        let mut command = Command::new(SHELL_PROGRAM);
+        command.arg(SHELL_PROGRAM_ARG);
+
+        self.set_command_basics(&mut command, config_file);
+
+        let quote = match &self.quote {
+            None => &config_file.quote,
+            Some(quote) => quote,
+        };
+        let quote = match quote.to_lowercase().as_str() {
+            "always" => EscapeMode::Always,
+            "never" => EscapeMode::Never,
+            "spaces" => EscapeMode::OnSpace,
+            _ => {
+                let plain_val = match &self.quote {
+                    None => &config_file.quote,
+                    Some(val) => val,
+                };
+                return Err(ConfigError::BadConfigFile(format!(
+                    "Invalid quote option `{}`. Allowed values are `always`, `never` and `spaces`",
+                    plain_val
+                ))
+                .into());
+            }
+        };
+
+        let script = format_script(script, args, quote)?;
+        let script_file = get_temp_script(script)?;
+        command.arg(script_file.to_str().unwrap());
+
+        self.spawn_command(&mut command)
+    }
+
     pub fn run(&self, args: &ArgsMap, config_file: &ConfigFile) -> DynErrResult<ExitStatus> {
-        return if let Some(script) = &self.script {
-            let mut command = Command::new(SHELL_PROGRAM);
-            command.arg(SHELL_PROGRAM_ARG);
-            command.stdout(Stdio::inherit());
-            command.stderr(Stdio::inherit());
-            command.stdin(Stdio::inherit());
-
-            match &self.wd {
-                None => {}
-                Some(wd) => {
-                    let mut wd = PathBuf::from(wd);
-                    if !wd.is_absolute() {
-                        let config_file_path = &config_file.filepath;
-                        let base_path = config_file_path.parent().unwrap();
-                        wd = base_path.join(wd);
-                    }
-                    command.current_dir(wd);
-                }
-            };
-
-            match &config_file.env {
-                None => {}
-                Some(env) => {
-                    command.envs(env);
-                }
-            }
-
-            match &self.env {
-                None => {}
-                Some(env) => {
-                    command.envs(env);
-                }
-            }
-
-            let quote = match &self.quote {
-                None => &config_file.quote,
-                Some(quote) => quote,
-            };
-            let quote = match quote.to_lowercase().as_str() {
-                "always" => EscapeMode::Always,
-                "never" => EscapeMode::Never,
-                "spaces" => EscapeMode::OnSpace,
-                _ => {
-                    let plain_val = match &self.quote {
-                        None => &config_file.quote,
-                        Some(val) => val,
-                    };
-                    return Err(ConfigError::BadConfigFile(format!(
-                        "Invalid quote option `{}`. Allowed values are `always`, `never` and `spaces`",
-                        plain_val
-                    ))
-                    .into());
-                }
-            };
-
-            let script = format_script(script, args, quote)?;
-            let script_file = get_temp_script(script)?;
-            command.arg(script_file.to_str().unwrap());
-
-            let mut child = command.spawn()?;
-
-            // let child handle ctrl-c to prevent dropping the parent and leaving the child running
-            ctrlc::set_handler(move || {})?;
-
-            Ok(child.wait()?)
+        return if self.script.is_some() {
+            self.run_script(args, config_file)
+        } else if self.program.is_some() {
+            self.run_program(args, config_file)
         } else {
             Err(ConfigError::EmptyTask(String::from("nothing found")).into())
         };
