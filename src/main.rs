@@ -21,7 +21,8 @@ fn program() -> Result<(), Box<dyn Error>> {
                     match task_and_config {
                         None => return Err(format!("Task {task_name} not found.").into()),
                         Some((task, config)) => {
-                            task.run(&args.args, config)?;
+                            task.validate()?;
+                            task.run(&args.args, config, &config_files)?;
                             Ok(())
                         }
                     }

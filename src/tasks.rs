@@ -4,7 +4,7 @@ use std::ffi::OsStr;
 use std::fs::File;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitStatus, Stdio};
+use std::process::{Command, Stdio};
 use std::{env, error, fmt, fs};
 
 use crate::args::ArgsMap;
@@ -78,27 +78,27 @@ impl error::Error for ConfigError {
 }
 
 #[derive(Debug, Deserialize)]
-// TODO: Deny invalid fields
-// #[serde(deny_unknown_fields)]
-/// Represents a Task.
+/// Represents a Task
 pub struct Task {
     /// Whether to automatically quote argument with spaces
     quote: Option<String>,
-    /// Script to run.
+    /// Script to run
     script: Option<String>,
-    /// A program to run.
+    /// A program to run
     program: Option<String>,
     /// Args to pass to a command
     args: Option<Vec<String>>,
-    /// Env variables for the task.
+    /// If given, runs all those tasks at once
+    serial: Option<Vec<String>>,
+    /// Env variables for the task
     env: Option<HashMap<String, String>>,
-    /// Working dir.
+    /// Working dir
     wd: Option<String>,
-    /// Task to run instead if the OS is linux.
+    /// Task to run instead if the OS is linux
     linux: Option<Box<Task>>,
-    /// Task to run instead if the OS is windows.
+    /// Task to run instead if the OS is windows
     windows: Option<Box<Task>>,
-    /// Task to run instead if the OS is macos.
+    /// Task to run instead if the OS is macos
     macos: Option<Box<Task>>,
 }
 
@@ -237,6 +237,17 @@ impl Task {
                 "Task cannot specify `script` and `program` at the same time.",
             )));
         }
+        if self.script.is_some() && self.serial.is_some() {
+            return Err(ConfigError::BadConfigFile(String::from(
+                "Task cannot specify `script` and `serial` at the same time.",
+            )));
+        }
+
+        if self.program.is_some() && self.serial.is_some() {
+            return Err(ConfigError::BadConfigFile(String::from(
+                "Task cannot specify `program` and `serial` at the same time.",
+            )));
+        }
         if self.script.is_some() && self.args.is_some() {
             return Err(ConfigError::BadConfigFile(String::from(
                 "Cannot specify `args` on scripts.",
@@ -284,16 +295,17 @@ impl Task {
         }
     }
 
-    fn spawn_command(&self, command: &mut Command) -> DynErrResult<ExitStatus> {
+    fn spawn_command(&self, command: &mut Command) -> DynErrResult<()> {
         let mut child = command.spawn()?;
 
         // let child handle ctrl-c to prevent dropping the parent and leaving the child running
-        ctrlc::set_handler(move || {})?;
+        ctrlc::set_handler(move || {}).unwrap_or(());
 
-        Ok(child.wait()?)
+        child.wait()?;
+        Ok(())
     }
 
-    fn run_program(&self, args: &ArgsMap, config_file: &ConfigFile) -> DynErrResult<ExitStatus> {
+    fn run_program(&self, args: &ArgsMap, config_file: &ConfigFile) -> DynErrResult<()> {
         let program = self.program.as_ref().unwrap();
         let mut command = Command::new(program);
         self.set_command_basics(&mut command, config_file);
@@ -308,7 +320,7 @@ impl Task {
         self.spawn_command(&mut command)
     }
 
-    fn run_script(&self, args: &ArgsMap, config_file: &ConfigFile) -> DynErrResult<ExitStatus> {
+    fn run_script(&self, args: &ArgsMap, config_file: &ConfigFile) -> DynErrResult<()> {
         let script = self.script.as_ref().unwrap();
         let mut command = Command::new(SHELL_PROGRAM);
         command.arg(SHELL_PROGRAM_ARG);
@@ -343,11 +355,34 @@ impl Task {
         self.spawn_command(&mut command)
     }
 
-    pub fn run(&self, args: &ArgsMap, config_file: &ConfigFile) -> DynErrResult<ExitStatus> {
+    fn run_serial(&self, args: &ArgsMap, config_files: &ConfigFiles) -> DynErrResult<()> {
+        let serial = self.serial.as_ref().unwrap();
+        let mut tasks: Vec<(&Task, &ConfigFile)> = Vec::new();
+        for task_name in serial {
+            if let Some((task, task_config_file)) = config_files.get_task(task_name) {
+                tasks.push((task, task_config_file));
+            } else {
+                return Err(format!("Task `{}` not found", task_name).into());
+            }
+        }
+        for (task, task_config_file) in tasks {
+            task.run(args, task_config_file, config_files)?;
+        }
+        Ok(())
+    }
+
+    pub fn run(
+        &self,
+        args: &ArgsMap,
+        config_file: &ConfigFile,
+        config_files: &ConfigFiles,
+    ) -> DynErrResult<()> {
         return if self.script.is_some() {
             self.run_script(args, config_file)
         } else if self.program.is_some() {
             self.run_program(args, config_file)
+        } else if self.serial.is_some() {
+            self.run_serial(args, config_files)
         } else {
             Err(ConfigError::EmptyTask(String::from("nothing found")).into())
         };

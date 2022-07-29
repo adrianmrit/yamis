@@ -208,7 +208,7 @@ fn test_run_program() -> Result<(), Box<dyn std::error::Error>> {
         ("bash", "", "echo_args.bash", "echo $1 $2 $*".as_bytes())
     };
     let mut batch_file = File::create(tmp_dir.join(batch_file_name))?;
-    batch_file.write_all(batch_file_content);
+    batch_file.write_all(batch_file_content).unwrap();
 
     let mut file = File::create(tmp_dir.join("project.yamis.toml"))?;
     file.write_all(
@@ -229,6 +229,49 @@ fn test_run_program() -> Result<(), Box<dyn std::error::Error>> {
     cmd.assert()
         .success()
         .stdout(predicate::str::contains("hello world hello world"));
+
+    Ok(())
+}
+
+#[test]
+fn test_run_serial() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp_dir = TempDir::new().unwrap();
+    let (program, param, batch_file_name, batch_file_content) = if cfg!(target_os = "windows") {
+        ("cmd", "/C", "echo_args.cmd", "echo Hello %*".as_bytes())
+    } else {
+        ("bash", "", "echo_args.bash", "echo Hello $*".as_bytes())
+    };
+    let mut batch_file = File::create(tmp_dir.join(batch_file_name))?;
+    batch_file.write_all(batch_file_content).unwrap();
+
+    let mut file = File::create(tmp_dir.join("project.yamis.toml"))?;
+    file.write_all(
+        format!(
+            r#"
+            [tasks.hello]
+            program = "{}"
+            args = ["{}", "{}", "{{1}}"]
+            
+            [tasks.bye]
+            quote = "never"
+            script = "echo Bye {{2}}"
+            
+            [tasks.greet]
+            serial = ["hello", "bye"]
+            "#,
+            program, param, batch_file_name
+        )
+        .as_bytes(),
+    )?;
+
+    let mut cmd = Command::cargo_bin("yamis")?;
+    cmd.current_dir(tmp_dir.path());
+    cmd.arg("greet");
+    cmd.args(vec!["world", "everyone"]);
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("Hello world"))
+        .stdout(predicate::str::contains("Bye everyone"));
 
     Ok(())
 }
