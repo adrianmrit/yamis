@@ -51,6 +51,10 @@ script = "dir"
 [tasks.compose-run]
 program = "docker-compose"
 args = ["run", "$CONTAINER", "{*}"]
+
+[tasks.compose-run.windows]
+program = "docker-compose"
+args = ["run", "%CONTAINER%", "{*}"]
 ```
 
 After having a config file, you can run a task by calling `yamis`, the name of the task, and any arguments, i.e.
