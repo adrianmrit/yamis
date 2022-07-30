@@ -2,6 +2,18 @@
 name = "yamis"
 version = "0.1.0"
 edition = "2021"
+license = "GPL-3.0-only"
+description = "A task runner that accepts positional and named arguments."
+homepage = "https://github.com/adrianmrit/yamis/"
+repository = "https://github.com/adrianmrit/yamis/"
+readme = "README.md"
+keywords = ["task", "build", "subcommand"]
+categories = [
+    "command-line-utilities",
+    "development-tools",
+    "development-tools::build-utils",
+]
+include = ["/LICENSE", "/README.md"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
