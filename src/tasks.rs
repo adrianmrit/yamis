@@ -38,26 +38,28 @@ cfg_if::cfg_if! {
     }
 }
 
-/// Errors related to config files and tasks.
+/// Errors related to config files and tasks
 #[derive(Debug, PartialEq)]
 pub enum ConfigError {
-    /// Raised when trying to run an empty task.
-    EmptyTask(String), // Nothing to run
-    /// Raised when a config file is not found for a given path.
+    /// Raised when a config file is not found for a given path
     FileNotFound(String), // Given config file not found
-    /// Raised when no config file is found during auto-discovery.
+    /// Raised when no config file is found during auto-discovery
     NoConfigFile, // No config file was discovered
     /// Bad Config error
     BadConfigFile(String),
+    /// Raised when there is an error in a task
+    BadTask(String, String),
 }
 
 impl fmt::Display for ConfigError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
-            ConfigError::EmptyTask(ref s) => write!(f, "Task {} is empty.", s),
             ConfigError::FileNotFound(ref s) => write!(f, "File {} not found.", s),
             ConfigError::NoConfigFile => write!(f, "No config file found."),
             ConfigError::BadConfigFile(ref s) => write!(f, "Bad config file. {}", s),
+            ConfigError::BadTask(ref name, ref reason) => {
+                write!(f, "Error on tasks.{}:\n    {}", name, reason)
+            }
         }
     }
 }
@@ -65,10 +67,10 @@ impl fmt::Display for ConfigError {
 impl error::Error for ConfigError {
     fn description(&self) -> &str {
         match *self {
-            ConfigError::EmptyTask(_) => "nothing to run",
             ConfigError::FileNotFound(_) => "file not found",
             ConfigError::NoConfigFile => "no config discovered",
             ConfigError::BadConfigFile(_) => "bad config file",
+            ConfigError::BadTask(_, _) => "bad task",
         }
     }
 
@@ -221,47 +223,54 @@ fn get_temp_script(content: String) -> DynErrResult<PathBuf> {
 }
 
 impl Task {
-    /// Runs the task. Stdout, stdin and stderr are inherited. Also, adds a handler to
-    /// the ctrl-c signal that basically does nothing, such that the child process is the
-    /// one handling the signal.
+    /// Validates the task configuration.
     ///
     /// # Arguments
     ///  
-    /// * `args` - Arguments to return the script with
-    /// * `config_file` - Config file the task belongs to
-
-    /// Validates the Task configuration
-    pub fn validate(&self) -> Result<(), ConfigError> {
+    /// * `name` - Name of the task
+    pub fn validate(&self, name: &str) -> Result<(), ConfigError> {
         if self.script.is_some() && self.program.is_some() {
-            return Err(ConfigError::BadConfigFile(String::from(
-                "Task cannot specify `script` and `program` at the same time.",
-            )));
+            return Err(ConfigError::BadTask(
+                String::from(name),
+                String::from("Task cannot specify `script` and `program` at the same time."),
+            ));
         }
         if self.script.is_some() && self.serial.is_some() {
-            return Err(ConfigError::BadConfigFile(String::from(
-                "Task cannot specify `script` and `serial` at the same time.",
-            )));
+            return Err(ConfigError::BadTask(
+                String::from(name),
+                String::from("Cannot specify `script` and `serial` at the same time."),
+            ));
         }
 
         if self.program.is_some() && self.serial.is_some() {
-            return Err(ConfigError::BadConfigFile(String::from(
-                "Task cannot specify `program` and `serial` at the same time.",
-            )));
+            return Err(ConfigError::BadTask(
+                String::from(name),
+                String::from("Cannot specify `program` and `serial` at the same time."),
+            ));
         }
         if self.script.is_some() && self.args.is_some() {
-            return Err(ConfigError::BadConfigFile(String::from(
-                "Cannot specify `args` on scripts.",
-            )));
+            return Err(ConfigError::BadTask(
+                String::from(name),
+                String::from("Cannot specify `args` on scripts."),
+            ));
         }
 
         if self.program.is_some() && self.quote.is_some() {
-            return Err(ConfigError::BadConfigFile(String::from(
-                "Cannot specify `quote` on commands.",
-            )));
+            return Err(ConfigError::BadTask(
+                String::from(name),
+                String::from("Cannot specify `quote` on commands."),
+            ));
         }
         Ok(())
     }
 
+    /// Sets common parameters for commands, like stdout, stderr, stdin, working directory and
+    /// environment variables.
+    ///
+    /// # Arguments
+    ///  
+    /// * `command` - Command to set the parameters for
+    /// * `config_file` - Configuration file
     fn set_command_basics(&self, command: &mut Command, config_file: &ConfigFile) {
         command.stdout(Stdio::inherit());
         command.stderr(Stdio::inherit());
@@ -295,6 +304,11 @@ impl Task {
         }
     }
 
+    /// Spawns a command and waits for its execution.
+    ///
+    /// # Arguments
+    ///  
+    /// * `command` - Command to spawn
     fn spawn_command(&self, command: &mut Command) -> DynErrResult<()> {
         let mut child = command.spawn()?;
 
@@ -305,31 +319,56 @@ impl Task {
         Ok(())
     }
 
-    fn run_program(&self, args: &ArgsMap, config_file: &ConfigFile) -> DynErrResult<()> {
+    /// Runs a program from a task.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - Name of the task, displayed in errors.
+    /// * `args` - Arguments to format the task args with
+    /// * `config_file` - Configuration file of the task
+    fn run_program(
+        &self,
+        name: &str,
+        args: &ArgsMap,
+        config_file: &ConfigFile,
+    ) -> DynErrResult<()> {
         let program = self.program.as_ref().unwrap();
         let mut command = Command::new(program);
         self.set_command_basics(&mut command, config_file);
 
         if let Some(task_args) = &self.args {
             for task_arg in task_args {
-                let task_args = format_arg(task_arg, args)?;
-                command.args(task_args);
+                match format_arg(task_arg, args) {
+                    Ok(task_args) => {
+                        command.args(task_args);
+                    }
+                    Err(e) => {
+                        return Err(ConfigError::BadTask(String::from(name), e.to_string()).into());
+                    }
+                }
             }
         }
 
         self.spawn_command(&mut command)
     }
 
-    fn run_script(&self, args: &ArgsMap, config_file: &ConfigFile) -> DynErrResult<()> {
+    /// Runs a script from a task.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - Name of the task, displayed in errors.
+    /// * `args` - Arguments to format the task args with
+    /// * `config_file` - Configuration file of the task
+    fn run_script(&self, name: &str, args: &ArgsMap, config_file: &ConfigFile) -> DynErrResult<()> {
         let script = self.script.as_ref().unwrap();
         let mut command = Command::new(SHELL_PROGRAM);
         command.arg(SHELL_PROGRAM_ARG);
 
         self.set_command_basics(&mut command, config_file);
 
-        let quote = match &self.quote {
-            None => &config_file.quote,
-            Some(quote) => quote,
+        let (quote_from_file, quote) = match &self.quote {
+            None => (true, &config_file.quote),
+            Some(quote) => (false, quote),
         };
         let quote = match quote.to_lowercase().as_str() {
             "always" => EscapeMode::Always,
@@ -340,51 +379,78 @@ impl Task {
                     None => &config_file.quote,
                     Some(val) => val,
                 };
-                return Err(ConfigError::BadConfigFile(format!(
+                let error = format!(
                     "Invalid quote option `{}`. Allowed values are `always`, `never` and `spaces`",
                     plain_val
-                ))
-                .into());
+                );
+
+                return if quote_from_file {
+                    Err(ConfigError::BadConfigFile(error).into())
+                } else {
+                    Err(ConfigError::BadTask(String::from(name), error).into())
+                };
             }
         };
 
-        let script = format_script(script, args, quote)?;
-        let script_file = get_temp_script(script)?;
-        command.arg(script_file.to_str().unwrap());
+        match format_script(script, args, quote) {
+            Ok(script) => {
+                let script_file = get_temp_script(script)?;
+                command.arg(script_file.to_str().unwrap());
+            }
+            Err(e) => {
+                return Err(ConfigError::BadTask(String::from(name), e.to_string()).into());
+            }
+        }
 
         self.spawn_command(&mut command)
     }
 
+    /// Runs a series of tasks from a task, in order.
+    ///
+    /// # Arguments
+    /// * `args` - Arguments to format the task args with
+    /// * `config_file` - Configuration file of the task
     fn run_serial(&self, args: &ArgsMap, config_files: &ConfigFiles) -> DynErrResult<()> {
         let serial = self.serial.as_ref().unwrap();
-        let mut tasks: Vec<(&Task, &ConfigFile)> = Vec::new();
+        let mut tasks: Vec<(String, &Task, &ConfigFile)> = Vec::new();
         for task_name in serial {
-            if let Some((task, task_config_file)) = config_files.get_task(task_name) {
-                tasks.push((task, task_config_file));
+            if let Some((task_name, task, task_config_file)) = config_files.get_task(task_name) {
+                tasks.push((task_name, task, task_config_file));
             } else {
-                return Err(format!("Task `{}` not found", task_name).into());
+                return Err(
+                    ConfigError::BadConfigFile(format!("Task `{}` not found.", task_name)).into(),
+                );
             }
         }
-        for (task, task_config_file) in tasks {
-            task.run(args, task_config_file, config_files)?;
+        for (task_name, task, task_config_file) in tasks {
+            task.run(&task_name, args, task_config_file, config_files)?;
         }
         Ok(())
     }
 
+    /// Runs a task.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - Name of the task, displayed in errors.
+    /// * `args` - Arguments to format the task args with
+    /// * `config_file` - Configuration file of the task
+    /// * `config_files` - global ConfigurationFiles instance
     pub fn run(
         &self,
+        name: &str,
         args: &ArgsMap,
         config_file: &ConfigFile,
         config_files: &ConfigFiles,
     ) -> DynErrResult<()> {
         return if self.script.is_some() {
-            self.run_script(args, config_file)
+            self.run_script(name, args, config_file)
         } else if self.program.is_some() {
-            self.run_program(args, config_file)
+            self.run_program(name, args, config_file)
         } else if self.serial.is_some() {
             self.run_serial(args, config_files)
         } else {
-            Err(ConfigError::EmptyTask(String::from("nothing found")).into())
+            Err(ConfigError::BadTask(String::from(name), String::from("Nothing to run.")).into())
         };
     }
 }
@@ -404,11 +470,11 @@ impl ConfigFile {
             Ok(conf) => conf,
             Err(e) => {
                 let err_msg = e.to_string();
-                return Err(format!(
+                return Err(ConfigError::BadConfigFile(format!(
                     "There was an error parsing the toml file:\n{}{}",
                     &err_msg[..1].to_uppercase(),
                     &err_msg[1..]
-                )
+                ))
                 .into());
             }
         };
@@ -462,23 +528,23 @@ impl ConfigFiles {
     /// # Arguments
     ///
     /// * task_name - Name of the task to search for
-    pub fn get_task(&self, task_name: &str) -> Option<(&Task, &ConfigFile)> {
+    pub fn get_task(&self, task_name: &str) -> Option<(String, &Task, &ConfigFile)> {
         for conf in &self.configs {
             if let Some(task) = conf.get_task(task_name) {
                 if env::consts::OS == "linux" {
                     if let Some(linux_task) = &task.linux {
-                        return Some((&*linux_task, conf));
+                        return Some((format!("{}.linux", task_name), &*linux_task, conf));
                     }
                 } else if env::consts::OS == "windows" {
                     if let Some(windows_task) = &task.windows {
-                        return Some((&*windows_task, conf));
+                        return Some((format!("{}.windows", task_name), &*windows_task, conf));
                     }
                 } else if env::consts::OS == "macos" {
                     if let Some(macos_task) = &task.macos {
-                        return Some((&*macos_task, conf));
+                        return Some((format!("{}.macos", task_name), &*macos_task, conf));
                     }
                 }
-                return Some((task, conf));
+                return Some((String::from(task_name), task, conf));
             }
         }
         None
