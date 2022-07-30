@@ -7,10 +7,16 @@ Besides wanted to learn Rust, I always struggled finding
 a task runner that had what I needed (such as good argument
 parsing) and team oriented.
 
-## Quick start
+## Install
 
-TODO: Add installation instructions
+The easiest way to install is with cargo.
+```bash
+cargo install --force yamis
+```
 
+TODO: Add binaries
+
+## Quick Start
 `project.yamis.toml` should be added at the root of a project. 
 Here is an example of how it could look like:
 ```toml
@@ -47,6 +53,7 @@ After having a config file, you can run a task by calling `yamis`, the name of t
 `yamis say_hello name="person 1" --name="person 2"` is equivalent to `echo Hello person 1 person 2`
 
 
+## Usage
 ### Task files discovery
 The program will look at the directory where it was invoked and its parents until a `project.yamis.toml` is
 discovered or the root folder is reached. Valid filenames are the following:
