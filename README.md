@@ -1,3 +1,7 @@
+# Yamis
+![build](https://github.com/adrianmrit/yamis/actions/workflows/test.yml/badge.svg)
+[![License: GPL v3](https://img.shields.io/github/license/adrianmrit/yamis)
+
 ## Motivation
 Besides wanted to learn Rust, I always struggled finding
 a task runner that had what I needed (such as good argument
