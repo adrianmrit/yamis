@@ -26,6 +26,7 @@ Here is an example of how it could look like:
 ```toml
 [env]  # global env variables
 DEBUG = "TRUE"
+CONTAINER = "sample_docker_container"
 
 [tasks.say_hi]
 script = "echo Hello {name}"  # name can be passed as --name=world, -name=world, or name="big world"  
@@ -47,9 +48,9 @@ script = "ls"
 wd = ""
 script = "dir"
 
-[tasks.python]
-program = "python"
-args = ["{( -c )1?}"]  # Runs either the python interpreter, or an inline program if given
+[tasks.compose-run]
+program = "docker-compose"
+args = ["run", "$CONTAINER", "{*}"]
 ```
 
 After having a config file, you can run a task by calling `yamis`, the name of the task, and any arguments, i.e.
