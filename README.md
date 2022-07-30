@@ -1,11 +1,15 @@
 # Yamis
 ![build](https://github.com/adrianmrit/yamis/actions/workflows/test.yml/badge.svg)
-[![License: GPL v3](https://img.shields.io/github/license/adrianmrit/yamis)
+![License: GPL v3](https://img.shields.io/github/license/adrianmrit/yamis)
 
 ## Motivation
-Besides wanted to learn Rust, I always struggled finding
-a task runner that had what I needed (such as good argument
-parsing) and team oriented.
+There are tools used to shorten the length of every-day commands us programmers need to run.
+I have tried some of these tools, I specially liked how [doskey](https://docs.microsoft.com/en-us/windows-server/administration/windows-commands/doskey)
+allowed to pass extra arguments, and the structure of [cargo-make,](https://github.com/sagiegurari/cargo-make/)
+but they still didn't meet all my requirements. 
+
+In short, this tool brings more powerful argument parsing, team oriented configuration, and hopefully more
+features in the future.
 
 ## Install
 
@@ -66,11 +70,6 @@ discovered or the root folder is reached. Valid filenames are the following:
 Note that you can have multiple `local.yamis.toml` and `yamis.toml` files in a project.
 
 
-### Adding prefix and suffix
-You can add a prefix and suffix surrounded by parenthesis after and before the argument name inside the tag, i.e.
-`{(-o )file?(.txt)}`, if `file=sample` is passed, it will add `-o sample.txt` to the script.
-
-
 ### Script
 The `script` value inside a task will be executed in the command line (defaults to cmd in Windows
 and bash in Unix). Scripts can spawn multiple lines, and contain shell built-ins and programs. When
@@ -98,6 +97,21 @@ all arguments passed down to the program. Note also that if you add an argument 
 also be unpacked as expected, with the argument surrounded by the suffix and prefix.
 
 
+### Running tasks serially
+One obvious option to run tasks one after the other is to create a script, i.e. with the following:
+```
+yamis say_hi
+yamis say_bye
+```
+
+The other option is to use `serial`, which should take a list of tasks to run in order, i.e.:
+```toml
+[tasks.greet]
+serial = ["say_hi", "say_bye"]
+```
+Note that any argument passed will be passed to both tasks equally.
+
+
 #### Script vs Program:
 Because escaping arguments properly can get really complex quickly, scripts are prone to fail if certain
 arguments are passed. To prevent classic errors, arguments are quoted by default (see
@@ -109,6 +123,47 @@ On the other hand, programs run in their own process with arguments passed direc
 need to escape them. The downside however, is that we cannot execute builtin shell commands such as `echo`,
 and we need to define the arguments as a list.
 
+### Passing parameters to tasks
+When calling a task, you can pass args to insert into the scripts or the argument of programs. These arguments,
+or ___argument tags___ can have different forms:
+- positional: passed by position, i.e. `{1}`, `{2}`, etc.
+- named: case-sensitive and passed by name, i.e. `{out}`, `{file}`, etc. Note that any dash before the argument
+is removed, i.e. if `--file=out.txt` is passed, `{file}` will accept it. Also note that the named argument passed
+to the task will need to be in the form `<key>=<value>`, i.e. `-o out.txt` is not recognized as a named argument,
+this is to prevent ambiguities as the parsing of arguments can change from application to application.
+- all: defined by `{*}`, all arguments will be passed as they are.
+
+#### Valid named argument tags
+Named argument tasks must start with a letter, and be followed by any number of letters, digits, `-` or `_`.
+
+#### Optional argument tags
+Argument tags are mandatory by default, but they can be made optional by adding `?`, i.e. `{*?}`
+does not raise an error if no arguments are given.
+
+#### Adding prefix and suffix
+Argument tags can also include a prefix or suffix, which will be only added if the argument was passed,
+i.e. `{(--f=)file?(.txt)}` will result in `--file=out.txt` of a file parameter is passed. Note that
+`{(--f=)file(.txt)}`, even though `file` is mandatory, it is useful if we want to unpack it (see next section). 
+Also, you can include anything inside the prefix and suffix except newlines or brackets. Note that
+parenthesis can be included in the prefix or suffix, only the surrounding ones will be excluded, i.e.
+`{(()sample())}` will result in `(hello)` if `sample=hello` is passed.
+
+#### Arguments unpacking
+When the same named argument it passed multiple times, the program or script will include them multiple time.
+For example, given the following tasks:
+
+```toml
+[tasks.say-hi]
+script = "echo hello {person}"
+
+[tasks.something]
+program = "imaginary-program"
+args = ["{(-o )f}"]
+```
+
+If we call `yamis hello person=John1 person=John2`, it will run `echo hello "John1" "John2"`.
+Similarly, `yamis something --f=out1.txt out2.txt` will call `imaginary-program` with
+`["-o out1.txt", "-o out2.txt""]`
 
 ### Specific Os Tasks
 You can have a different OS version for each task. If a task for the current OS is not found, it will
@@ -120,20 +175,6 @@ script = "ls {*?}"
 [task.ls.windows]  # Other options are linux and macos
 script = "dir {*?}"
 ```
-
-### Running tasks serially
-One obvious option to run tasks one after the other is to create a script, i.e. with the following:
-```
-yamis say_hi
-yamis say_bye
-```
-
-The other option is to use `script`, which should take a list of tasks to run in order, i.e.:
-```toml
-[tasks.greet]
-script = ["say_hi", "say_bye"]
-```
-Note that any argument passed will be passed to both tasks equally.
 
 
 ### Other options:
@@ -157,3 +198,14 @@ DEBUG = "TRUE"
   or root level, with `wd`. The path can be relative or absolute, with relative paths being resolved against the
   configuration file and not the directory where the task was executed, this means `""` can be used to make the
   working directory the same one as the directory for the configuration file.
+
+
+## Contributing
+
+### Issues
+Feel free to create issues to report bugs, ask questions or request new features.
+
+### Contributing with code
+Code contributions are welcome and can be in the form of, but not limited to, fixes, more tests, or
+new features. You can fork the repository and make a pull request, just make sure the code is well tested.
+Signed commits are preferred.
