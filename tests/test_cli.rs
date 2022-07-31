@@ -200,6 +200,80 @@ fn test_set_env() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
+fn test_env_file() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp_dir = TempDir::new().unwrap();
+    let mut env_file = File::create(tmp_dir.join(".env"))?;
+    env_file
+        .write_all(
+            r#"
+    VAR1=VAL1
+    VAR2=VAL2
+    VAR3=VAL3
+    "#
+            .as_bytes(),
+        )
+        .unwrap();
+
+    let mut env_file_2 = File::create(tmp_dir.join(".env_2"))?;
+    env_file_2
+        .write_all(
+            r#"
+    VAR1=OTHER_VAL1
+    VAR2=OTHER_VAL2
+    "#
+            .as_bytes(),
+        )
+        .unwrap();
+
+    let mut file = File::create(tmp_dir.join("project.yamis.toml"))?;
+    file.write_all(
+        r#"
+            env_file = ".env"
+            
+            [tasks.test.windows]
+            quote = "never"
+            script = "echo %VAR1% %VAR2% %VAR3%"
+            
+            [tasks.test]
+            quote = "never"
+            script = "echo $VAR1 $VAR2 $VAR3"
+            
+            [tasks.test_2.windows]
+            quote = "never"
+            script = "echo %VAR1% %VAR2% %VAR3%"
+            env_file = ".env_2"
+            env = {"VAR1" = "TASK_VAL1"}
+            
+            [tasks.test_2]
+            quote = "never"
+            script = "echo $VAR1 $VAR2 $VAR3"
+            env_file = ".env_2"
+            
+            [tasks.test_2.env]
+            VAR1 = "TASK_VAL_1"
+            "#
+        .as_bytes(),
+    )?;
+
+    let mut cmd = Command::cargo_bin("yamis")?;
+    dbg!(tmp_dir.display());
+    cmd.current_dir(tmp_dir.path());
+    cmd.arg("test");
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("VAL1 VAL2 VAL3"));
+
+    let mut cmd = Command::cargo_bin("yamis")?;
+    cmd.current_dir(tmp_dir.path());
+    cmd.arg("test_2");
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("TASK_VAL1 OTHER_VAL2 VAL3"));
+
+    Ok(())
+}
+
+#[test]
 fn test_run_program() -> Result<(), Box<dyn std::error::Error>> {
     let tmp_dir = TempDir::new().unwrap();
     let (program, param, batch_file_name, batch_file_content) = if cfg!(target_os = "windows") {

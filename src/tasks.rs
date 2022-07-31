@@ -1,4 +1,5 @@
-use std::collections::HashMap;
+use dotenv_parser::parse_dotenv;
+use std::collections::{BTreeMap, HashMap};
 use std::env::temp_dir;
 use std::ffi::OsStr;
 use std::fs::File;
@@ -94,6 +95,8 @@ pub struct Task {
     serial: Option<Vec<String>>,
     /// Env variables for the task
     env: Option<HashMap<String, String>>,
+    /// Env file to read environment variables from
+    env_file: Option<String>,
     /// Working dir
     wd: Option<String>,
     /// Task to run instead if the OS is linux
@@ -123,6 +126,8 @@ pub struct ConfigFile {
     tasks: Option<HashMap<String, Task>>,
     /// Env variables for all the tasks.
     env: Option<HashMap<String, String>>,
+    /// Env file to read environment variables from
+    env_file: Option<String>,
 }
 
 /// Used to discover files.
@@ -222,6 +227,50 @@ fn get_temp_script(content: String) -> DynErrResult<PathBuf> {
     Ok(path)
 }
 
+/// Returns the path relative to the base. If path is already absolute, it will be returned instead.
+///
+/// # Arguments
+///
+/// * `base`: Base path
+/// * `path`: Path to make relative to the base
+///
+/// returns: PathBuf
+fn get_path_relative_to_base<B: AsRef<OsStr> + ?Sized, P: AsRef<OsStr> + ?Sized>(
+    base: &B,
+    path: &P,
+) -> PathBuf {
+    let path = Path::new(path);
+    if !path.is_absolute() {
+        let base = Path::new(base);
+        return base.join(path);
+    }
+    path.to_path_buf()
+}
+
+/// Reads the content of an environment file from the given path and returns a BTreeMap.
+///
+/// # Arguments
+/// * `path`: Path of the environment file
+///
+/// returns: DynErrResult<BTreeMap<String, String>>
+fn read_env_file<S: AsRef<OsStr> + ?Sized>(path: &S) -> DynErrResult<BTreeMap<String, String>> {
+    let path = Path::new(path);
+    Ok(match fs::read_to_string(path) {
+        Ok(file_contents) => match parse_dotenv(&file_contents) {
+            Ok(result) => result,
+            Err(e) => return Err(e),
+        },
+        Err(e) => {
+            return Err(format!(
+                "There was an error reading the env file at {}:\n{}",
+                path.display(),
+                e
+            )
+            .into())
+        }
+    })
+}
+
 impl Task {
     /// Validates the task configuration.
     ///
@@ -271,23 +320,30 @@ impl Task {
     ///  
     /// * `command` - Command to set the parameters for
     /// * `config_file` - Configuration file
-    fn set_command_basics(&self, command: &mut Command, config_file: &ConfigFile) {
+    fn set_command_basics(
+        &self,
+        command: &mut Command,
+        config_file: &ConfigFile,
+    ) -> DynErrResult<()> {
         command.stdout(Stdio::inherit());
         command.stderr(Stdio::inherit());
         command.stdin(Stdio::inherit());
 
+        let config_file_folder = config_file.filepath.parent().unwrap();
+
         match &self.wd {
             None => {}
             Some(wd) => {
-                let mut wd = PathBuf::from(wd);
-                if !wd.is_absolute() {
-                    let config_file_path = &config_file.filepath;
-                    let base_path = config_file_path.parent().unwrap();
-                    wd = base_path.join(wd);
-                }
+                let wd = get_path_relative_to_base(config_file_folder, wd);
                 command.current_dir(wd);
             }
         };
+
+        if let Some(env_file) = &config_file.env_file {
+            let env_file = get_path_relative_to_base(config_file_folder, env_file);
+            let env_variables = read_env_file(env_file.as_path())?;
+            command.envs(env_variables);
+        }
 
         match &config_file.env {
             None => {}
@@ -296,12 +352,19 @@ impl Task {
             }
         }
 
+        if let Some(env_file) = &self.env_file {
+            let env_file = get_path_relative_to_base(config_file_folder, env_file);
+            let env_variables = read_env_file(env_file.as_path())?;
+            command.envs(env_variables);
+        }
+
         match &self.env {
             None => {}
             Some(env) => {
                 command.envs(env);
             }
         }
+        Ok(())
     }
 
     /// Spawns a command and waits for its execution.
@@ -334,7 +397,7 @@ impl Task {
     ) -> DynErrResult<()> {
         let program = self.program.as_ref().unwrap();
         let mut command = Command::new(program);
-        self.set_command_basics(&mut command, config_file);
+        self.set_command_basics(&mut command, config_file)?;
 
         if let Some(task_args) = &self.args {
             for task_arg in task_args {
@@ -364,7 +427,7 @@ impl Task {
         let mut command = Command::new(SHELL_PROGRAM);
         command.arg(SHELL_PROGRAM_ARG);
 
-        self.set_command_basics(&mut command, config_file);
+        self.set_command_basics(&mut command, config_file)?;
 
         let (quote_from_file, quote) = match &self.quote {
             None => (true, &config_file.quote),

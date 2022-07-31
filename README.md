@@ -183,8 +183,8 @@ script = "dir {*?}"
 
 
 ### Other options:
- #### Environment variables
-  Environment variables can be defined at the task level. These two forms are equivalent:
+#### Environment variables
+Environment variables can be defined at the task level. These two forms are equivalent:
 ```toml
 [tasks.echo]
 env = {"DEBUG" = "TRUE"}
@@ -192,17 +192,29 @@ env = {"DEBUG" = "TRUE"}
 [tasks.echo.env]
 DEBUG = "TRUE"
   ```
-  They can also be passed globally
+They can also be passed globally
 ```toml
 [env]
 DEBUG = "TRUE"
 ```
+Also, an env file can be specified at the task or global level. The path will be relative to the config file unless it is
+an absolute path.
+```toml
+env_file = ".env"
 
- ##### Working directory
-  By default, the working directory of the task is one where it was executed. This can be changed at the task level
-  or root level, with `wd`. The path can be relative or absolute, with relative paths being resolved against the
-  configuration file and not the directory where the task was executed, this means `""` can be used to make the
-  working directory the same one as the directory for the configuration file.
+[tasks.some]
+env_file = ".env_2"
+```
+
+If both `env_file` and `env` options are set at the same level, both will be loaded, if there are duplicate keys, `env` will
+take precedence. Similarly, the global env variables and env file will be loaded at the task level even if these options
+are also set there, with the env variables defined on the task taking precedence over the global ones.
+
+##### Working directory
+By default, the working directory of the task is one where it was executed. This can be changed at the task level
+or root level, with `wd`. The path can be relative or absolute, with relative paths being resolved against the
+configuration file and not the directory where the task was executed, this means `""` can be used to make the
+working directory the same one as the directory for the configuration file.
 
 
 ## Contributing
