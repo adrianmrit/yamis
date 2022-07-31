@@ -250,13 +250,12 @@ fn test_env_file() -> Result<(), Box<dyn std::error::Error>> {
             env_file = ".env_2"
             
             [tasks.test_2.env]
-            VAR1 = "TASK_VAL_1"
+            VAR1 = "TASK_VAL1"
             "#
         .as_bytes(),
     )?;
 
     let mut cmd = Command::cargo_bin("yamis")?;
-    dbg!(tmp_dir.display());
     cmd.current_dir(tmp_dir.path());
     cmd.arg("test");
     cmd.assert()
