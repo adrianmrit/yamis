@@ -83,6 +83,8 @@ impl error::Error for ConfigError {
 #[derive(Debug, Deserialize)]
 /// Represents a Task
 pub struct Task {
+    #[serde(skip)]
+    name: String,
     /// Whether to automatically quote argument with spaces
     quote: Option<String>,
     /// Script to run
@@ -111,7 +113,7 @@ fn default_quote() -> String {
     String::from("always")
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 // TODO: Deny invalid fields
 // #[serde(deny_unknown_fields)]
 /// Represents a config file.
@@ -272,6 +274,10 @@ fn read_env_file<S: AsRef<OsStr> + ?Sized>(path: &S) -> DynErrResult<BTreeMap<St
 }
 
 impl Task {
+    fn setup(&mut self, name: &str) {
+        self.name = String::from(name);
+    }
+
     /// Validates the task configuration.
     ///
     /// # Arguments
@@ -541,8 +547,17 @@ impl ConfigFile {
                 .into());
             }
         };
+        conf.setup_tasks();
         conf.filepath = path.to_path_buf();
         Ok(conf)
+    }
+
+    fn setup_tasks(&mut self) {
+        if let Some(tasks) = &mut self.tasks {
+            for (name, task) in tasks {
+                task.setup(name);
+            }
+        }
     }
 
     /// Finds a task by name on this config file if it exists.
