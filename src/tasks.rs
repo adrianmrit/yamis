@@ -1,4 +1,5 @@
 use dotenv_parser::parse_dotenv;
+use std::borrow::{Borrow, BorrowMut};
 use std::collections::{BTreeMap, HashMap};
 use std::env::temp_dir;
 use std::ffi::OsStr;
@@ -6,7 +7,7 @@ use std::fs::File;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::{env, error, fmt, fs};
+use std::{env, error, fmt, fs, ptr};
 
 use crate::args::ArgsMap;
 use crate::args_format::{format_arg, format_script, EscapeMode};
@@ -107,10 +108,19 @@ pub struct Task {
     windows: Option<Box<Task>>,
     /// Task to run instead if the OS is macos
     macos: Option<Box<Task>>,
+    /// Base task to inherit from
+    base: Option<String>,
+    /// If private, it cannot be called
+    #[serde(default = "default_true")]
+    private: bool,
 }
 
 fn default_quote() -> String {
     String::from("always")
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Debug, Deserialize)]
@@ -273,10 +283,54 @@ fn read_env_file<S: AsRef<OsStr> + ?Sized>(path: &S) -> DynErrResult<BTreeMap<St
     })
 }
 
+macro_rules! inherit_value {
+    ( $task:expr, $base:expr ) => {
+        if $task.is_none() && $base.is_some() {
+            $task = $base.clone();
+        }
+    };
+}
+
 impl Task {
+    /// Does extra setup on the task and does some validation.
     fn setup(&mut self, name: &str) -> Result<(), ConfigError> {
         self.name = String::from(name);
         self.validate()
+    }
+
+    fn extend(&mut self, config_file: &ConfigFile) -> DynErrResult<()> {
+        while let Some(base_task_name) = &self.base {
+            let base = config_file.get_system_task(base_task_name);
+            if let Some(base_task) = base {
+                self.extend_task(base_task)
+            } else {
+                return Err(ConfigError::BadTask(
+                    self.name.clone(),
+                    format!("Base task `{}` doe snot exist", base_task_name),
+                )
+                .into());
+            }
+        }
+        Ok(())
+    }
+
+    fn extend_task(&mut self, base_task: &Task) {
+        // Copy the base to continue extending from it
+        match &base_task.base {
+            None => self.base = None,
+            Some(val) => self.base = Some(val.clone()),
+        }
+
+        inherit_value!(self.quote, base_task.quote);
+        inherit_value!(self.script, base_task.script);
+        inherit_value!(self.program, base_task.program);
+        inherit_value!(self.args, base_task.args);
+        inherit_value!(self.serial, base_task.serial);
+        inherit_value!(self.env, base_task.env);
+        inherit_value!(self.env_file, base_task.env_file);
+
+        // The private attribute is not inherited as it deviates
+        // from the purpose of making them private
     }
 
     /// Validates the task configuration.
@@ -284,7 +338,7 @@ impl Task {
     /// # Arguments
     ///  
     /// * `name` - Name of the task
-    pub fn validate(&self) -> Result<(), ConfigError> {
+    fn validate(&self) -> Result<(), ConfigError> {
         if self.script.is_some() && self.program.is_some() {
             return Err(ConfigError::BadTask(
                 self.name.clone(),
