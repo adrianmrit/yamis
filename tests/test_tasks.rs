@@ -22,7 +22,7 @@ fn test_discovery() -> DynErrResult<()> {
 
     match config.get_task("non_existent") {
         None => {}
-        Some((_, _, _)) => {
+        Some((_, _)) => {
             panic!("task non_existent should not exist");
         }
     }
@@ -31,7 +31,7 @@ fn test_discovery() -> DynErrResult<()> {
         None => {
             panic!("task hello_world should exist");
         }
-        Some((_, _, _)) => {}
+        Some((_, _)) => {}
     }
 
     let config = ConfigFiles::for_path(path.as_path()).unwrap();

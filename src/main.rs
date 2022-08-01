@@ -17,12 +17,11 @@ fn program() -> Result<(), Box<dyn Error>> {
             match args.task {
                 None => return Err("No task to run was given.".into()),
                 Some(task_name) => {
-                    let name_task_and_config = config_files.get_task(&task_name);
+                    let name_task_and_config = config_files.get_system_task(&task_name);
                     match name_task_and_config {
-                        None => return Err(format!("Task {task_name} not found.").into()),
-                        Some((name, task, config)) => {
-                            task.validate(&name)?;
-                            task.run(&name, &args.args, config, &config_files)?;
+                        None => return Err(format!("Task {} not found.", task_name).into()),
+                        Some((task, config)) => {
+                            task.run(&args.args, config, &config_files)?;
                             Ok(())
                         }
                     }

@@ -274,8 +274,9 @@ fn read_env_file<S: AsRef<OsStr> + ?Sized>(path: &S) -> DynErrResult<BTreeMap<St
 }
 
 impl Task {
-    fn setup(&mut self, name: &str) {
+    fn setup(&mut self, name: &str) -> Result<(), ConfigError> {
         self.name = String::from(name);
+        self.validate()
     }
 
     /// Validates the task configuration.
@@ -283,36 +284,38 @@ impl Task {
     /// # Arguments
     ///  
     /// * `name` - Name of the task
-    pub fn validate(&self, name: &str) -> Result<(), ConfigError> {
+    pub fn validate(&self) -> Result<(), ConfigError> {
         if self.script.is_some() && self.program.is_some() {
             return Err(ConfigError::BadTask(
-                String::from(name),
+                self.name.clone(),
                 String::from("Task cannot specify `script` and `program` at the same time."),
             ));
         }
+
         if self.script.is_some() && self.serial.is_some() {
             return Err(ConfigError::BadTask(
-                String::from(name),
+                self.name.clone(),
                 String::from("Cannot specify `script` and `serial` at the same time."),
             ));
         }
 
         if self.program.is_some() && self.serial.is_some() {
             return Err(ConfigError::BadTask(
-                String::from(name),
+                self.name.clone(),
                 String::from("Cannot specify `program` and `serial` at the same time."),
             ));
         }
+
         if self.script.is_some() && self.args.is_some() {
             return Err(ConfigError::BadTask(
-                String::from(name),
+                self.name.clone(),
                 String::from("Cannot specify `args` on scripts."),
             ));
         }
 
         if self.program.is_some() && self.quote.is_some() {
             return Err(ConfigError::BadTask(
-                String::from(name),
+                self.name.clone(),
                 String::from("Cannot specify `quote` on commands."),
             ));
         }
@@ -395,12 +398,7 @@ impl Task {
     /// * `name` - Name of the task, displayed in errors.
     /// * `args` - Arguments to format the task args with
     /// * `config_file` - Configuration file of the task
-    fn run_program(
-        &self,
-        name: &str,
-        args: &ArgsMap,
-        config_file: &ConfigFile,
-    ) -> DynErrResult<()> {
+    fn run_program(&self, args: &ArgsMap, config_file: &ConfigFile) -> DynErrResult<()> {
         let program = self.program.as_ref().unwrap();
         let mut command = Command::new(program);
         self.set_command_basics(&mut command, config_file)?;
@@ -412,7 +410,7 @@ impl Task {
                         command.args(task_args);
                     }
                     Err(e) => {
-                        return Err(ConfigError::BadTask(String::from(name), e.to_string()).into());
+                        return Err(ConfigError::BadTask(self.name.clone(), e.to_string()).into());
                     }
                 }
             }
@@ -428,7 +426,7 @@ impl Task {
     /// * `name` - Name of the task, displayed in errors.
     /// * `args` - Arguments to format the task args with
     /// * `config_file` - Configuration file of the task
-    fn run_script(&self, name: &str, args: &ArgsMap, config_file: &ConfigFile) -> DynErrResult<()> {
+    fn run_script(&self, args: &ArgsMap, config_file: &ConfigFile) -> DynErrResult<()> {
         let script = self.script.as_ref().unwrap();
         let mut command = Command::new(SHELL_PROGRAM);
         command.arg(SHELL_PROGRAM_ARG);
@@ -456,7 +454,7 @@ impl Task {
                 return if quote_from_file {
                     Err(ConfigError::BadConfigFile(error).into())
                 } else {
-                    Err(ConfigError::BadTask(String::from(name), error).into())
+                    Err(ConfigError::BadTask(self.name.clone(), error).into())
                 };
             }
         };
@@ -467,7 +465,7 @@ impl Task {
                 command.arg(script_file.to_str().unwrap());
             }
             Err(e) => {
-                return Err(ConfigError::BadTask(String::from(name), e.to_string()).into());
+                return Err(ConfigError::BadTask(self.name.clone(), e.to_string()).into());
             }
         }
 
@@ -481,18 +479,18 @@ impl Task {
     /// * `config_file` - Configuration file of the task
     fn run_serial(&self, args: &ArgsMap, config_files: &ConfigFiles) -> DynErrResult<()> {
         let serial = self.serial.as_ref().unwrap();
-        let mut tasks: Vec<(String, &Task, &ConfigFile)> = Vec::new();
+        let mut tasks: Vec<(&Task, &ConfigFile)> = Vec::new();
         for task_name in serial {
-            if let Some((task_name, task, task_config_file)) = config_files.get_task(task_name) {
-                tasks.push((task_name, task, task_config_file));
+            if let Some((task, task_config_file)) = config_files.get_system_task(task_name) {
+                tasks.push((task, task_config_file));
             } else {
                 return Err(
                     ConfigError::BadConfigFile(format!("Task `{}` not found.", task_name)).into(),
                 );
             }
         }
-        for (task_name, task, task_config_file) in tasks {
-            task.run(&task_name, args, task_config_file, config_files)?;
+        for (task, task_config_file) in tasks {
+            task.run(args, task_config_file, config_files)?;
         }
         Ok(())
     }
@@ -507,19 +505,18 @@ impl Task {
     /// * `config_files` - global ConfigurationFiles instance
     pub fn run(
         &self,
-        name: &str,
         args: &ArgsMap,
         config_file: &ConfigFile,
         config_files: &ConfigFiles,
     ) -> DynErrResult<()> {
         return if self.script.is_some() {
-            self.run_script(name, args, config_file)
+            self.run_script(args, config_file)
         } else if self.program.is_some() {
-            self.run_program(name, args, config_file)
+            self.run_program(args, config_file)
         } else if self.serial.is_some() {
             self.run_serial(args, config_files)
         } else {
-            Err(ConfigError::BadTask(String::from(name), String::from("Nothing to run.")).into())
+            Err(ConfigError::BadTask(self.name.clone(), String::from("Nothing to run.")).into())
         };
     }
 }
@@ -547,17 +544,47 @@ impl ConfigFile {
                 .into());
             }
         };
-        conf.setup_tasks();
         conf.filepath = path.to_path_buf();
+        conf.move_system_tasks_up_and_setup()?;
         Ok(conf)
     }
 
-    fn setup_tasks(&mut self) {
+    /// Moves OS specific tasks up and runs the task setup
+    fn move_system_tasks_up_and_setup(&mut self) -> DynErrResult<()> {
         if let Some(tasks) = &mut self.tasks {
-            for (name, task) in tasks {
-                task.setup(name);
+            let mut os_tasks: HashMap<String, Task> = HashMap::new();
+            for (name, task) in tasks.iter_mut() {
+                task.setup(name)?;
+
+                if task.linux.is_some() {
+                    let os_task = std::mem::replace(&mut task.linux, None);
+                    let mut os_task = *os_task.unwrap();
+                    let os_task_name = format!("{}.linux", name);
+                    os_task.setup(&os_task_name)?;
+                    os_tasks.insert(os_task_name, os_task);
+                }
+
+                if task.windows.is_some() {
+                    let os_task = std::mem::replace(&mut task.windows, None);
+                    let mut os_task = *os_task.unwrap();
+                    let os_task_name = format!("{}.windows", name);
+                    os_task.setup(&os_task_name)?;
+                    os_tasks.insert(os_task_name, os_task);
+                }
+
+                if task.macos.is_some() {
+                    let os_task = std::mem::replace(&mut task.macos, None);
+                    let mut os_task = *os_task.unwrap();
+                    let os_task_name = format!("{}.macos", name);
+                    os_task.setup(&os_task_name)?;
+                    os_tasks.insert(os_task_name, os_task);
+                }
+            }
+            for (name, task) in os_tasks {
+                tasks.insert(name, task);
             }
         }
+        Ok(())
     }
 
     /// Finds a task by name on this config file if it exists.
@@ -568,6 +595,19 @@ impl ConfigFile {
     fn get_task(&self, task_name: &str) -> Option<&Task> {
         if let Some(tasks) = &self.tasks {
             if let Some(task) = tasks.get(task_name) {
+                return Some(task);
+            }
+        }
+        None
+    }
+
+    fn get_system_task(&self, task_name: &str) -> Option<&Task> {
+        if let Some(tasks) = &self.tasks {
+            let os_task_name = format!("{}.{}", task_name, env::consts::OS);
+
+            if let Some(task) = tasks.get(&os_task_name) {
+                return Some(task);
+            } else if let Some(task) = tasks.get(task_name) {
                 return Some(task);
             }
         }
@@ -606,23 +646,24 @@ impl ConfigFiles {
     /// # Arguments
     ///
     /// * task_name - Name of the task to search for
-    pub fn get_task(&self, task_name: &str) -> Option<(String, &Task, &ConfigFile)> {
+    pub fn get_task(&self, task_name: &str) -> Option<(&Task, &ConfigFile)> {
         for conf in &self.configs {
             if let Some(task) = conf.get_task(task_name) {
-                if env::consts::OS == "linux" {
-                    if let Some(linux_task) = &task.linux {
-                        return Some((format!("{}.linux", task_name), &*linux_task, conf));
-                    }
-                } else if env::consts::OS == "windows" {
-                    if let Some(windows_task) = &task.windows {
-                        return Some((format!("{}.windows", task_name), &*windows_task, conf));
-                    }
-                } else if env::consts::OS == "macos" {
-                    if let Some(macos_task) = &task.macos {
-                        return Some((format!("{}.macos", task_name), &*macos_task, conf));
-                    }
-                }
-                return Some((String::from(task_name), task, conf));
+                return Some((task, conf));
+            }
+        }
+        None
+    }
+
+    /// Returns a task for the given name and the config file that contains it.
+    ///
+    /// # Arguments
+    ///
+    /// * task_name - Name of the task to search for
+    pub fn get_system_task(&self, task_name: &str) -> Option<(&Task, &ConfigFile)> {
+        for conf in &self.configs {
+            if let Some(task) = conf.get_system_task(task_name) {
+                return Some((task, conf));
             }
         }
         None
