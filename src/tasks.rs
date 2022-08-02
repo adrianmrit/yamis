@@ -135,7 +135,7 @@ pub struct ConfigFile {
     #[serde(default = "default_quote")]
     quote: String,
     /// Tasks inside the config file.
-    tasks: Option<HashMap<String, Task>>,
+    tasks: HashMap<String, Task>,
     /// Env variables for all the tasks.
     env: Option<HashMap<String, String>>,
     /// Env file to read environment variables from
@@ -605,38 +605,36 @@ impl ConfigFile {
 
     /// Moves OS specific tasks up and runs the task setup
     fn move_system_tasks_up_and_setup(&mut self) -> DynErrResult<()> {
-        if let Some(tasks) = &mut self.tasks {
-            let mut os_tasks: HashMap<String, Task> = HashMap::new();
-            for (name, task) in tasks.iter_mut() {
-                task.setup(name)?;
+        let mut os_tasks: HashMap<String, Task> = HashMap::new();
+        for (name, task) in self.tasks.iter_mut() {
+            task.setup(name)?;
 
-                if task.linux.is_some() {
-                    let os_task = std::mem::replace(&mut task.linux, None);
-                    let mut os_task = *os_task.unwrap();
-                    let os_task_name = format!("{}.linux", name);
-                    os_task.setup(&os_task_name)?;
-                    os_tasks.insert(os_task_name, os_task);
-                }
-
-                if task.windows.is_some() {
-                    let os_task = std::mem::replace(&mut task.windows, None);
-                    let mut os_task = *os_task.unwrap();
-                    let os_task_name = format!("{}.windows", name);
-                    os_task.setup(&os_task_name)?;
-                    os_tasks.insert(os_task_name, os_task);
-                }
-
-                if task.macos.is_some() {
-                    let os_task = std::mem::replace(&mut task.macos, None);
-                    let mut os_task = *os_task.unwrap();
-                    let os_task_name = format!("{}.macos", name);
-                    os_task.setup(&os_task_name)?;
-                    os_tasks.insert(os_task_name, os_task);
-                }
+            if task.linux.is_some() {
+                let os_task = std::mem::replace(&mut task.linux, None);
+                let mut os_task = *os_task.unwrap();
+                let os_task_name = format!("{}.linux", name);
+                os_task.setup(&os_task_name)?;
+                os_tasks.insert(os_task_name, os_task);
             }
-            for (name, task) in os_tasks {
-                tasks.insert(name, task);
+
+            if task.windows.is_some() {
+                let os_task = std::mem::replace(&mut task.windows, None);
+                let mut os_task = *os_task.unwrap();
+                let os_task_name = format!("{}.windows", name);
+                os_task.setup(&os_task_name)?;
+                os_tasks.insert(os_task_name, os_task);
             }
+
+            if task.macos.is_some() {
+                let os_task = std::mem::replace(&mut task.macos, None);
+                let mut os_task = *os_task.unwrap();
+                let os_task_name = format!("{}.macos", name);
+                os_task.setup(&os_task_name)?;
+                os_tasks.insert(os_task_name, os_task);
+            }
+        }
+        for (name, task) in os_tasks {
+            self.tasks.insert(name, task);
         }
         Ok(())
     }
@@ -647,23 +645,19 @@ impl ConfigFile {
     ///
     /// * task_name - Name of the task to search for
     fn get_task(&self, task_name: &str) -> Option<&Task> {
-        if let Some(tasks) = &self.tasks {
-            if let Some(task) = tasks.get(task_name) {
-                return Some(task);
-            }
+        if let Some(task) = self.tasks.get(task_name) {
+            return Some(task);
         }
         None
     }
 
     fn get_system_task(&self, task_name: &str) -> Option<&Task> {
-        if let Some(tasks) = &self.tasks {
-            let os_task_name = format!("{}.{}", task_name, env::consts::OS);
+        let os_task_name = format!("{}.{}", task_name, env::consts::OS);
 
-            if let Some(task) = tasks.get(&os_task_name) {
-                return Some(task);
-            } else if let Some(task) = tasks.get(task_name) {
-                return Some(task);
-            }
+        if let Some(task) = self.tasks.get(&os_task_name) {
+            return Some(task);
+        } else if let Some(task) = self.tasks.get(task_name) {
+            return Some(task);
         }
         None
     }
