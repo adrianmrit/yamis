@@ -1,6 +1,6 @@
 [package]
 name = "yamis"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 license = "GPL-3.0-only"
 description = "A task runner that accepts positional and named arguments."
@@ -37,3 +37,7 @@ assert_fs = "1.0"
 [[bin]]
 name = "yamis"
 path = "src/main.rs"
+
+# fixes linker `cc` not found issue
+[package.metadata.cross.target.x86_64-apple-darwin]
+zig = true
