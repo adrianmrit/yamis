@@ -348,3 +348,35 @@ fn test_run_serial() -> Result<(), Box<dyn std::error::Error>> {
 
     Ok(())
 }
+
+#[test]
+fn test_env_inheritance() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp_dir = TempDir::new().unwrap();
+    let mut file = File::create(tmp_dir.join("project.yamis.toml"))?;
+    file.write_all(
+        r#" 
+    [tasks.hello_base.env]
+    greeting = "hello world"
+    
+    [tasks.calc_base.env]
+    one_plus_one = "2"
+    
+    [tasks.hello]
+    bases = ["hello_base", "calc_base"]
+    script = "echo $greeting, 1+1=$one_plus_one"
+    
+    [tasks.hello.windows]
+    bases = ["hello_base", "calc_base"]
+    script = "echo %greeting%, 1+1=%one_plus_one%"
+    "#
+        .as_bytes(),
+    )?;
+
+    let mut cmd = Command::cargo_bin("yamis")?;
+    cmd.current_dir(tmp_dir.path());
+    cmd.arg("hello");
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("hello world, 1+1=2"));
+    Ok(())
+}

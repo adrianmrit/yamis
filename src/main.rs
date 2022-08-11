@@ -2,7 +2,7 @@ use colored::Colorize;
 use std::env;
 use std::error::Error;
 use yamis::args::YamisArgs;
-use yamis::tasks::ConfigFiles;
+use yamis::config_files::ConfigFiles;
 
 /// Runs the program but returns errors. The main method should be
 /// the one to print the actual error.

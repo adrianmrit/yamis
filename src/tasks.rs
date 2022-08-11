@@ -1,26 +1,20 @@
-use dotenv_parser::parse_dotenv;
-use std::borrow::{Borrow, BorrowMut};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::env::temp_dir;
-use std::ffi::OsStr;
 use std::fs::File;
 use std::io::Write;
+use std::mem;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::{env, error, fmt, fs, ptr};
 
 use crate::args::ArgsMap;
 use crate::args_format::{format_arg, format_script, EscapeMode};
+use crate::config_files::{ConfigError, ConfigFile, ConfigFiles};
+use crate::defaults::{default_false, default_true};
 use serde_derive::Deserialize;
 use uuid::Uuid;
 
 use crate::types::DynErrResult;
-
-/// Config file names by order of priority. The first one refers to local config and
-/// should not be committed to the repository. The program should discover config files
-/// by looping on the parent folders and current directory until reaching the root path
-/// or a the project config (last one on the list) is found.
-const CONFIG_FILES_PRIO: &[&str] = &["local.yamis.toml", "yamis.toml", "project.yamis.toml"];
+use crate::utils::{get_path_relative_to_base, read_env_file};
 
 cfg_if::cfg_if! {
     if #[cfg(target_os = "windows")] {
@@ -40,49 +34,9 @@ cfg_if::cfg_if! {
     }
 }
 
-/// Errors related to config files and tasks
-#[derive(Debug, PartialEq)]
-pub enum ConfigError {
-    /// Raised when a config file is not found for a given path
-    FileNotFound(String), // Given config file not found
-    /// Raised when no config file is found during auto-discovery
-    NoConfigFile, // No config file was discovered
-    /// Bad Config error
-    BadConfigFile(String),
-    /// Raised when there is an error in a task
-    BadTask(String, String),
-}
-
-impl fmt::Display for ConfigError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match *self {
-            ConfigError::FileNotFound(ref s) => write!(f, "File {} not found.", s),
-            ConfigError::NoConfigFile => write!(f, "No config file found."),
-            ConfigError::BadConfigFile(ref s) => write!(f, "Bad config file. {}", s),
-            ConfigError::BadTask(ref name, ref reason) => {
-                write!(f, "Error on tasks.{}:\n    {}", name, reason)
-            }
-        }
-    }
-}
-
-impl error::Error for ConfigError {
-    fn description(&self) -> &str {
-        match *self {
-            ConfigError::FileNotFound(_) => "file not found",
-            ConfigError::NoConfigFile => "no config discovered",
-            ConfigError::BadConfigFile(_) => "bad config file",
-            ConfigError::BadTask(_, _) => "bad task",
-        }
-    }
-
-    fn cause(&self) -> Option<&dyn error::Error> {
-        None
-    }
-}
-
-#[derive(Debug, Deserialize)]
 /// Represents a Task
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Task {
     #[serde(skip)]
     name: String,
@@ -97,110 +51,27 @@ pub struct Task {
     /// If given, runs all those tasks at once
     serial: Option<Vec<String>>,
     /// Env variables for the task
-    env: Option<HashMap<String, String>>,
+    #[serde(default)]
+    pub(crate) env: HashMap<String, String>,
     /// Env file to read environment variables from
     env_file: Option<String>,
     /// Working dir
     wd: Option<String>,
     /// Task to run instead if the OS is linux
-    linux: Option<Box<Task>>,
+    pub(crate) linux: Option<Box<Task>>,
     /// Task to run instead if the OS is windows
-    windows: Option<Box<Task>>,
+    pub(crate) windows: Option<Box<Task>>,
     /// Task to run instead if the OS is macos
-    macos: Option<Box<Task>>,
+    pub(crate) macos: Option<Box<Task>>,
     /// Base task to inherit from
-    base: Option<String>,
-    /// If private, it cannot be called
+    #[serde(default)]
+    pub(crate) bases: Vec<String>,
+    /// If true, env is merged during inheritance
     #[serde(default = "default_true")]
+    merge_env: bool,
+    /// If private, it cannot be called
+    #[serde(default = "default_false")]
     private: bool,
-}
-
-fn default_quote() -> String {
-    String::from("always")
-}
-
-fn default_true() -> bool {
-    true
-}
-
-#[derive(Debug, Deserialize)]
-// TODO: Deny invalid fields
-// #[serde(deny_unknown_fields)]
-/// Represents a config file.
-pub struct ConfigFile {
-    /// Path of the file.
-    #[serde(skip)]
-    filepath: PathBuf,
-    /// Whether to automatically quote argument with spaces unless task specified
-    #[serde(default = "default_quote")]
-    quote: String,
-    /// Tasks inside the config file.
-    tasks: HashMap<String, Task>,
-    /// Env variables for all the tasks.
-    env: Option<HashMap<String, String>>,
-    /// Env file to read environment variables from
-    env_file: Option<String>,
-}
-
-/// Used to discover files.
-pub struct ConfigFiles {
-    /// First config file to check.
-    pub configs: Vec<ConfigFile>,
-}
-
-/// Iterates over existing config file paths, in order of priority.
-pub struct ConfigFilePaths {
-    index: usize,
-    finished: bool,
-    current: PathBuf,
-}
-
-impl Iterator for ConfigFilePaths {
-    type Item = PathBuf;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        while !self.finished {
-            let path = self.current.join(CONFIG_FILES_PRIO[self.index]);
-            let is_last_index = CONFIG_FILES_PRIO.len() - 1 == self.index;
-            let is_file = path.is_file();
-            if is_last_index {
-                if is_file {
-                    // Break if the file found is the root file
-                    // Index is updated on the previous match, therefore we compare against 0
-                    self.finished = true;
-                } else {
-                    let new_current = path.parent().unwrap().parent();
-                    match new_current {
-                        None => {
-                            self.finished = true;
-                        }
-                        Some(new_current) => {
-                            self.current = new_current.to_path_buf();
-                        }
-                    }
-                }
-                self.index = 0;
-            } else {
-                self.index += 1;
-            }
-            if is_file {
-                return Some(path);
-            }
-        }
-        None
-    }
-}
-
-impl ConfigFilePaths {
-    /// Returns a new iterator that starts at the given path.
-    fn new<S: AsRef<OsStr> + ?Sized>(path: &S) -> ConfigFilePaths {
-        let current = PathBuf::from(&path);
-        ConfigFilePaths {
-            index: 0,
-            finished: false,
-            current,
-        }
-    }
 }
 
 cfg_if::cfg_if! {
@@ -239,50 +110,7 @@ fn get_temp_script(content: String) -> DynErrResult<PathBuf> {
     Ok(path)
 }
 
-/// Returns the path relative to the base. If path is already absolute, it will be returned instead.
-///
-/// # Arguments
-///
-/// * `base`: Base path
-/// * `path`: Path to make relative to the base
-///
-/// returns: PathBuf
-fn get_path_relative_to_base<B: AsRef<OsStr> + ?Sized, P: AsRef<OsStr> + ?Sized>(
-    base: &B,
-    path: &P,
-) -> PathBuf {
-    let path = Path::new(path);
-    if !path.is_absolute() {
-        let base = Path::new(base);
-        return base.join(path);
-    }
-    path.to_path_buf()
-}
-
-/// Reads the content of an environment file from the given path and returns a BTreeMap.
-///
-/// # Arguments
-/// * `path`: Path of the environment file
-///
-/// returns: DynErrResult<BTreeMap<String, String>>
-fn read_env_file<S: AsRef<OsStr> + ?Sized>(path: &S) -> DynErrResult<BTreeMap<String, String>> {
-    let path = Path::new(path);
-    Ok(match fs::read_to_string(path) {
-        Ok(file_contents) => match parse_dotenv(&file_contents) {
-            Ok(result) => result,
-            Err(e) => return Err(e),
-        },
-        Err(e) => {
-            return Err(format!(
-                "There was an error reading the env file at {}:\n{}",
-                path.display(),
-                e
-            )
-            .into())
-        }
-    })
-}
-
+/// Shortcut to inherit values from the task
 macro_rules! inherit_value {
     ( $task:expr, $base:expr ) => {
         if $task.is_none() && $base.is_some() {
@@ -293,44 +121,67 @@ macro_rules! inherit_value {
 
 impl Task {
     /// Does extra setup on the task and does some validation.
-    fn setup(&mut self, name: &str) -> Result<(), ConfigError> {
+    ///
+    /// # Arguments
+    ///
+    /// * `name`: name of the task
+    /// * `base_path`: path to use as a reference to resolve relative paths
+    ///
+    /// returns: Result<(), Box<dyn Error, Global>>
+    ///
+    /// # Examples
+    ///
+    pub(crate) fn setup(&mut self, name: &str, base_path: &Path) -> DynErrResult<()> {
         self.name = String::from(name);
-        self.validate()
+        self.load_env_file(base_path)?;
+        Ok(self.validate()?)
     }
 
-    fn extend(&mut self, config_file: &ConfigFile) -> DynErrResult<()> {
-        while let Some(base_task_name) = &self.base {
-            let base = config_file.get_system_task(base_task_name);
-            if let Some(base_task) = base {
-                self.extend_task(base_task)
-            } else {
-                return Err(ConfigError::BadTask(
-                    self.name.clone(),
-                    format!("Base task `{}` doe snot exist", base_task_name),
-                )
-                .into());
-            }
-        }
-        Ok(())
-    }
-
-    fn extend_task(&mut self, base_task: &Task) {
-        // Copy the base to continue extending from it
-        match &base_task.base {
-            None => self.base = None,
-            Some(val) => self.base = Some(val.clone()),
-        }
-
+    /// Extends from the given task.
+    ///
+    /// # Arguments
+    ///
+    /// * `base_task`: task to extend from
+    ///
+    /// returns: ()
+    ///
+    pub(crate) fn extend_task(&mut self, base_task: &Task) {
         inherit_value!(self.quote, base_task.quote);
         inherit_value!(self.script, base_task.script);
         inherit_value!(self.program, base_task.program);
         inherit_value!(self.args, base_task.args);
         inherit_value!(self.serial, base_task.serial);
-        inherit_value!(self.env, base_task.env);
         inherit_value!(self.env_file, base_task.env_file);
 
-        // The private attribute is not inherited as it deviates
-        // from the purpose of making them private
+        if self.merge_env && !base_task.env.is_empty() {
+            let old_env = mem::replace(&mut self.env, base_task.env.clone());
+
+            for (key, val) in old_env {
+                self.env.insert(key, val);
+            }
+        } else if self.env.is_empty() {
+            self.env.extend(base_task.env.clone());
+        }
+    }
+
+    /// Loads the environment file contained between this task
+    ///
+    /// # Arguments
+    ///
+    /// * `base_path`: path to use as a reference to resolve relative paths
+    ///
+    /// returns: Result<(), Box<dyn Error, Global>>
+    fn load_env_file(&mut self, base_path: &Path) -> DynErrResult<()> {
+        // removes the env_file as we won't need it again
+        let env_file = mem::replace(&mut self.env_file, None);
+        if let Some(env_file) = env_file {
+            let env_file = get_path_relative_to_base(base_path, &env_file);
+            let env_variables = read_env_file(env_file.as_path())?;
+            for (key, val) in env_variables {
+                self.env.entry(key).or_insert(val);
+            }
+        }
+        Ok(())
     }
 
     /// Validates the task configuration.
@@ -415,18 +266,7 @@ impl Task {
             }
         }
 
-        if let Some(env_file) = &self.env_file {
-            let env_file = get_path_relative_to_base(config_file_folder, env_file);
-            let env_variables = read_env_file(env_file.as_path())?;
-            command.envs(env_variables);
-        }
-
-        match &self.env {
-            None => {}
-            Some(env) => {
-                command.envs(env);
-            }
-        }
+        command.envs(&self.env);
         Ok(())
     }
 
@@ -563,6 +403,9 @@ impl Task {
         config_file: &ConfigFile,
         config_files: &ConfigFiles,
     ) -> DynErrResult<()> {
+        if self.private {
+            return Err(format!("Cannot run private task {}", self.name).into());
+        }
         return if self.script.is_some() {
             self.run_script(args, config_file)
         } else if self.program.is_some() {
@@ -572,148 +415,5 @@ impl Task {
         } else {
             Err(ConfigError::BadTask(self.name.clone(), String::from("Nothing to run.")).into())
         };
-    }
-}
-
-impl ConfigFile {
-    /// Loads a config file from the TOML representation.
-    ///
-    /// # Arguments
-    ///
-    /// * path - path of the toml file to load
-    pub fn load(path: &Path) -> DynErrResult<ConfigFile> {
-        let contents = match fs::read_to_string(&path) {
-            Ok(file_contents) => file_contents,
-            Err(e) => return Err(format!("There was an error reading the file:\n{}", e).into()),
-        };
-        let mut conf: ConfigFile = match toml::from_str(&*contents) {
-            Ok(conf) => conf,
-            Err(e) => {
-                let err_msg = e.to_string();
-                return Err(ConfigError::BadConfigFile(format!(
-                    "There was an error parsing the toml file:\n{}{}",
-                    &err_msg[..1].to_uppercase(),
-                    &err_msg[1..]
-                ))
-                .into());
-            }
-        };
-        conf.filepath = path.to_path_buf();
-        conf.move_system_tasks_up_and_setup()?;
-        Ok(conf)
-    }
-
-    /// Moves OS specific tasks up and runs the task setup
-    fn move_system_tasks_up_and_setup(&mut self) -> DynErrResult<()> {
-        let mut os_tasks: HashMap<String, Task> = HashMap::new();
-        for (name, task) in self.tasks.iter_mut() {
-            task.setup(name)?;
-
-            if task.linux.is_some() {
-                let os_task = std::mem::replace(&mut task.linux, None);
-                let mut os_task = *os_task.unwrap();
-                let os_task_name = format!("{}.linux", name);
-                os_task.setup(&os_task_name)?;
-                os_tasks.insert(os_task_name, os_task);
-            }
-
-            if task.windows.is_some() {
-                let os_task = std::mem::replace(&mut task.windows, None);
-                let mut os_task = *os_task.unwrap();
-                let os_task_name = format!("{}.windows", name);
-                os_task.setup(&os_task_name)?;
-                os_tasks.insert(os_task_name, os_task);
-            }
-
-            if task.macos.is_some() {
-                let os_task = std::mem::replace(&mut task.macos, None);
-                let mut os_task = *os_task.unwrap();
-                let os_task_name = format!("{}.macos", name);
-                os_task.setup(&os_task_name)?;
-                os_tasks.insert(os_task_name, os_task);
-            }
-        }
-        for (name, task) in os_tasks {
-            self.tasks.insert(name, task);
-        }
-        Ok(())
-    }
-
-    /// Finds a task by name on this config file if it exists.
-    ///
-    /// # Arguments
-    ///
-    /// * task_name - Name of the task to search for
-    fn get_task(&self, task_name: &str) -> Option<&Task> {
-        if let Some(task) = self.tasks.get(task_name) {
-            return Some(task);
-        }
-        None
-    }
-
-    fn get_system_task(&self, task_name: &str) -> Option<&Task> {
-        let os_task_name = format!("{}.{}", task_name, env::consts::OS);
-
-        if let Some(task) = self.tasks.get(&os_task_name) {
-            return Some(task);
-        } else if let Some(task) = self.tasks.get(task_name) {
-            return Some(task);
-        }
-        None
-    }
-}
-
-impl ConfigFiles {
-    /// Discovers the config files.
-    pub fn discover<S: AsRef<OsStr> + ?Sized>(path: &S) -> DynErrResult<ConfigFiles> {
-        let mut confs: Vec<ConfigFile> = Vec::new();
-        for config_path in ConfigFilePaths::new(path) {
-            let config = ConfigFile::load(config_path.as_path())?;
-            confs.push(config);
-        }
-        if confs.is_empty() {
-            return Err(ConfigError::NoConfigFile.into());
-        }
-        Ok(ConfigFiles { configs: confs })
-    }
-
-    /// Only loads the config file for the given path.
-    ///
-    /// # Arguments
-    ///
-    /// * path - Config file to load
-    pub fn for_path<S: AsRef<OsStr> + ?Sized>(path: &S) -> DynErrResult<ConfigFiles> {
-        let config = ConfigFile::load(Path::new(path))?;
-        Ok(ConfigFiles {
-            configs: vec![config],
-        })
-    }
-
-    /// Returns a task for the given name and the config file that contains it.
-    ///
-    /// # Arguments
-    ///
-    /// * task_name - Name of the task to search for
-    pub fn get_task(&self, task_name: &str) -> Option<(&Task, &ConfigFile)> {
-        for conf in &self.configs {
-            if let Some(task) = conf.get_task(task_name) {
-                return Some((task, conf));
-            }
-        }
-        None
-    }
-
-    /// Returns a task for the given name and the config file that contains it.
-    ///
-    /// # Arguments
-    ///
-    /// * task_name - Name of the task to search for
-    pub fn get_system_task(&self, task_name: &str) -> Option<(&Task, &ConfigFile)> {
-        for conf in &self.configs {
-            if let Some(task) = conf.get_system_task(task_name) {
-                return Some((task, conf));
-            }
-        }
-        None
     }
 }

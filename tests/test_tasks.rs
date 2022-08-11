@@ -1,7 +1,7 @@
 use assert_fs::TempDir;
 use std::fs::File;
 use std::io::Write;
-use yamis::tasks::ConfigFiles;
+use yamis::config_files::ConfigFiles;
 use yamis::types::DynErrResult;
 
 #[test]
