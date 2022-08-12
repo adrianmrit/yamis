@@ -3,7 +3,7 @@ use std::env::temp_dir;
 use std::fs::File;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Command, ExitStatus, Stdio};
 use std::{error, fmt, mem};
 
 use crate::args::ArgsMap;
@@ -345,8 +345,22 @@ impl Task {
         // let child handle ctrl-c to prevent dropping the parent and leaving the child running
         ctrlc::set_handler(move || {}).unwrap_or(());
 
-        child.wait()?;
-        Ok(())
+        let result = child.wait()?;
+        return match result.success() {
+            true => Ok(()),
+            false => match result.code() {
+                None => Err(TaskError::RuntimeError(
+                    self.name.clone(),
+                    String::from("Process did not terminate correctly"),
+                )
+                .into()),
+                Some(code) => Err(TaskError::RuntimeError(
+                    self.name.clone(),
+                    format!("Process terminated with exit code {}", code),
+                )
+                .into()),
+            },
+        };
     }
 
     /// Runs a program from a task.
