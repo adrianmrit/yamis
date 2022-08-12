@@ -115,8 +115,9 @@ cfg_if::cfg_if! {
         }
     } else {
         use std::os::unix::fs::OpenOptionsExt;
+        use std::fs::OpenOptions;
         fn create_script_file<P: AsRef<Path>>(path: P) -> DynErrResult<File> {
-            Ok(fs::OpenOptions::new()
+            Ok(OpenOptions::new()
             .create(true)
             .write(true)
             .mode(0o770)  // Create with appropriate permission
