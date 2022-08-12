@@ -1,3 +1,4 @@
 /target
 local.yamis.toml
-/prepare_release
+/target_releases
+/releases
