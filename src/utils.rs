@@ -7,6 +7,16 @@ use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+/// Returns a directed graph containing dependency relations dependency for the given tasks, where
+/// the nodes are the names of the tasks. The graph does not include tasks that do not depend, or
+/// are not dependencies of other tasks. It is also possible that the graph contains multiple
+/// connected components, that is, subgraphs that are not part of larger connected subgraphs.
+///
+/// # Arguments
+///
+/// * `tasks`: Hashmap of name to task
+///
+/// returns: Result<GraphMap<&str, (), Directed>, Box<dyn Error, Global>>
 pub fn get_task_dependency_graph<'a>(
     tasks: &'a HashMap<String, Task>,
 ) -> DynErrResult<DiGraphMap<&'a str, ()>> {
