@@ -2,13 +2,13 @@ use std::collections::HashMap;
 use std::env::temp_dir;
 use std::fs::File;
 use std::io::Write;
-use std::mem;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::{error, fmt, mem};
 
 use crate::args::ArgsMap;
 use crate::args_format::{format_arg, format_script, EscapeMode};
-use crate::config_files::{ConfigError, ConfigFile, ConfigFiles};
+use crate::config_files::{ConfigFile, ConfigFiles};
 use crate::defaults::{default_false, default_true};
 use serde_derive::Deserialize;
 use uuid::Uuid;
@@ -34,6 +34,40 @@ cfg_if::cfg_if! {
     }
 }
 
+/// Task errors
+#[derive(Debug, PartialEq)]
+pub enum TaskError {
+    /// Raised when there is an error running a task
+    RuntimeError(String, String),
+    ImproperlyConfigured(String, String),
+}
+
+impl fmt::Display for TaskError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            TaskError::RuntimeError(ref name, ref reason) => {
+                write!(f, "Error running tasks.{}:\n    {}", name, reason)
+            }
+            TaskError::ImproperlyConfigured(ref name, ref reason) => {
+                write!(f, "Improperly configured tasks.{}:\n    {}", name, reason)
+            }
+        }
+    }
+}
+
+impl error::Error for TaskError {
+    fn description(&self) -> &str {
+        match *self {
+            TaskError::RuntimeError(_, _) => "error running task",
+            TaskError::ImproperlyConfigured(_, _) => "improperly configured task",
+        }
+    }
+
+    fn cause(&self) -> Option<&dyn error::Error> {
+        None
+    }
+}
+
 /// Represents a Task
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -41,7 +75,7 @@ pub struct Task {
     #[serde(skip)]
     name: String,
     /// Whether to automatically quote argument with spaces
-    quote: Option<String>,
+    quote: Option<EscapeMode>,
     /// Script to run
     script: Option<String>,
     /// A program to run
@@ -146,7 +180,9 @@ impl Task {
     /// returns: ()
     ///
     pub(crate) fn extend_task(&mut self, base_task: &Task) {
-        inherit_value!(self.quote, base_task.quote);
+        if self.quote.is_none() && base_task.quote.is_some() {
+            self.quote = Some(base_task.quote.as_ref().unwrap().clone());
+        }
         inherit_value!(self.script, base_task.script);
         inherit_value!(self.program, base_task.program);
         inherit_value!(self.args, base_task.args);
@@ -189,37 +225,37 @@ impl Task {
     /// # Arguments
     ///  
     /// * `name` - Name of the task
-    fn validate(&self) -> Result<(), ConfigError> {
+    fn validate(&self) -> Result<(), TaskError> {
         if self.script.is_some() && self.program.is_some() {
-            return Err(ConfigError::BadTask(
+            return Err(TaskError::ImproperlyConfigured(
                 self.name.clone(),
                 String::from("Task cannot specify `script` and `program` at the same time."),
             ));
         }
 
         if self.script.is_some() && self.serial.is_some() {
-            return Err(ConfigError::BadTask(
+            return Err(TaskError::ImproperlyConfigured(
                 self.name.clone(),
                 String::from("Cannot specify `script` and `serial` at the same time."),
             ));
         }
 
         if self.program.is_some() && self.serial.is_some() {
-            return Err(ConfigError::BadTask(
+            return Err(TaskError::ImproperlyConfigured(
                 self.name.clone(),
                 String::from("Cannot specify `program` and `serial` at the same time."),
             ));
         }
 
         if self.script.is_some() && self.args.is_some() {
-            return Err(ConfigError::BadTask(
+            return Err(TaskError::ImproperlyConfigured(
                 self.name.clone(),
                 String::from("Cannot specify `args` on scripts."),
             ));
         }
 
         if self.program.is_some() && self.quote.is_some() {
-            return Err(ConfigError::BadTask(
+            return Err(TaskError::ImproperlyConfigured(
                 self.name.clone(),
                 String::from("Cannot specify `quote` on commands."),
             ));
@@ -304,7 +340,11 @@ impl Task {
                         command.args(task_args);
                     }
                     Err(e) => {
-                        return Err(ConfigError::BadTask(self.name.clone(), e.to_string()).into());
+                        return Err(TaskError::ImproperlyConfigured(
+                            self.name.clone(),
+                            e.to_string(),
+                        )
+                        .into());
                     }
                 }
             }
@@ -327,30 +367,10 @@ impl Task {
 
         self.set_command_basics(&mut command, config_file)?;
 
-        let (quote_from_file, quote) = match &self.quote {
-            None => (true, &config_file.quote),
-            Some(quote) => (false, quote),
-        };
-        let quote = match quote.to_lowercase().as_str() {
-            "always" => EscapeMode::Always,
-            "never" => EscapeMode::Never,
-            "spaces" => EscapeMode::OnSpace,
-            _ => {
-                let plain_val = match &self.quote {
-                    None => &config_file.quote,
-                    Some(val) => val,
-                };
-                let error = format!(
-                    "Invalid quote option `{}`. Allowed values are `always`, `never` and `spaces`",
-                    plain_val
-                );
-
-                return if quote_from_file {
-                    Err(ConfigError::BadConfigFile(error).into())
-                } else {
-                    Err(ConfigError::BadTask(self.name.clone(), error).into())
-                };
-            }
+        let quote = if self.quote.is_some() {
+            self.quote.as_ref().unwrap()
+        } else {
+            &config_file.quote
         };
 
         match format_script(script, args, quote) {
@@ -359,7 +379,9 @@ impl Task {
                 command.arg(script_file.to_str().unwrap());
             }
             Err(e) => {
-                return Err(ConfigError::BadTask(self.name.clone(), e.to_string()).into());
+                return Err(
+                    TaskError::ImproperlyConfigured(self.name.clone(), e.to_string()).into(),
+                );
             }
         }
 
@@ -378,9 +400,11 @@ impl Task {
             if let Some((task, task_config_file)) = config_files.get_system_task(task_name) {
                 tasks.push((task, task_config_file));
             } else {
-                return Err(
-                    ConfigError::BadConfigFile(format!("Task `{}` not found.", task_name)).into(),
-                );
+                return Err(TaskError::RuntimeError(
+                    self.name.clone(),
+                    format!("Task `{}` not found.", task_name),
+                )
+                .into());
             }
         }
         for (task, task_config_file) in tasks {
@@ -403,17 +427,23 @@ impl Task {
         config_file: &ConfigFile,
         config_files: &ConfigFiles,
     ) -> DynErrResult<()> {
-        if self.private {
-            return Err(format!("Cannot run private task {}", self.name).into());
-        }
-        return if self.script.is_some() {
+        return if self.private {
+            Err(TaskError::RuntimeError(
+                self.name.clone(),
+                String::from("Cannot run private task {}"),
+            )
+            .into())
+        } else if self.script.is_some() {
             self.run_script(args, config_file)
         } else if self.program.is_some() {
             self.run_program(args, config_file)
         } else if self.serial.is_some() {
             self.run_serial(args, config_files)
         } else {
-            Err(ConfigError::BadTask(self.name.clone(), String::from("Nothing to run.")).into())
+            Err(
+                TaskError::ImproperlyConfigured(self.name.clone(), String::from("Nothing to run."))
+                    .into(),
+            )
         };
     }
 }

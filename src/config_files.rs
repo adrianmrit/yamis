@@ -1,3 +1,4 @@
+use crate::args_format::EscapeMode;
 use crate::defaults::default_quote;
 use crate::tasks::Task;
 use crate::types::DynErrResult;
@@ -24,8 +25,6 @@ pub enum ConfigError {
     NoConfigFile, // No config file was discovered
     /// Bad Config error
     BadConfigFile(String),
-    /// Raised when there is an error in a task
-    BadTask(String, String),
 }
 
 impl fmt::Display for ConfigError {
@@ -34,9 +33,6 @@ impl fmt::Display for ConfigError {
             // ConfigError::FileNotFound(ref s) => write!(f, "File {} not found.", s),
             ConfigError::NoConfigFile => write!(f, "No config file found."),
             ConfigError::BadConfigFile(ref s) => write!(f, "Bad config file. {}", s),
-            ConfigError::BadTask(ref name, ref reason) => {
-                write!(f, "Error on tasks.{}:\n    {}", name, reason)
-            }
         }
     }
 }
@@ -47,7 +43,6 @@ impl error::Error for ConfigError {
             // ConfigError::FileNotFound(_) => "file not found",
             ConfigError::NoConfigFile => "no config discovered",
             ConfigError::BadConfigFile(_) => "bad config file",
-            ConfigError::BadTask(_, _) => "bad task",
         }
     }
 
@@ -72,7 +67,7 @@ pub struct ConfigFile {
     pub(crate) filepath: PathBuf,
     /// Whether to automatically quote argument with spaces unless task specified
     #[serde(default = "default_quote")]
-    pub(crate) quote: String,
+    pub(crate) quote: EscapeMode,
     /// Tasks inside the config file.
     tasks: HashMap<String, Task>,
     /// Env variables for all the tasks.
@@ -162,16 +157,6 @@ impl ConfigFile {
         };
         conf.filepath = path.to_path_buf();
         conf.move_system_tasks_up_and_setup()?;
-
-        // TODO: use toposort with all tasks, which should work
-        //  even if all tasks are not connected
-        //  toposort returns nodes sorted by parent first, leaft after,
-        //  so we can reverse the list and inherit in that order. This way we don't need
-        //  to do recursion, and we ensure that the base task already inherited from others.
-        //  So, loop over the reversed list, get the tasks, get the bases from the task, and
-        //  inherit from those bases (bases should have inherited from their own bases already)
-        //  This also means we perform inheritance once
-        // Need to process dependencies once all tasks are loaded
 
         let dep_graph = get_task_dependency_graph(&conf.tasks)?;
         let dependencies = toposort(&dep_graph, None);

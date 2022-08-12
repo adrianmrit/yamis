@@ -26,7 +26,7 @@ fn test_format_string() {
 
     let expected = "arg_1 arg_2 arg_a arg_a arg_b hello world {1} {arg_1} {{1}} arg_1 arg_2 arg_a arg_b hello world";
     assert_eq!(
-        format_script(string, &vars, EscapeMode::Never).unwrap(),
+        format_script(string, &vars, &EscapeMode::Never).unwrap(),
         expected
     );
 }
@@ -48,7 +48,7 @@ fn test_format_string_multiple_values() {
 
     let expected = "arg_1 arg_2 --v=arg_1 --v=arg_2";
     assert_eq!(
-        format_script(string, &vars, EscapeMode::Never).unwrap(),
+        format_script(string, &vars, &EscapeMode::Never).unwrap(),
         expected
     );
 }
@@ -70,7 +70,7 @@ fn test_format_string_prefix_suffix() {
 
     let expected = "-f arg_1.txt -f arg_2.txt --v=arg_1 --v=arg_2";
     assert_eq!(
-        format_script(string, &vars, EscapeMode::Never).unwrap(),
+        format_script(string, &vars, &EscapeMode::Never).unwrap(),
         expected
     );
 }
@@ -87,13 +87,13 @@ fn test_format_string_unclosed_tag() {
 
     let string = "{1} {2 {1}";
     assert_eq!(
-        format_script(string, &vars, EscapeMode::Always),
+        format_script(string, &vars, &EscapeMode::Always),
         expected_err
     );
 
     let string = "{1} {2} {1";
     assert_eq!(
-        format_script(string, &vars, EscapeMode::Always),
+        format_script(string, &vars, &EscapeMode::Always),
         expected_err
     );
 }
@@ -110,7 +110,7 @@ fn test_format_string_unescaped_open_token() {
 
     let string = "{1} {2} {";
     assert_eq!(
-        format_script(string, &vars, EscapeMode::Always),
+        format_script(string, &vars, &EscapeMode::Always),
         expected_err
     );
 }
@@ -127,12 +127,12 @@ fn test_format_string_unescaped_close_token() {
 
     let string = "}{1} {2}";
     assert_eq!(
-        format_script(string, &vars, EscapeMode::Always),
+        format_script(string, &vars, &EscapeMode::Always),
         expected_err
     );
     let string = "{1} {2}}";
     assert_eq!(
-        format_script(string, &vars, EscapeMode::Always),
+        format_script(string, &vars, &EscapeMode::Always),
         expected_err
     );
 }
@@ -147,7 +147,7 @@ fn test_format_string_invalid_arg() {
 
     let string = "{1} {-2} {1}";
     assert_eq!(
-        format_script(string, &vars, EscapeMode::Always),
+        format_script(string, &vars, &EscapeMode::Always),
         Err(FormatError::Invalid(String::from(
             "Invalid argument tag `{-2}`."
         )))
@@ -155,7 +155,7 @@ fn test_format_string_invalid_arg() {
 
     let string = "{1} {-} {1}";
     assert_eq!(
-        format_script(string, &vars, EscapeMode::Always),
+        format_script(string, &vars, &EscapeMode::Always),
         Err(FormatError::Invalid(String::from(
             "Invalid argument tag `{-}`."
         )))
@@ -163,7 +163,7 @@ fn test_format_string_invalid_arg() {
 
     let string = "{1} { } {1}";
     assert_eq!(
-        format_script(string, &vars, EscapeMode::Always),
+        format_script(string, &vars, &EscapeMode::Always),
         Err(FormatError::Invalid(String::from(
             "Invalid argument tag `{ }`."
         )))
@@ -171,7 +171,7 @@ fn test_format_string_invalid_arg() {
 
     let string = "{1} {_a} {1}";
     assert_eq!(
-        format_script(string, &vars, EscapeMode::Always),
+        format_script(string, &vars, &EscapeMode::Always),
         Err(FormatError::Invalid(String::from(
             "Invalid argument tag `{_a}`."
         )))
@@ -179,7 +179,7 @@ fn test_format_string_invalid_arg() {
 
     let string = "{1} {-_a} {1}";
     assert_eq!(
-        format_script(string, &vars, EscapeMode::Always),
+        format_script(string, &vars, &EscapeMode::Always),
         Err(FormatError::Invalid(String::from(
             "Invalid argument tag `{-_a}`."
         )))
