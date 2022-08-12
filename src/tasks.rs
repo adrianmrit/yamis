@@ -157,9 +157,9 @@ fn get_temp_script(content: &str, extension: &str) -> DynErrResult<PathBuf> {
 
 /// Shortcut to inherit values from the task
 macro_rules! inherit_value {
-    ( $task:expr, $base:expr ) => {
-        if $task.is_none() && $base.is_some() {
-            $task = $base.clone();
+    ( $from_task:expr, $from_base:expr ) => {
+        if $from_task.is_none() && $from_base.is_some() {
+            $from_task = $from_base.clone();
         }
     };
 }
@@ -195,6 +195,8 @@ impl Task {
             self.quote = Some(base_task.quote.as_ref().unwrap().clone());
         }
         inherit_value!(self.script, base_task.script);
+        inherit_value!(self.interpreter, base_task.interpreter);
+        inherit_value!(self.script_ext, base_task.script_ext);
         inherit_value!(self.program, base_task.program);
         inherit_value!(self.args, base_task.args);
         inherit_value!(self.serial, base_task.serial);
