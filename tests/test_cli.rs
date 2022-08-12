@@ -380,3 +380,53 @@ fn test_env_inheritance() -> Result<(), Box<dyn std::error::Error>> {
         .stdout(predicate::str::contains("hello world, 1+1=2"));
     Ok(())
 }
+
+#[test]
+fn test_extend_args() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp_dir = TempDir::new().unwrap();
+    let (batch_file_name, batch_file_content) = if cfg!(target_os = "windows") {
+        ("echo_args.cmd", "echo %*".as_bytes())
+    } else {
+        ("echo_args.bash", "echo $1 $2 $*".as_bytes())
+    };
+    let mut batch_file = File::create(tmp_dir.join(batch_file_name))?;
+    batch_file.write_all(batch_file_content).unwrap();
+
+    let mut file = File::create(tmp_dir.join("project.yamis.toml"))?;
+    file.write_all(
+        format!(
+            r#"
+            [tasks.echo_program]
+            program = "bash"
+            args = ["-c", "{b}"]
+            private=true
+            
+            [tasks.echo_program.windows]
+            program = "cmd.exe"
+            args = ["/C", "{b}"]
+            private=true
+
+            [tasks.hello]
+            bases = ["echo_program"]
+            args_extend = ["hello", "world"]
+            private=true
+            
+            [tasks.hello.windows]
+            bases = ["echo_program.windows"]
+            args_extend = ["hello", "world"]
+            private=true
+            "#,
+            b = batch_file_name
+        )
+        .as_bytes(),
+    )?;
+
+    let mut cmd = Command::cargo_bin("yamis")?;
+    cmd.current_dir(tmp_dir.path());
+    cmd.arg("hello");
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("hello world"));
+
+    Ok(())
+}

@@ -82,6 +82,8 @@ pub struct Task {
     program: Option<String>,
     /// Args to pass to a command
     args: Option<Vec<String>>,
+    /// Extends args from bases
+    args_extend: Option<Vec<String>>,
     /// If given, runs all those tasks at once
     serial: Option<Vec<String>>,
     /// Env variables for the task
@@ -198,6 +200,14 @@ impl Task {
             }
         } else if self.env.is_empty() {
             self.env.extend(base_task.env.clone());
+        }
+
+        if self.args_extend.is_some() {
+            let new_tasks = mem::replace(&mut self.args_extend, None).unwrap();
+            if self.args.is_none() {
+                self.args = mem::replace(&mut self.args, Some(Vec::<String>::new()));
+            }
+            self.args.as_mut().unwrap().extend(new_tasks);
         }
     }
 
