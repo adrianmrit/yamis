@@ -18,17 +18,15 @@ use crate::utils::{get_path_relative_to_base, read_env_file};
 
 cfg_if::cfg_if! {
     if #[cfg(target_os = "windows")] {
-        const SHELL_PROGRAM: &str = "cmd";
-        const SHELL_PROGRAM_ARG: &str = "/C";
-        const SCRIPT_EXTENSION: &str = "bat";
+        // Will run the actual script in CMD, but we don't need to specify /C option
+        const DEFAULT_INTERPRETER: &str = "powershell";
+        const DEFAULT_SCRIPT_EXTENSION: &str = "cmd";
     } else if #[cfg(target_os = "linux")] {
-        const SHELL_PROGRAM: &str = "bash";
-        const SHELL_PROGRAM_ARG: &str = "-c";
-        const SCRIPT_EXTENSION: &str = "sh";
+        const DEFAULT_INTERPRETER: &str = "bash";
+        const DEFAULT_SCRIPT_EXTENSION: &str = "sh";
     } else if #[cfg(target_os = "macos")] {
-        const SHELL_PROGRAM: &str = "bash";
-        const SHELL_PROGRAM_ARG: &str = "-c";
-        const SCRIPT_EXTENSION: &str = "sh";
+        const DEFAULT_INTERPRETER: &str = "bash";
+        const DEFAULT_SCRIPT_EXTENSION: &str = "sh";
     }else {
         compile_error!("Unsupported platform.");
     }
@@ -78,6 +76,10 @@ pub struct Task {
     quote: Option<EscapeMode>,
     /// Script to run
     script: Option<String>,
+    /// Interpreter program to use
+    interpreter: Option<Vec<String>>,
+    /// Interpreter
+    script_ext: Option<String>,
     /// A program to run
     program: Option<String>,
     /// Args to pass to a command
@@ -134,12 +136,18 @@ cfg_if::cfg_if! {
 /// # Arguments
 ///
 /// * `content` - Content of the script file
-fn get_temp_script(content: String) -> DynErrResult<PathBuf> {
+fn get_temp_script(content: &str, extension: &str) -> DynErrResult<PathBuf> {
     let mut path = temp_dir();
 
-    // Alternatives to uuid are timestamp and random number, or those together,
-    // so this might change in the future.
-    let file_name = format!("{}.yamis.{}", Uuid::new_v4(), SCRIPT_EXTENSION);
+    let extension = if extension.is_empty() {
+        String::new()
+    } else if extension.starts_with('.') {
+        String::from(extension)
+    } else {
+        format!(".{}", extension)
+    };
+
+    let file_name = format!("{}-yamis{}", Uuid::new_v4(), extension);
     path.push(file_name);
 
     let mut file = create_script_file(&path)?;
@@ -240,7 +248,14 @@ impl Task {
         if self.script.is_some() && self.program.is_some() {
             return Err(TaskError::ImproperlyConfigured(
                 self.name.clone(),
-                String::from("Task cannot specify `script` and `program` at the same time."),
+                String::from("Cannot specify `script` and `program` at the same time."),
+            ));
+        }
+
+        if self.interpreter.is_some() && self.interpreter.as_ref().unwrap().is_empty() {
+            return Err(TaskError::ImproperlyConfigured(
+                self.name.clone(),
+                String::from("`interpreter` parameter cannot be an empty array."),
             ));
         }
 
@@ -373,8 +388,23 @@ impl Task {
     /// * `config_file` - Configuration file of the task
     fn run_script(&self, args: &ArgsMap, config_file: &ConfigFile) -> DynErrResult<()> {
         let script = self.script.as_ref().unwrap();
-        let mut command = Command::new(SHELL_PROGRAM);
-        command.arg(SHELL_PROGRAM_ARG);
+
+        // Interpreter is a list, because sometimes there is need to pass extra arguments to the
+        // interpreter, such as the /C option in the batch case
+        let mut interpreter_and_args = if let Some(interpreter) = &self.interpreter {
+            interpreter.clone()
+        } else {
+            vec![String::from(DEFAULT_INTERPRETER)]
+        };
+
+        let default_script_extension = String::from(DEFAULT_SCRIPT_EXTENSION);
+        let script_extension = self
+            .script_ext
+            .as_ref()
+            .unwrap_or(&default_script_extension);
+
+        let mut command = Command::new(&interpreter_and_args.remove(0));
+        command.args(interpreter_and_args);
 
         self.set_command_basics(&mut command, config_file)?;
 
@@ -386,7 +416,7 @@ impl Task {
 
         match format_script(script, args, quote) {
             Ok(script) => {
-                let script_file = get_temp_script(script)?;
+                let script_file = get_temp_script(&script, script_extension)?;
                 command.arg(script_file.to_str().unwrap());
             }
             Err(e) => {
