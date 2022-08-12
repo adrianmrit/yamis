@@ -485,11 +485,10 @@ impl Task {
         config_files: &ConfigFiles,
     ) -> DynErrResult<()> {
         return if self.private {
-            Err(TaskError::RuntimeError(
-                self.name.clone(),
-                String::from("Cannot run private task {}"),
+            Err(
+                TaskError::RuntimeError(self.name.clone(), String::from("Cannot run private task"))
+                    .into(),
             )
-            .into())
         } else if self.script.is_some() {
             self.run_script(args, config_file)
         } else if self.program.is_some() {
