@@ -3,7 +3,7 @@ use std::env::temp_dir;
 use std::fs::File;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitStatus, Stdio};
+use std::process::{Command, Stdio};
 use std::{error, fmt, mem};
 
 use crate::args::ArgsMap;
@@ -14,7 +14,7 @@ use serde_derive::Deserialize;
 use uuid::Uuid;
 
 use crate::types::DynErrResult;
-use crate::utils::{get_path_relative_to_base, read_env_file};
+use crate::utils::{get_path_relative_to_base, read_env_file, sub_error_str};
 
 cfg_if::cfg_if! {
     if #[cfg(target_os = "windows")] {
@@ -44,10 +44,20 @@ impl fmt::Display for TaskError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
             TaskError::RuntimeError(ref name, ref reason) => {
-                write!(f, "Error running tasks.{}:\n    {}", name, reason)
+                write!(
+                    f,
+                    "Error running tasks.{}:\n{}",
+                    name,
+                    sub_error_str(reason)
+                )
             }
             TaskError::ImproperlyConfigured(ref name, ref reason) => {
-                write!(f, "Improperly configured tasks.{}:\n    {}", name, reason)
+                write!(
+                    f,
+                    "Improperly configured tasks.{}:\n{}",
+                    name,
+                    sub_error_str(reason)
+                )
             }
         }
     }
@@ -340,7 +350,12 @@ impl Task {
     ///  
     /// * `command` - Command to spawn
     fn spawn_command(&self, command: &mut Command) -> DynErrResult<()> {
-        let mut child = command.spawn()?;
+        let mut child = match command.spawn() {
+            Ok(child) => child,
+            Err(e) => {
+                return Err(TaskError::RuntimeError(self.name.clone(), format!("{}", e)).into())
+            }
+        };
 
         // let child handle ctrl-c to prevent dropping the parent and leaving the child running
         ctrlc::set_handler(move || {}).unwrap_or(());
