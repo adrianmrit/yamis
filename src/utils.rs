@@ -115,12 +115,6 @@ pub fn read_env_file<S: AsRef<OsStr> + ?Sized>(path: &S) -> DynErrResult<BTreeMa
 ///
 /// returns: String
 ///
-/// # Examples
-///
-/// ```
-/// let formatted = sub_error_message("first line\nsecond line");
-/// assert_eq!(formatted, "    First line\n    second line");
-/// ```
 pub fn sub_error_str(error: &str) -> String {
     let lines: Vec<&str> = error.lines().rev().collect();
     // We add 4 extra spaces per line

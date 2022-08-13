@@ -409,12 +409,10 @@ fn test_extend_args() -> Result<(), Box<dyn std::error::Error>> {
             [tasks.hello]
             bases = ["echo_program"]
             args_extend = ["hello", "world"]
-            private=true
             
             [tasks.hello.windows]
             bases = ["echo_program.windows"]
             args_extend = ["hello", "world"]
-            private=true
             "#,
             b = batch_file_name
         )
