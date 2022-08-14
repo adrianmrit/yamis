@@ -186,7 +186,7 @@ impl Task {
     ///
     /// # Examples
     ///
-    pub(crate) fn setup(&mut self, name: &str, base_path: &Path) -> DynErrResult<()> {
+    pub fn setup(&mut self, name: &str, base_path: &Path) -> DynErrResult<()> {
         self.name = String::from(name);
         self.load_env_file(base_path)?;
         Ok(self.validate()?)
@@ -317,21 +317,14 @@ impl Task {
         command.stderr(Stdio::inherit());
         command.stdin(Stdio::inherit());
 
-        let config_file_folder = config_file.filepath.parent().unwrap();
+        let config_file_folder = config_file.directory();
 
-        match &self.wd {
-            None => {}
-            Some(wd) => {
-                let wd = get_path_relative_to_base(config_file_folder, wd);
-                command.current_dir(wd);
-            }
+        let wd = match &self.wd {
+            None => config_file.working_directory(),
+            Some(wd) => get_path_relative_to_base(config_file_folder, wd),
         };
 
-        if let Some(env_file) = &config_file.env_file {
-            let env_file = get_path_relative_to_base(config_file_folder, env_file);
-            let env_variables = read_env_file(env_file.as_path())?;
-            command.envs(env_variables);
-        }
+        command.current_dir(wd);
 
         match &config_file.env {
             None => {}

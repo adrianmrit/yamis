@@ -2,7 +2,7 @@ use crate::args_format::EscapeMode;
 use crate::defaults::default_quote;
 use crate::tasks::Task;
 use crate::types::DynErrResult;
-use crate::utils::get_task_dependency_graph;
+use crate::utils::{get_path_relative_to_base, get_task_dependency_graph, read_env_file};
 use petgraph::algo::toposort;
 use serde_derive::Deserialize;
 use std::collections::HashMap;
@@ -65,6 +65,9 @@ pub struct ConfigFile {
     /// Path of the file.
     #[serde(skip)]
     pub(crate) filepath: PathBuf,
+    #[serde(default)]
+    /// Working directory. Defaults to the folder containing the config file.
+    wd: String,
     /// Whether to automatically quote argument with spaces unless task specified
     #[serde(default = "default_quote")]
     pub(crate) quote: EscapeMode,
@@ -158,6 +161,21 @@ impl ConfigFile {
         conf.filepath = path.to_path_buf();
         conf.move_system_tasks_up_and_setup()?;
 
+        if let Some(env_file) = &conf.env_file {
+            let env_from_file = read_env_file(Path::new(&env_file))?;
+            match conf.env.as_mut() {
+                None => {
+                    conf.env = Some(HashMap::from_iter(env_from_file.into_iter()));
+                }
+                Some(env) => {
+                    for (key, val) in env_from_file.into_iter() {
+                        // manually set env takes precedence over env_file
+                        env.entry(key).or_insert(val);
+                    }
+                }
+            }
+        }
+
         let dep_graph = get_task_dependency_graph(&conf.tasks)?;
         let dependencies = toposort(&dep_graph, None);
         let dependencies = match dependencies {
@@ -185,6 +203,17 @@ impl ConfigFile {
             conf.tasks.insert(task_name, task);
         }
         Ok(conf)
+    }
+
+    pub fn directory(&self) -> &Path {
+        self.filepath.parent().unwrap()
+    }
+
+    /// Returns the working directory for the config file
+    pub fn working_directory(&self) -> PathBuf {
+        // Some sort of cache would make it faster, but keeping it
+        // simple until it is really needed
+        get_path_relative_to_base(self.filepath.parent().unwrap(), &self.wd)
     }
 
     /// Moves OS specific tasks up and runs the task setup
