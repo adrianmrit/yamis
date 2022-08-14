@@ -1,5 +1,10 @@
 use std::collections::HashMap;
+use std::env;
 use yamis::args_format::{format_arg, format_script, EscapeMode, FormatError};
+
+fn empty_env() -> HashMap<String, String> {
+    HashMap::new()
+}
 
 #[test]
 fn test_format_string() {
@@ -26,7 +31,7 @@ fn test_format_string() {
 
     let expected = "arg_1 arg_2 arg_a arg_a arg_b hello world {1} {arg_1} {{1}} arg_1 arg_2 arg_a arg_b hello world";
     assert_eq!(
-        format_script(string, &vars, &EscapeMode::Never).unwrap(),
+        format_script(string, &vars, &empty_env(), &EscapeMode::Never).unwrap(),
         expected
     );
 }
@@ -48,7 +53,7 @@ fn test_format_string_multiple_values() {
 
     let expected = "arg_1 arg_2 --v=arg_1 --v=arg_2";
     assert_eq!(
-        format_script(string, &vars, &EscapeMode::Never).unwrap(),
+        format_script(string, &vars, &empty_env(), &EscapeMode::Never).unwrap(),
         expected
     );
 }
@@ -70,7 +75,7 @@ fn test_format_string_prefix_suffix() {
 
     let expected = "-f arg_1.txt -f arg_2.txt --v=arg_1 --v=arg_2";
     assert_eq!(
-        format_script(string, &vars, &EscapeMode::Never).unwrap(),
+        format_script(string, &vars, &empty_env(), &EscapeMode::Never).unwrap(),
         expected
     );
 }
@@ -87,13 +92,13 @@ fn test_format_string_unclosed_tag() {
 
     let string = "{1} {2 {1}";
     assert_eq!(
-        format_script(string, &vars, &EscapeMode::Always),
+        format_script(string, &vars, &empty_env(), &EscapeMode::Always),
         expected_err
     );
 
     let string = "{1} {2} {1";
     assert_eq!(
-        format_script(string, &vars, &EscapeMode::Always),
+        format_script(string, &vars, &empty_env(), &EscapeMode::Always),
         expected_err
     );
 }
@@ -110,7 +115,7 @@ fn test_format_string_unescaped_open_token() {
 
     let string = "{1} {2} {";
     assert_eq!(
-        format_script(string, &vars, &EscapeMode::Always),
+        format_script(string, &vars, &empty_env(), &EscapeMode::Always),
         expected_err
     );
 }
@@ -127,12 +132,12 @@ fn test_format_string_unescaped_close_token() {
 
     let string = "}{1} {2}";
     assert_eq!(
-        format_script(string, &vars, &EscapeMode::Always),
+        format_script(string, &vars, &empty_env(), &EscapeMode::Always),
         expected_err
     );
     let string = "{1} {2}}";
     assert_eq!(
-        format_script(string, &vars, &EscapeMode::Always),
+        format_script(string, &vars, &empty_env(), &EscapeMode::Always),
         expected_err
     );
 }
@@ -147,7 +152,7 @@ fn test_format_string_invalid_arg() {
 
     let string = "{1} {-2} {1}";
     assert_eq!(
-        format_script(string, &vars, &EscapeMode::Always),
+        format_script(string, &vars, &empty_env(), &EscapeMode::Always),
         Err(FormatError::Invalid(String::from(
             "Invalid argument tag `{-2}`."
         )))
@@ -155,7 +160,7 @@ fn test_format_string_invalid_arg() {
 
     let string = "{1} {-} {1}";
     assert_eq!(
-        format_script(string, &vars, &EscapeMode::Always),
+        format_script(string, &vars, &empty_env(), &EscapeMode::Always),
         Err(FormatError::Invalid(String::from(
             "Invalid argument tag `{-}`."
         )))
@@ -163,7 +168,7 @@ fn test_format_string_invalid_arg() {
 
     let string = "{1} { } {1}";
     assert_eq!(
-        format_script(string, &vars, &EscapeMode::Always),
+        format_script(string, &vars, &empty_env(), &EscapeMode::Always),
         Err(FormatError::Invalid(String::from(
             "Invalid argument tag `{ }`."
         )))
@@ -171,7 +176,7 @@ fn test_format_string_invalid_arg() {
 
     let string = "{1} {_a} {1}";
     assert_eq!(
-        format_script(string, &vars, &EscapeMode::Always),
+        format_script(string, &vars, &empty_env(), &EscapeMode::Always),
         Err(FormatError::Invalid(String::from(
             "Invalid argument tag `{_a}`."
         )))
@@ -179,10 +184,36 @@ fn test_format_string_invalid_arg() {
 
     let string = "{1} {-_a} {1}";
     assert_eq!(
-        format_script(string, &vars, &EscapeMode::Always),
+        format_script(string, &vars, &empty_env(), &EscapeMode::Always),
         Err(FormatError::Invalid(String::from(
             "Invalid argument tag `{-_a}`."
         )))
+    );
+}
+
+#[test]
+fn test_format_string_env() {
+    let vars = HashMap::<String, Vec<String>>::new();
+    let mut env = HashMap::new();
+
+    env.insert(
+        String::from("TEST_ENV_VARIABLE"),
+        String::from("sample_val"),
+    );
+
+    env.insert(
+        String::from("TEST_ENV_VARIABLE_2"),
+        String::from("sample_val_2"),
+    );
+
+    env::set_var("TEST_ENV_VARIABLE_3", "sample_val_3");
+
+    let string = "--f={$TEST_ENV_VARIABLE(.txt)} ({$MISSING_ENV_VARIABLE?}) {$TEST_ENV_VARIABLE_2} {$TEST_ENV_VARIABLE_3}";
+
+    let expected = "--f=sample_val.txt () sample_val_2 sample_val_3";
+    assert_eq!(
+        format_script(string, &vars, &env, &EscapeMode::Never).unwrap(),
+        expected
     );
 }
 
@@ -205,26 +236,26 @@ fn test_format_arg() {
 
     let string = "--f={3}";
     let expected = "--f=arg_3";
-    let actual = format_arg(string, &vars).unwrap();
+    let actual = format_arg(string, &vars, &empty_env()).unwrap();
     assert_eq!(actual.len(), 1);
     assert_eq!(actual[0], expected);
 
     let string = "{v}";
     let expected = vec!["arg_1", "arg_2"];
-    let actual = format_arg(string, &vars).unwrap();
+    let actual = format_arg(string, &vars, &empty_env()).unwrap();
     assert_eq!(actual, expected);
 
     let string = "{4?}";
-    let actual = format_arg(string, &vars).unwrap();
+    let actual = format_arg(string, &vars, &empty_env()).unwrap();
     assert_eq!(actual, Vec::<String>::new());
 
     let string = "";
-    let actual = format_arg(string, &vars).unwrap();
+    let actual = format_arg(string, &vars, &empty_env()).unwrap();
     assert_eq!(actual, Vec::<String>::new());
 
     let string = "--{(f=)v}.txt";
     let expected = vec!["--f=arg_1.txt", "--f=arg_2.txt"];
-    let actual = format_arg(string, &vars).unwrap();
+    let actual = format_arg(string, &vars, &empty_env()).unwrap();
     assert_eq!(actual, expected);
 }
 
@@ -238,30 +269,62 @@ fn test_format_arg_invalid() {
 
     let string = "{1}{2}";
     assert_eq!(
-        format_arg(string, &vars),
+        format_arg(string, &vars, &empty_env()),
         Err(FormatError::Invalid(String::from(
             "Arguments of commands can only have an argument tag."
         )))
     );
     let string = "{1}{1}";
     assert_eq!(
-        format_arg(string, &vars),
+        format_arg(string, &vars, &empty_env()),
         Err(FormatError::Invalid(String::from(
             "Arguments of commands can only have an argument tag."
         )))
     );
     let string = "{1} {2}";
     assert_eq!(
-        format_arg(string, &vars),
+        format_arg(string, &vars, &empty_env()),
         Err(FormatError::Invalid(String::from(
             "Arguments of commands can only have an argument tag."
         )))
     );
     let string = "{1}{2}{3}";
     assert_eq!(
-        format_arg(string, &vars),
+        format_arg(string, &vars, &empty_env()),
         Err(FormatError::Invalid(String::from(
             "Arguments of commands can only have an argument tag."
         )))
     );
+}
+
+#[test]
+fn test_format_arg_env() {
+    let vars = HashMap::<String, Vec<String>>::new();
+    let mut env = HashMap::new();
+
+    env.insert(
+        String::from("TEST_ENV_VARIABLE"),
+        String::from("sample_val"),
+    );
+
+    let string = "--f={$TEST_ENV_VARIABLE}";
+    let expected = vec!["--f=sample_val"];
+    let actual = format_arg(string, &vars, &env).unwrap();
+    assert_eq!(actual, expected);
+
+    let string = "{$TEST_ENV_VARIABLE}";
+    let expected = vec!["sample_val"];
+    let actual = format_arg(string, &vars, &env).unwrap();
+    assert_eq!(actual, expected);
+
+    let string = "{$MISSING_ENV_VARIABLE?}";
+    let actual = format_arg(string, &vars, &env).unwrap();
+    assert_eq!(actual, Vec::<String>::new());
+
+    env::set_var("MISSING_ENV_VARIABLE", "value_missing_env_var");
+
+    let string = "{$MISSING_ENV_VARIABLE}";
+    let expected = vec!["value_missing_env_var"];
+    let actual = format_arg(string, &vars, &env).unwrap();
+    assert_eq!(actual, expected);
 }

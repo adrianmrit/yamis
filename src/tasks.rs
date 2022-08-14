@@ -251,6 +251,24 @@ impl Task {
         Ok(())
     }
 
+    /// Returns the environment variables by merging the ones from the config file with
+    /// the ones from the task, where the task takes precedence.
+    ///
+    /// # Arguments
+    ///
+    /// * `config_file`: Config file to load extra environment variables from
+    ///
+    /// returns: HashMap<String, String, RandomState>
+    fn get_env(&self, config_file: &ConfigFile) -> HashMap<String, String> {
+        let mut env = self.env.clone();
+        if let Some(config_file_env) = &config_file.env {
+            for (key, val) in config_file_env {
+                env.entry(key.clone()).or_insert(val.clone());
+            }
+        }
+        env
+    }
+
     /// Validates the task configuration.
     ///
     /// # Arguments
@@ -326,14 +344,6 @@ impl Task {
 
         command.current_dir(wd);
 
-        match &config_file.env {
-            None => {}
-            Some(env) => {
-                command.envs(env);
-            }
-        }
-
-        command.envs(&self.env);
         Ok(())
     }
 
@@ -354,7 +364,7 @@ impl Task {
         ctrlc::set_handler(move || {}).unwrap_or(());
 
         let result = child.wait()?;
-        return match result.success() {
+        match result.success() {
             true => Ok(()),
             false => match result.code() {
                 None => Err(TaskError::RuntimeError(
@@ -368,7 +378,7 @@ impl Task {
                 )
                 .into()),
             },
-        };
+        }
     }
 
     /// Runs a program from a task.
@@ -383,9 +393,12 @@ impl Task {
         let mut command = Command::new(program);
         self.set_command_basics(&mut command, config_file)?;
 
+        let env = self.get_env(config_file);
+        command.envs(&env);
+
         if let Some(task_args) = &self.args {
             for task_arg in task_args {
-                match format_arg(task_arg, args) {
+                match format_arg(task_arg, args, &env) {
                     Ok(task_args) => {
                         command.args(task_args);
                     }
@@ -430,6 +443,9 @@ impl Task {
         let mut command = Command::new(&interpreter_and_args.remove(0));
         command.args(interpreter_and_args);
 
+        let env = self.get_env(config_file);
+        command.envs(&env);
+
         self.set_command_basics(&mut command, config_file)?;
 
         let quote = if self.quote.is_some() {
@@ -438,7 +454,7 @@ impl Task {
             &config_file.quote
         };
 
-        match format_script(script, args, quote) {
+        match format_script(script, args, &env, quote) {
             Ok(script) => {
                 let script_file = get_temp_script(&script, script_extension)?;
                 command.arg(script_file.to_str().unwrap());

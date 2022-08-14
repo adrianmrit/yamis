@@ -3,7 +3,6 @@ use lazy_static::lazy_static;
 use regex::Regex;
 use serde_derive::Deserialize;
 use std::collections::HashMap;
-use std::env::VarError;
 use std::str::{Chars, FromStr};
 use std::{env, error, fmt, mem};
 
@@ -17,7 +16,7 @@ const EMPTY_STACK_SYMBOL: char = '\0';
 const PREFIX_REG: &str = r"(?:\((?P<prefix>.*?)\))";
 
 /// Matches and environment variable in an argument tag
-const ENV_REG: &str = r"(?:$(?P<env>.+)";
+const ENV_REG: &str = r"(?:\$(?P<env>.+?))";
 
 /// Matches an argument of the argument tag
 const ARG_REG: &str = r"(?P<arg>([a-zA-Z]+[a-zA-Z\d_\-]*)|\d+|\*)";
@@ -27,6 +26,14 @@ const OPTIONAL_REG: &str = r"(?P<optional>\?)";
 
 /// Matches the suffix of an argument tag
 const SUFFIX_REG: &str = r"(?:\((?P<suffix>.*?)\))";
+
+lazy_static! {
+    /// Regex used to parse argument tags
+    static ref VALID_ARG_RE: Regex = Regex::new(
+        format!(r"^{PREFIX_REG}?(?:{ENV_REG}|{ARG_REG}){OPTIONAL_REG}?{SUFFIX_REG}?$").as_str(),
+    )
+        .unwrap();
+}
 
 /// Iterator over tokens.
 struct Tokens<'a> {
@@ -60,7 +67,7 @@ pub enum FormatError {
     /// Raised when an invalid format string is given
     Invalid(String), // Invalid format string
     /// Raised when a required argument was not given
-    KeyError(String), // Missing mandatory argument
+    KeyError(String, bool), // Missing mandatory argument
 }
 
 /// Modes to escape (add quotes) the arguments passed to the script
@@ -79,7 +86,13 @@ impl fmt::Display for FormatError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
             FormatError::Invalid(ref s) => write!(f, "Invalid format string. {}", s),
-            FormatError::KeyError(ref s) => write!(f, "Missing mandatory argument: {}", s),
+            FormatError::KeyError(ref s, is_env) => {
+                if is_env {
+                    write!(f, "Mandatory environment variable `{}` not set.", s)
+                } else {
+                    write!(f, "Mandatory argument `{}` not set.", s)
+                }
+            }
         }
     }
 }
@@ -88,7 +101,7 @@ impl error::Error for FormatError {
     fn description(&self) -> &str {
         match *self {
             FormatError::Invalid(_) => "invalid format string",
-            FormatError::KeyError(_) => "missing mandatory argument",
+            FormatError::KeyError(_, _) => "missing mandatory argument",
         }
     }
 
@@ -198,18 +211,6 @@ impl<'a> Iterator for Tokens<'a> {
     }
 }
 
-/// Returns the regex used to parse argument tags
-fn get_argument_tag_regex() -> Regex {
-    Regex::new(
-        r"^(?:\((?P<prefix>.*?)\))?(?:$(?P<env>.+)|(?P<arg>([a-zA-Z]+[a-zA-Z\d_\-]*)|\d+|\*))(?P<optional>\?)?(?:\((?P<suffix>.*?)\))?$",
-    )
-        .unwrap()
-}
-
-lazy_static! {
-    static ref VALID_ARG_RE: Regex = get_argument_tag_regex();
-}
-
 /// Given the content of an argument tag, returns a representation of it
 fn get_argument_tag(arg: &str) -> Option<ArgumentTag> {
     let capture = VALID_ARG_RE.captures(arg)?;
@@ -269,7 +270,7 @@ fn replace_tag_with_env_variable(
 /// # Arguments
 ///
 /// * `tag`: ArgumentTag struct containing the tag parameters
-/// * `args`:Hashmap with argument values
+/// * `args`: Hashmap with argument values
 ///
 /// returns: Option<Vec<String, Global>>
 ///
@@ -295,20 +296,45 @@ fn replace_tag_with_args(tag: &ArgumentTag, args: &ArgsMap) -> Option<Vec<String
     Some(result)
 }
 
+/// Replaces the tag with the appropriate value
+///
+/// # Arguments
+///
+/// * `tag`: ArgumentTag struct containing the tag parameters
+/// * `args`: Hashmap with argument values
+/// * `additional_env`: Hashmap with additional environment values.
+///  Preferred over system env variables
+///
+/// returns: Option<Vec<String, Global>>
+///
+fn replace_tag(
+    tag: &ArgumentTag,
+    args: &ArgsMap,
+    additional_env: &HashMap<String, String>,
+) -> Option<Vec<String>> {
+    if tag.is_env {
+        replace_tag_with_env_variable(tag, additional_env).map(|val| vec![val])
+    } else {
+        replace_tag_with_args(tag, args)
+    }
+}
+
 /// Formats a script string.
 ///
 /// # Arguments
 ///
 /// * `fmtstr`: Script string
 /// * `args`: Values to format the script with
-/// * `env_variables`: Manually set environment variables
+/// * `additional_env`: Environment variables defined in the task/file
+///  or env file loaded by the task/file
 /// * `escape_mode`: How the passed values will be escaped
 ///
 /// returns: Result<String, FormatError>
+///
 pub fn format_script(
     fmtstr: &str,
     args: &ArgsMap,
-    // env_variables: &HashMap<String, String>,
+    additional_env: &HashMap<String, String>,
     escape_mode: &EscapeMode,
 ) -> Result<String, FormatError> {
     let tokens = Tokens::new(fmtstr);
@@ -324,11 +350,11 @@ pub fn format_script(
                     )))
                 }
                 Some(tag) => {
-                    let values = replace_tag_with_args(&tag, args);
+                    let values = replace_tag(&tag, args, additional_env);
                     match values {
                         None => {
                             if tag.required {
-                                return Err(FormatError::KeyError(tag.arg));
+                                return Err(FormatError::KeyError(tag.arg, tag.is_env));
                             }
                         }
                         Some(values) => {
@@ -374,7 +400,13 @@ pub fn format_script(
 ///
 /// * `fmtstr`: Script string
 /// * `args`: Values to format the script with
-pub fn format_arg(fmtstr: &str, args: &ArgsMap) -> Result<Vec<String>, FormatError> {
+/// * `additional_env`: Environment variables defined in the task/file
+///  or env file loaded by the task/file
+pub fn format_arg(
+    fmtstr: &str,
+    args: &ArgsMap,
+    additional_env: &HashMap<String, String>,
+) -> Result<Vec<String>, FormatError> {
     let mut out: Vec<String> = Vec::new();
     if fmtstr.is_empty() {
         return Ok(out);
@@ -433,11 +465,11 @@ pub fn format_arg(fmtstr: &str, args: &ArgsMap) -> Result<Vec<String>, FormatErr
                 )))
             }
             Some(tag) => {
-                let values = replace_tag_with_args(&tag, args);
+                let values = replace_tag(&tag, args, additional_env);
                 match values {
                     None => {
                         if tag.required {
-                            return Err(FormatError::KeyError(tag.arg));
+                            return Err(FormatError::KeyError(tag.arg, tag.is_env));
                         } else if !prefix.is_empty() || !suffix.is_empty() {
                             out.push(format!("{}{}", prefix, suffix));
                         }
