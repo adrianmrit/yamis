@@ -292,10 +292,10 @@ impl Task {
             ));
         }
 
-        if self.program.is_some() && self.quote.is_some() {
+        if self.serial.is_none() && self.quote.is_some() {
             return Err(TaskError::ImproperlyConfigured(
                 self.name.clone(),
-                String::from("Cannot specify `quote` on commands."),
+                String::from("`quote` parameter can only be set for scripts."),
             ));
         }
         Ok(())
