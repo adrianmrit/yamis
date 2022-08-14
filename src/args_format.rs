@@ -2,14 +2,31 @@ use crate::args::ArgsMap;
 use lazy_static::lazy_static;
 use regex::Regex;
 use serde_derive::Deserialize;
+use std::collections::HashMap;
+use std::env::VarError;
 use std::str::{Chars, FromStr};
-use std::{error, fmt, mem};
+use std::{env, error, fmt, mem};
 
 // Symbols used to identify the state on the stack
 const OPEN_TAG_SYMBOL: char = '{';
 const CLOSE_TAG_SYMBOL: char = '}';
 const INSIDE_TAG_SYMBOL: char = '_';
 const EMPTY_STACK_SYMBOL: char = '\0';
+
+/// Matches the prefix of an argument tag
+const PREFIX_REG: &str = r"(?:\((?P<prefix>.*?)\))";
+
+/// Matches and environment variable in an argument tag
+const ENV_REG: &str = r"(?:$(?P<env>.+)";
+
+/// Matches an argument of the argument tag
+const ARG_REG: &str = r"(?P<arg>([a-zA-Z]+[a-zA-Z\d_\-]*)|\d+|\*)";
+
+/// Matches '?', which denotes an argument tag to be optional
+const OPTIONAL_REG: &str = r"(?P<optional>\?)";
+
+/// Matches the suffix of an argument tag
+const SUFFIX_REG: &str = r"(?:\((?P<suffix>.*?)\))";
 
 /// Iterator over tokens.
 struct Tokens<'a> {
@@ -25,7 +42,10 @@ struct Tokens<'a> {
 
 /// Represents an argument tag
 struct ArgumentTag {
+    /// Whether the value is required or optional
     required: bool,
+    /// Whether the tag loads and environment variable
+    is_env: bool,
     /// Argument name that would be replaced with the value
     arg: String,
     /// Prefix to be added before the replaced value.
@@ -181,21 +201,26 @@ impl<'a> Iterator for Tokens<'a> {
 /// Returns the regex used to parse argument tags
 fn get_argument_tag_regex() -> Regex {
     Regex::new(
-        r"^(?:\((?P<prefix>.*?)\))?(?P<arg>([a-zA-Z]+[a-zA-Z\d_\-]*)|\d+|\*)(?P<optional>\?)?(?:\((?P<suffix>.*?)\))?$",
+        r"^(?:\((?P<prefix>.*?)\))?(?:$(?P<env>.+)|(?P<arg>([a-zA-Z]+[a-zA-Z\d_\-]*)|\d+|\*))(?P<optional>\?)?(?:\((?P<suffix>.*?)\))?$",
     )
         .unwrap()
 }
 
+lazy_static! {
+    static ref VALID_ARG_RE: Regex = get_argument_tag_regex();
+}
+
 /// Given the content of an argument tag, returns a representation of it
 fn get_argument_tag(arg: &str) -> Option<ArgumentTag> {
-    lazy_static! {
-        static ref VALID_ARG_RE: Regex = get_argument_tag_regex();
-    }
     let capture = VALID_ARG_RE.captures(arg)?;
-    let arg = String::from(capture.name("arg").unwrap().as_str());
     let prefix = match capture.name("prefix") {
         None => String::from(""),
         Some(val) => String::from(val.as_str()),
+    };
+    // Either env or arg must exist for the regex to match
+    let (is_env, arg) = match capture.name("arg") {
+        None => (true, String::from(capture.name("env").unwrap().as_str())),
+        Some(val) => (false, String::from(val.as_str())),
     };
     let suffix = match capture.name("suffix") {
         None => String::from(""),
@@ -206,11 +231,68 @@ fn get_argument_tag(arg: &str) -> Option<ArgumentTag> {
         Some(_) => false,
     };
     Some(ArgumentTag {
+        is_env,
         required,
         arg,
         prefix,
         suffix,
     })
+}
+
+/// Replaces a tag with and environment variable, adding prefix and suffix as corresponding.
+/// If the environment variable is not found, returns `Option::None`.
+///
+/// # Arguments
+///
+/// * `tag`: ArgumentTag struct containing the tag parameters
+/// * `additional_env`: Hashmap with additional environment values.
+///  Preferred over system env variables
+///
+/// returns: Option<String>
+///
+fn replace_tag_with_env_variable(
+    tag: &ArgumentTag,
+    additional_env: &HashMap<String, String>,
+) -> Option<String> {
+    let val = match additional_env.get(&tag.arg) {
+        None => match env::var(&tag.arg) {
+            Ok(val) => val,
+            Err(_) => return None,
+        },
+        Some(val) => val.clone(),
+    };
+    Some(format!("{}{}{}", tag.prefix, val, tag.suffix))
+}
+
+/// Replaces a tag with all the corresponding values
+///
+/// # Arguments
+///
+/// * `tag`: ArgumentTag struct containing the tag parameters
+/// * `args`:Hashmap with argument values
+///
+/// returns: Option<Vec<String, Global>>
+///
+fn replace_tag_with_args(tag: &ArgumentTag, args: &ArgsMap) -> Option<Vec<String>> {
+    let index_arg = usize::from_str(&tag.arg).unwrap_or(0);
+    let key = if index_arg > 0 { "*" } else { &tag.arg };
+
+    let vals = match args.get(key) {
+        None => return None,
+        Some(vals) => vals,
+    };
+
+    if index_arg > 0 {
+        return vals
+            .get(index_arg - 1)
+            .map(|val| vec![format!("{}{}{}", tag.prefix, val, tag.suffix)]);
+    }
+
+    let mut result: Vec<String> = Vec::with_capacity(vals.len());
+    for val in vals {
+        result.push(format!("{}{}{}", tag.prefix, val, tag.suffix));
+    }
+    Some(result)
 }
 
 /// Formats a script string.
@@ -219,12 +301,14 @@ fn get_argument_tag(arg: &str) -> Option<ArgumentTag> {
 ///
 /// * `fmtstr`: Script string
 /// * `args`: Values to format the script with
+/// * `env_variables`: Manually set environment variables
 /// * `escape_mode`: How the passed values will be escaped
 ///
 /// returns: Result<String, FormatError>
 pub fn format_script(
     fmtstr: &str,
     args: &ArgsMap,
+    // env_variables: &HashMap<String, String>,
     escape_mode: &EscapeMode,
 ) -> Result<String, FormatError> {
     let tokens = Tokens::new(fmtstr);
@@ -240,77 +324,37 @@ pub fn format_script(
                     )))
                 }
                 Some(tag) => {
-                    let index_arg = usize::from_str(&tag.arg).unwrap_or(0);
-                    let key = if index_arg > 0 {
-                        String::from("*")
-                    } else {
-                        tag.arg
-                    };
-                    match args.get(&key) {
+                    let values = replace_tag_with_args(&tag, args);
+                    match values {
                         None => {
                             if tag.required {
-                                let arg_name = if index_arg > 0 {
-                                    index_arg.to_string()
-                                } else {
-                                    key
-                                };
-                                return Err(FormatError::KeyError(arg_name));
+                                return Err(FormatError::KeyError(tag.arg));
                             }
                         }
                         Some(values) => {
-                            if index_arg > 0 {
-                                match values.get(index_arg - 1) {
-                                    None => {
-                                        if tag.required {
-                                            return Err(FormatError::KeyError(
-                                                index_arg.to_string(),
-                                            ));
-                                        }
-                                    }
-                                    Some(val) => {
-                                        let escape = match escape_mode {
-                                            EscapeMode::Always => true,
-                                            EscapeMode::Spaces => val.contains(' '),
-                                            EscapeMode::Never => false,
-                                        };
-                                        if escape {
-                                            out.push('"');
-                                        }
-                                        out.push_str(&tag.prefix);
-                                        out.push_str(val);
-                                        out.push_str(&tag.suffix);
-                                        if escape {
-                                            out.push('"');
-                                        }
-                                    }
+                            let last_val_index = values.len() - 1;
+
+                            for (i, val) in values.iter().enumerate() {
+                                let escape = match escape_mode {
+                                    EscapeMode::Always => true,
+                                    EscapeMode::Spaces => val.contains(' '),
+                                    EscapeMode::Never => false,
+                                };
+
+                                if escape {
+                                    out.push('"');
                                 }
-                            } else {
-                                let last_val_index = values.len() - 1;
-
-                                for (i, val) in values.iter().enumerate() {
-                                    let escape = match escape_mode {
-                                        EscapeMode::Always => true,
-                                        EscapeMode::Spaces => val.contains(' '),
-                                        EscapeMode::Never => false,
-                                    };
-
-                                    if escape {
-                                        out.push('"');
-                                    }
-                                    out.push_str(&tag.prefix);
-                                    out.push_str(val);
-                                    out.push_str(&tag.suffix);
-                                    if escape {
-                                        out.push('"');
-                                    }
-
-                                    // Values are separated by spaces but the
-                                    // last value should not be
-                                    if i != last_val_index {
-                                        out.push(' ');
-                                    }
+                                out.push_str(val);
+                                if escape {
+                                    out.push('"');
                                 }
-                            };
+
+                                // Values are separated by spaces but the
+                                // last value should not be
+                                if i != last_val_index {
+                                    out.push(' ');
+                                }
+                            }
                         }
                     }
                 }
@@ -389,50 +433,20 @@ pub fn format_arg(fmtstr: &str, args: &ArgsMap) -> Result<Vec<String>, FormatErr
                 )))
             }
             Some(tag) => {
-                let index_arg = usize::from_str(&tag.arg).unwrap_or(0);
-                let key = if index_arg > 0 {
-                    String::from("*")
-                } else {
-                    tag.arg
-                };
-                match args.get(&key) {
+                let values = replace_tag_with_args(&tag, args);
+                match values {
                     None => {
                         if tag.required {
-                            let arg_name = if index_arg > 0 {
-                                index_arg.to_string()
-                            } else {
-                                key
-                            };
-                            return Err(FormatError::KeyError(arg_name));
-                        } else {
+                            return Err(FormatError::KeyError(tag.arg));
+                        } else if !prefix.is_empty() || !suffix.is_empty() {
                             out.push(format!("{}{}", prefix, suffix));
                         }
                     }
                     Some(values) => {
-                        if index_arg > 0 {
-                            match values.get(index_arg - 1) {
-                                None => {
-                                    if tag.required {
-                                        return Err(FormatError::KeyError(index_arg.to_string()));
-                                    }
-                                }
-                                Some(val) => {
-                                    let arg = format!(
-                                        "{}{}{}{}{}",
-                                        prefix, tag.prefix, val, tag.suffix, suffix
-                                    );
-                                    out.push(arg);
-                                }
-                            }
-                        } else {
-                            for val in values {
-                                let arg = format!(
-                                    "{}{}{}{}{}",
-                                    prefix, tag.prefix, val, tag.suffix, suffix
-                                );
-                                out.push(arg);
-                            }
-                        };
+                        for val in values {
+                            let arg = format!("{}{}{}", prefix, val, suffix);
+                            out.push(arg);
+                        }
                     }
                 }
             }

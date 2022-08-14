@@ -212,24 +212,20 @@ fn test_format_arg() {
     let string = "{v}";
     let expected = vec!["arg_1", "arg_2"];
     let actual = format_arg(string, &vars).unwrap();
-    assert_eq!(actual.len(), 2);
-    assert_eq!(actual[0], expected[0]);
-    assert_eq!(actual[1], expected[1]);
+    assert_eq!(actual, expected);
 
     let string = "{4?}";
     let actual = format_arg(string, &vars).unwrap();
-    assert_eq!(actual.len(), 0);
+    assert_eq!(actual, Vec::<String>::new());
 
     let string = "";
     let actual = format_arg(string, &vars).unwrap();
-    assert_eq!(actual.len(), 0);
+    assert_eq!(actual, Vec::<String>::new());
 
     let string = "--{(f=)v}.txt";
     let expected = vec!["--f=arg_1.txt", "--f=arg_2.txt"];
     let actual = format_arg(string, &vars).unwrap();
-    assert_eq!(actual.len(), 2);
-    assert_eq!(actual[0], expected[0]);
-    assert_eq!(actual[1], expected[1]);
+    assert_eq!(actual, expected);
 }
 
 #[test]
