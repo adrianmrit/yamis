@@ -387,7 +387,7 @@ fn test_extend_args() -> Result<(), Box<dyn std::error::Error>> {
     let (batch_file_name, batch_file_content) = if cfg!(target_os = "windows") {
         ("echo_args.cmd", "echo %*".as_bytes())
     } else {
-        ("echo_args.bash", "echo $1 $2 $*".as_bytes())
+        ("echo_args.sh", "echo $*".as_bytes())
     };
     let mut batch_file = File::create(tmp_dir.join(batch_file_name))?;
     batch_file.write_all(batch_file_content).unwrap();
@@ -398,7 +398,7 @@ fn test_extend_args() -> Result<(), Box<dyn std::error::Error>> {
             r#"
             [tasks.echo_program]
             program = "bash"
-            args = ["-c", "{b}"]
+            args = ["{b}"]
             private=true
             
             [tasks.echo_program.windows]
