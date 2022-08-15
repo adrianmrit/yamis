@@ -4,7 +4,7 @@
 ### Added
 - Tasks can inherit from others.
 - Can extend arguments from base tasks.
-- Can specify interpreter and task extension in script tasks.
+- Can specify interpreter and script extension in script tasks.
 - Can specify env files at task or config level.
 - Can load env variables into script and program arguments.
 
