@@ -3,58 +3,73 @@
 ![License: GPL v3](https://img.shields.io/github/license/adrianmrit/yamis)
 
 ## Motivation
-There are tools used to shorten the length of every-day commands us programmers need to run.
-I have tried some of these tools, I specially liked how [doskey](https://docs.microsoft.com/en-us/windows-server/administration/windows-commands/doskey)
-allowed to pass extra arguments, and the structure of [cargo-make,](https://github.com/sagiegurari/cargo-make/)
-but they still didn't meet all my requirements. 
+Although there are great similar tools out there, the ones I have tried lack some things
+I was interested in, like good argument parsing, and team oriented configuration files.
+For instance, some of these tools didn't let you pass extra arguments at all, while others were
+limited to positional arguments or passing all arguments inline.
 
-In short, this tool brings more powerful argument parsing, team oriented configuration, and hopefully more
-features in the future.
+
+## Features
+- Separate configuration files for teams and local development
+- Powerful argument parsing
+- Run scripts or programs with arguments
+- Setting the interpreter for scripts
+- Tasks can inherit from one or more tasks
+- Pass extra named or positional arguments to the underlying command, and mix them with predefined arguments
+- Pass multiple arguments with the same key
+- Add extra environment variables or load an environment file
+- Define task version for specific system
+- Multiplatform (supports Windows, Linux and macOs)
+- Simple syntax thanks to TOML files
+
+## Planned features
+- Support for YAML files
+- Input missing arguments
+- Distribute installers for easier installation
+
 
 ## Install
 
-The easiest way to install is with cargo.
+If you already have rustc and cargo installer, the easiest way to install is with:
 ```bash
 cargo install --force yamis
 ```
 
-TODO: Add binaries
+Compiled binaries are also available for Windows, Linux and MacOs under
+[releases](https://github.com/adrianmrit/yamis/releases/tag/v0.1.0).
 
 ## Quick Start
 `project.yamis.toml` should be added at the root of a project. 
-Here is an example of how it could look like:
+Here is an example TOML file to demostrate some features:
 ```toml
 [env]  # global env variables
-DEBUG = "TRUE"
-CONTAINER = "sample_docker_container"
+DEBUG = "FALSE"
+DOCKER_CONTAINER = "sample_docker_container"
+
+[tasks._debugable_task]
+private = true   # cannot be invoked directly
+
+[tasks._debugable_task.env]
+DEBUG = "TRUE"  # Add env variables per task
 
 [tasks.say_hi]
-script = "echo Hello {name}"  # name can be passed as --name=world, -name=world, or name="big world"  
-
-[tasks.say_hi.env]  # can add env variables per task
-DEBUG = "FALSE"
+script = "echo Hello {name}"  # name can be passed as --name=world, -name=world, or name="big world"
 
 [tasks.folder_content]  # Default for linux and macos, can be individually specified like for windows.
 script = "ls {path?}"  # path is an optional argument
 
 [tasks.folder_content.windows]  # Task version for windows systems
-script = "dir {path?}"
+script = "dir {*}"  # Passes all arguments
 
-[tasks.project_content]
-wd = ""  # Uses the dir where the config file appears as working dir
-script = "ls"
-
-[tasks.project_content.windows]
-wd = ""
-script = "dir"
 
 [tasks.compose-run]
+wd = ""  # Uses the dir where the config file appears as working dir
 program = "docker-compose"
-args = ["run", "$CONTAINER", "{*}"]
+args = ["run", "{$DOCKER_CONTAINER}", "{*}"]   # This syntax for environment variables works both for windows and unix systems.
 
-[tasks.compose-run.windows]
-program = "docker-compose"
-args = ["run", "%CONTAINER%", "{*}"]
+[tasks.compose-debug]
+bases = ["compose-run", "_debugable_task"]  # Inherit from other tasks
+args_extend = ["{$DEBUG?}"]  # Extends args from base task. Here DEBUG is an optional environment variable
 ```
 
 After having a config file, you can run a task by calling `yamis`, the name of the task, and any arguments, i.e.
@@ -81,6 +96,11 @@ and bash in Unix). Scripts can spawn multiple lines, and contain shell built-ins
 passing multiple arguments, they will be expanded by default, the common example would be the `"{*}"`
 tag which expands to all the passed arguments.
 
+#### ⚠️Warning :
+Scripts are stored in a file in the temporal directory of the system and is the job of the OS to delete it,
+however it is not guaranteed that that will be the case. So any argument passed will be stored in the
+script file and could be persisted indefinitely.
+
 
 ##### Auto quoting
 By default, all passed arguments are quoted (with double quotes).
@@ -91,18 +111,60 @@ This can be changed at the task or file level by specifying the
 - `never`: Never quote arguments
 
 Although quoting prevents common errors like things breaking because a space,
-it might fail in certain cases. This might be fixed in the future.
+it might fail in certain cases.
+
+
+##### Replacing interpreter
+By default, the interpreter in windows is CMD, and bash in unix systems. To use another interpreter you can
+set the `interpreter` option in a task, which should be a list, where the first value is the interpreter
+program, and the rest are values to pass before the actual script file generated.
+
+You might also want to override the `script_ext` option, which is a string containing the extension for the
+script file, and can be prepended with a dot or not. For some interpreter the extension does not matter, but
+for others it does. In windows the extension defaults to `cmd`, and `sh` in unix.
+
+Example:
+```toml
+# Python script that prints the date and time
+[tasks.hello_world]
+interpreter = ["python", "-c"]
+script_ext = "py"  # or .py
+script = """
+from datetime import datetime
+
+print(datetime.now())
+"""
+```
+
+If using this feature frequently it would be useful to use inheritance to shorten the task. The above can become:
+```toml
+[tasks._python_script]
+interpreter = ["python", "-c"]
+script_ext = "py"  # or .py
+private = true
+
+[tasks.hello_world]
+bases = ["_python_script"]
+script = """
+from datetime import datetime
+
+print(datetime.now())
+"""
+```
 
 
 ### Program
 The `program` value inside a task will be executed as a separate process, with the arguments passed
 on `args`. Note that each argument can contain at most one tag, that is, `{1}{2}` is not valid. When
 passing multiple values, they are unpacked into the program arguments, i.e. `"{*}"` will result in
-all arguments passed down to the program. Note also that if you add an argument like `-f={*}.txt` will
-also be unpacked as expected, with the argument surrounded by the suffix and prefix.
+all arguments passed down to the program. Argument like `-f={*}.txt` will be also unpacked as expected,
+with the argument surrounded by the suffix and prefix.
+
+When using inheritance, the arguments for the base can be extended by using `args_extend` instead of `args`.
+This is useful for adding extra parameters without rewriting them.
 
 
-### Running tasks serially
+###$ Running tasks serially
 One obvious option to run tasks one after the other is to create a script, i.e. with the following:
 ```
 yamis say_hi
@@ -114,7 +176,10 @@ The other option is to use `serial`, which should take a list of tasks to run in
 [tasks.greet]
 serial = ["say_hi", "say_bye"]
 ```
-Note that any argument passed will be passed to both tasks equally.
+Note that any argument passed will be passed to both tasks equally. 
+
+It is possible to execute the same task or end with infinite loops. 
+This is not prevented since it can be bypassed by using a script.
 
 
 #### Script vs Program:
@@ -125,10 +190,14 @@ Also, each time a script runs, a temporal batch or cmd file is created. Not a bi
 nevertheless.
 
 On the other hand, programs run in their own process with arguments passed directly to it, so there is no
-need to escape them. The downside however, is that we cannot execute builtin shell commands such as `echo`,
+need to escape them. These can also be extended more easily, like by extending the arguments.
+The downside however, is that we cannot execute builtin shell commands such as `echo`,
 and we need to define the arguments as a list.
 
-### Passing parameters to tasks
+
+### Common Options
+
+#### Passing parameters to tasks
 When calling a task, you can pass args to insert into the scripts or the argument of programs. These arguments,
 or ___argument tags___ can have different forms:
 - positional: passed by position, i.e. `{1}`, `{2}`, etc.
@@ -170,19 +239,7 @@ If we call `yamis hello person=John1 person=John2`, it will run `echo hello "Joh
 Similarly, `yamis something --f=out1.txt out2.txt` will call `imaginary-program` with
 `["-o out1.txt", "-o out2.txt""]`
 
-### Specific Os Tasks
-You can have a different OS version for each task. If a task for the current OS is not found, it will
-fall back to the non os-specific task if it exists. I.e.
-```toml
-[task.ls] # Runs if not in windows 
-script = "ls {*?}"
 
-[task.ls.windows]  # Other options are linux and macos
-script = "dir {*?}"
-```
-
-
-### Other options:
 #### Environment variables
 Environment variables can be defined at the task level. These two forms are equivalent:
 ```toml
@@ -210,12 +267,96 @@ If both `env_file` and `env` options are set at the same level, both will be loa
 take precedence. Similarly, the global env variables and env file will be loaded at the task level even if these options
 are also set there, with the env variables defined on the task taking precedence over the global ones.
 
+
+#### Passing environment variables as arguments
+Environment variables can be passed in `args`, `args_extend` or `scripts` similar to argument tags, i.e. `{$ENV_VAR}`
+loads `ENV_VAR`. This works with environment variables defined in the config file or task, or in environment files
+loaded with the `env_file` option. Although it is possible to pass environment variables to scripts using the native
+syntax, it will not work for program arguments, and it is not multiplatform either.
+
+Note that environment variables loaded this way are loaded when the script or
+program arguments are parsed, i.e. the following will not work:
+
+```toml
+[tasks.sample]
+# $SAMPLE is not set yet when the script is parsed
+script = """
+export SAMPLE=VALUE
+echo {$SAMPLE}
+"""
+```
+
+#### Os Specific Tasks
+You can have a different OS version for each task. If a task for the current OS is not found, it will
+fall back to the non os-specific task if it exists. I.e.
+```toml
+[task.ls] # Runs if not in windows 
+script = "ls {*?}"
+
+[task.ls.windows]  # Other options are linux and macos
+script = "dir {*?}"
+```
+
 ##### Working directory
 By default, the working directory of the task is one where it was executed. This can be changed at the task level
 or root level, with `wd`. The path can be relative or absolute, with relative paths being resolved against the
 configuration file and not the directory where the task was executed, this means `""` can be used to make the
 working directory the same one as the directory for the configuration file.
 
+
+##### Task inheritance
+
+A task can inherit from multiple tasks by adding a `bases` property, which should be a list names of tasks in
+the same file. This works like class inheritance in common languages like Python, but not all values are 
+inherited. 
+
+The inherited values are:
+- wd
+- quote
+- script
+- interpreter
+- script_ext
+- program
+- args
+- serial
+- env (the values are merged instead of overwriting)
+- env_file (the values are merged instead of overwriting)
+
+Values not inherited are:
+- args_extend (added to `args` when parsing the child task,
+ so the parent task would actually inherit `args`)
+- private
+
+The inheritance works from bottom to top, with childs being processed before the parents. Circular dependencies
+are not allowed and will result in an error.
+
+Examples:
+```toml
+[tasks.program]
+program = "program"
+args = ["{name}"]
+
+[tasks.program_extend]
+bases = ["program"]
+args_extend = ["{phone}"]
+
+[tasks.other]
+env = {"KEY" = "VAL"}
+args = ["{other_param}"]
+private = true  # cannot be called directly, field not inherited
+
+[tasks.program_extend_again]
+bases = ["program_extend", "other"]
+args_extend = ["{address}"]
+```
+
+In the example above, `program_extend_again` will be equivalent to
+```toml
+[tasks.program_extend_again]
+program = "program"
+env = {"KEY" = "VAL"}
+args = ["{name}", "{phone}", "{address}"]
+```
 
 ## Contributing
 
