@@ -114,9 +114,6 @@ pub struct Task {
     /// Base task to inherit from
     #[serde(default)]
     pub(crate) bases: Vec<String>,
-    /// If true, env is merged during inheritance
-    #[serde(default = "default_true")]
-    merge_env: bool,
     /// If private, it cannot be called
     #[serde(default = "default_false")]
     private: bool,
@@ -212,7 +209,7 @@ impl Task {
         inherit_value!(self.serial, base_task.serial);
         inherit_value!(self.env_file, base_task.env_file);
 
-        if self.merge_env && !base_task.env.is_empty() {
+        if !base_task.env.is_empty() {
             let old_env = mem::replace(&mut self.env, base_task.env.clone());
 
             for (key, val) in old_env {
