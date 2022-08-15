@@ -9,7 +9,7 @@ use std::{error, fmt, mem};
 use crate::args::ArgsMap;
 use crate::args_format::{format_arg, format_script, EscapeMode};
 use crate::config_files::{ConfigFile, ConfigFiles};
-use crate::defaults::{default_false, default_true};
+use crate::defaults::default_false;
 use serde_derive::Deserialize;
 use uuid::Uuid;
 
@@ -33,7 +33,7 @@ cfg_if::cfg_if! {
 }
 
 /// Task errors
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum TaskError {
     /// Raised when there is an error running a task
     RuntimeError(String, String),
@@ -260,7 +260,7 @@ impl Task {
         let mut env = self.env.clone();
         if let Some(config_file_env) = &config_file.env {
             for (key, val) in config_file_env {
-                env.entry(key.clone()).or_insert(val.clone());
+                env.entry(key.clone()).or_insert_with(|| val.clone());
             }
         }
         env

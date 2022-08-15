@@ -17,7 +17,7 @@ use std::{env, error, fmt, fs};
 const CONFIG_FILES_PRIO: &[&str] = &["local.yamis.toml", "yamis.toml", "project.yamis.toml"];
 
 /// Errors related to config files and tasks
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum ConfigError {
     /// Raised when a config file is not found for a given path
     // FileNotFound(String), // Given config file not found

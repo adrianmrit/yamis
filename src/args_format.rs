@@ -62,7 +62,7 @@ struct ArgumentTag {
 }
 
 /// Represent string format errors.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum FormatError {
     /// Raised when an invalid format string is given
     Invalid(String), // Invalid format string
@@ -71,7 +71,7 @@ pub enum FormatError {
 }
 
 /// Modes to escape (add quotes) the arguments passed to the script
-#[derive(Debug, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum EscapeMode {
     /// Always quote the arguments
