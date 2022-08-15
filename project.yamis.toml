@@ -17,7 +17,7 @@ script = "rm -r target_releases/v{1}"
 
 [tasks.cleanup.windows]
 wd = ""
-script = "rmdir target_releases/v{1} /s /q"
+script = "rmdir {(target_releases/v)1} /s /q"
 
 [tasks.pack]
 serial = ["build-releases", "package-releases", "cleanup"]

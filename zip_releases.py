@@ -17,7 +17,7 @@ BINARIES = [
 """Architectures to package. Should match the folder name"""
 
 
-EXTRA = ["README.md", "LICENSE"]
+EXTRA = ["README.md", "LICENSE", "CHANGELOG.MD"]
 """Extra files to package"""
 
 
