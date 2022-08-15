@@ -321,10 +321,10 @@ fn test_format_arg_env() {
     let actual = format_arg(string, &vars, &env).unwrap();
     assert_eq!(actual, Vec::<String>::new());
 
-    env::set_var("MISSING_ENV_VARIABLE", "value_missing_env_var");
+    env::set_var("NON_MISSING_ENV_VARIABLE", "value_non_missing_env_var");
 
-    let string = "{$MISSING_ENV_VARIABLE}";
-    let expected = vec!["value_missing_env_var"];
+    let string = "{$NON_MISSING_ENV_VARIABLE}";
+    let expected = vec!["value_non_missing_env_var"];
     let actual = format_arg(string, &vars, &env).unwrap();
     assert_eq!(actual, expected);
 }

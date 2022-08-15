@@ -106,6 +106,7 @@ fn test_validate() {
         "sample",
         r#"
         quote = "spaces"
+        program = "python"
     "#,
         None,
     );

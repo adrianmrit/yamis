@@ -307,7 +307,7 @@ impl Task {
             ));
         }
 
-        if self.serial.is_none() && self.quote.is_some() {
+        if (self.program.is_some() | self.serial.is_some()) && self.quote.is_some() {
             return Err(TaskError::ImproperlyConfigured(
                 self.name.clone(),
                 String::from("`quote` parameter can only be set for scripts."),
