@@ -11,18 +11,40 @@ mod utils;
 #[test]
 fn test_discovery() -> DynErrResult<()> {
     let tmp_dir = TempDir::new().unwrap();
-    let path = tmp_dir.path().join("project.yamis.toml");
-    let mut file = File::create(path.as_path())?;
-    file.write_all(
+    let project_config_path = tmp_dir.path().join("project.yamis.toml");
+    let mut project_config_file = File::create(project_config_path.as_path())?;
+    project_config_file.write_all(
         r#"
-    [tasks.hello_world]
-    script = "echo hello world"
+    [tasks.hello_project]
+    script = "echo hello project"
+    "#
+        .as_bytes(),
+    )?;
+
+    let config_path = tmp_dir.path().join("yamis.yaml");
+    let mut config_file = File::create(config_path.as_path())?;
+    config_file.write_all(
+        r#"
+    tasks:
+        hello:
+            script: echo hello
+    "#
+        .as_bytes(),
+    )?;
+
+    let local_config_path = tmp_dir.path().join("local.yamis.yaml");
+    let mut local_file = File::create(local_config_path.as_path())?;
+    local_file.write_all(
+        r#"
+    tasks:
+        hello_local:
+            script: echo hello local
     "#
         .as_bytes(),
     )?;
 
     let config = ConfigFiles::discover(&tmp_dir.path()).unwrap();
-    assert_eq!(config.configs.len(), 1);
+    assert_eq!(config.configs.len(), 3);
 
     match config.get_task("non_existent") {
         None => {}
@@ -31,15 +53,42 @@ fn test_discovery() -> DynErrResult<()> {
         }
     }
 
-    match config.get_task("hello_world") {
+    match config.get_task("hello_project") {
         None => {
-            panic!("task hello_world should exist");
+            panic!("task hello_project should exist");
         }
         Some((_, _)) => {}
     }
 
-    let config = ConfigFiles::for_path(path.as_path()).unwrap();
+    match config.get_task("hello") {
+        None => {
+            panic!("task hello should exist");
+        }
+        Some((_, _)) => {}
+    }
+
+    match config.get_task("hello_local") {
+        None => {
+            panic!("task hello_local should exist");
+        }
+        Some((_, _)) => {}
+    }
+
+    let config = ConfigFiles::for_path(project_config_path.as_path()).unwrap();
     assert_eq!(config.configs.len(), 1);
+
+    match config.get_task("hello_project") {
+        None => {
+            panic!("task hello_project should exist");
+        }
+        Some((_, _)) => {}
+    }
+    match config.get_task("hello") {
+        None => {}
+        Some((_, _)) => {
+            panic!("task non_existent should not exist");
+        }
+    }
     Ok(())
 }
 
