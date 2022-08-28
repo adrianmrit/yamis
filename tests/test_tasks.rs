@@ -11,7 +11,7 @@ mod utils;
 #[test]
 fn test_discovery() -> DynErrResult<()> {
     let tmp_dir = TempDir::new().unwrap();
-    let project_config_path = tmp_dir.path().join("project.yamis.toml");
+    let project_config_path = tmp_dir.path().join("../project.yamis.yml");
     let mut project_config_file = File::create(project_config_path.as_path())?;
     project_config_file.write_all(
         r#"

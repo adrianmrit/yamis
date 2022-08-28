@@ -39,14 +39,14 @@ Here is a sample YAML file to demonstrate some features:
 ```yaml
 # project.yamis.yaml
 env:  # global env variables
-  DEBUG: FALSE
+  DEBUG: "FALSE"
   DOCKER_CONTAINER: sample_docker_container
 
 tasks:
   _debuggable_task:
     private: true   # cannot be invoked directly
     env:
-      DEBUG: TRUE  # Add env variables per task
+      DEBUG: "TRUE"  # Add env variables per task
 
   say_hi:
     script: "echo Hello {name}"  # name can be passed as --name=world, -name=world, or name="big world"
@@ -63,13 +63,25 @@ tasks:
 
   compose-debug:
     bases: ["compose-run", "_debuggable_task"]  # Inherit from other tasks
-    args: ["{$DEBUG?}"]  # Extends args from base task. Here DEBUG is an optional environment variable
+    args+: ["{$DEBUG?}"]  # Extends args from base task. Here DEBUG is an optional environment variable
 ```
 
 After having a config file, you can run a task by calling `yamis`, the name of the task, and any arguments, i.e.
 `yamis say_hi name="world"`. Passing the same argument multiple times will also add it multiple times, i.e.
 `yamis say_hi name="person 1" --name="person 2"` is equivalent to `echo Hello person 1 person 2`
 
+
+## Notes about YAML files:
+Unlike TOML, YAML can sometimes be ambiguous, thus, the types are not converted by the program
+and will raise an error if they are improperly set. 
+
+For example this will raise an error because `Yes` is converted to True. If we did the conversion
+we wouldn't know the original value, and we could get `DEBUG=true` in the environment which is undesired
+in this example.
+```yaml
+env:
+  DEBUG: Yes
+```
 
 ## Usage
 ### Task files discovery
@@ -302,7 +314,7 @@ configuration file and not the directory where the task was executed, this means
 working directory the same one as the directory for the configuration file.
 
 
-##### Task inheritance
+### Task inheritance
 
 A task can inherit from multiple tasks by adding a `bases` property, which should be a list names of tasks in
 the same file. This works like class inheritance in common languages like Python, but not all values are 
@@ -321,40 +333,52 @@ The inherited values are:
 - env_file (the values are merged instead of overwriting)
 
 Values not inherited are:
-- args_extend (added to `args` when parsing the child task,
+- `args_extend` (added to `args` when parsing the child task,
  so the parent task would actually inherit `args`)
-- private
+- `args+` (alias for `args_extend`)
+- `private`
 
 The inheritance works from bottom to top, with childs being processed before the parents. Circular dependencies
 are not allowed and will result in an error.
 
+#### Extending args
+
+Args can be extended with `args_extend` or it's alias `args+`. These will append the given list to the `args`
+inherited from the bases.
+
 Examples:
-```toml
-[tasks.program]
-program = "program"
-args = ["{name}"]
+```yaml
+tasks:
+  program:
+    program: "program"
+    args: ["{name}"]
 
-[tasks.program_extend]
-bases = ["program"]
-args_extend = ["{phone}"]
+  program_extend:
+    bases: ["program"]
+    args_extend: ["{phone}"]
 
-[tasks.other]
-env = {"KEY" = "VAL"}
-args = ["{other_param}"]
-private = true  # cannot be called directly, field not inherited
+  other:
+    env: {"KEY": "VAL"}
+    args: ["{other_param}"]
+    private: true  # cannot be called directly, field not inherited
 
-[tasks.program_extend_again]
-bases = ["program_extend", "other"]
-args_extend = ["{address}"]
+  program_extend_again:
+    bases: ["program_extend", "other"]
+    args+: ["{address}"]  # args+ is an alias for args_extend
 ```
 
 In the example above, `program_extend_again` will be equivalent to
-```toml
-[tasks.program_extend_again]
-program = "program"
-env = {"KEY" = "VAL"}
-args = ["{name}", "{phone}", "{address}"]
+```yaml
+tasks:
+  program_extend_again:
+    program: "program"
+    env: {"KEY": "VAL"}
+    args: ["{name}", "{phone}", "{address}"]
 ```
+
+#### Marking a task as private
+
+Tasks can be marked as private by setting `private = true`. Private tasks cannot be called by the user.
 
 ## Contributing
 Feel free to create issues to report bugs, ask questions or request changes.

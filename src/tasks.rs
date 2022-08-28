@@ -95,6 +95,7 @@ pub struct Task {
     /// Args to pass to a command
     args: Option<Vec<String>>,
     /// Extends args from bases
+    #[serde(alias = "args+")]
     args_extend: Option<Vec<String>>,
     /// If given, runs all those tasks at once
     serial: Option<Vec<String>>,
