@@ -29,7 +29,7 @@ If you already have rustc and cargo installer, the easiest way to install is wit
 cargo install --force yamis
 ```
 
-Compiled binaries are also available for Windows, Linux and MacOs under
+Compiled binaries are also available for Windows, Linux and macOS under
 [releases](https://github.com/adrianmrit/yamis/releases/tag/v0.1.0).
 
 ## Quick Start
@@ -51,7 +51,7 @@ tasks:
   say_hi:
     script: "echo Hello {name}"  # name can be passed as --name=world, -name=world, or name="big world"
 
-  folder_content:  # Default for linux and macos, can be individually specified like for windows.
+  folder_content:  # Default for linux and macOS, can be individually specified like for windows.
     script: "ls {path?}"  # path is an optional argument
     windows:  # Task version for windows systems
       script: "dir {*}"  # Passes all arguments
@@ -71,22 +71,38 @@ After having a config file, you can run a task by calling `yamis`, the name of t
 `yamis say_hi name="person 1" --name="person 2"` is equivalent to `echo Hello person 1 person 2`
 
 
-## Notes about YAML files:
-Unlike TOML, YAML can sometimes be ambiguous, thus, the types are not converted by the program
-and will raise an error if they are improperly set. 
+## Type conversion in YAML and TOML files:
+The parser used to process YAML files treats values as strings if a string is expected.
 
-For example this will raise an error because `Yes` is converted to True. If we did the conversion
-we wouldn't know the original value, and we could get `DEBUG=true` in the environment which is undesired
-in this example.
+For example, the following examples are equivalent
 ```yaml
 env:
-  DEBUG: Yes
+  DEBUG: Yes  # Normally becomes true
+  AGENT: 007  # Normally becomes 7
 ```
+```yaml
+env:
+  DEBUG: "Yes"
+  AGENT: "007"
+```
+
+However, in the case of TOML files, the parser returns the appropriate type, and therefore it will result
+in errors.
+
+I.e. the following is not valid
+```toml
+[env]
+    AGENT = 007
+```
+
+We do not implicitly perform this conversion because we would need to modify the TOML parser.
+If we performed the conversion after parsing the file we would get `AGENT=7` which might be undesired.
 
 ## Usage
 ### Task files discovery
 The config files must be either a TOML or YAML file with the appropriate extension, i.e. `project.yamis.toml`, or
-`project.yamis.yml`.
+`project.yamis.yml`. Note that across this document examples are given in either version, but it is very
+straightforward to convert between each other.
 
 The program will look for the following files at the directory where it was invoked and its parents
 until a `project.yamis` is found. Note that the extension is not specified:
@@ -127,7 +143,7 @@ it might fail in certain cases.
 ##### Replacing interpreter
 By default, the interpreter in windows is CMD, and bash in unix systems. To use another interpreter you can
 set the `interpreter` option in a task, which should be a list, where the first value is the interpreter
-program, and the rest are values to pass before the actual script file generated.
+program, and the rest are extra parameters to pass before the script file parameter.
 
 You might also want to override the `script_ext` option, which is a string containing the extension for the
 script file, and can be prepended with a dot or not. For some interpreter the extension does not matter, but
@@ -137,7 +153,7 @@ Example:
 ```toml
 # Python script that prints the date and time
 [tasks.hello_world]
-interpreter = ["python", "-c"]
+interpreter = ["python"]
 script_ext = "py"  # or .py
 script = """
 from datetime import datetime
@@ -148,13 +164,13 @@ print(datetime.now())
 
 If using this feature frequently it would be useful to use inheritance to shorten the task. The above can become:
 ```toml
-[tasks._python_script]
-interpreter = ["python", "-c"]
+[tasks.py]
+interpreter = ["python"]
 script_ext = "py"  # or .py
 private = true
 
 [tasks.hello_world]
-bases = ["_python_script"]
+bases = ["py"]
 script = """
 from datetime import datetime
 
@@ -299,12 +315,24 @@ echo {$SAMPLE}
 #### Os Specific Tasks
 You can have a different OS version for each task. If a task for the current OS is not found, it will
 fall back to the non os-specific task if it exists. I.e.
-```toml
-[task.ls] # Runs if not in windows 
-script = "ls {*?}"
+```yaml
+tasks:
+  ls: # Runs if not in windows 
+    script: "ls {*?}"
 
-[task.ls.windows]  # Other options are linux and macos
-script = "dir {*?}"
+  windows:  # Other options are linux and macOS
+    script: "dir {*?}"
+```
+
+Os tasks can also be specified in a single key, i.e. the following is equivalent to the example above.
+
+```yaml
+tasks:
+  ls: 
+    script: "ls {*?}"
+
+  ls.windows:
+    script: "dir {*?}"
 ```
 
 ##### Working directory
