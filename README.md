@@ -10,22 +10,16 @@ limited to positional arguments or passing all arguments inline.
 
 
 ## Features
+- Multiplatform (Windows, Linux and macOs)
+- Write config files in either YAML and TOML format
 - Separate configuration files for teams and local development
 - Powerful argument parsing
 - Run scripts or programs with arguments
-- Setting the interpreter for scripts
+- Set the interpreter for scripts
 - Tasks can inherit from one or more tasks
-- Pass extra named or positional arguments to the underlying command, and mix them with predefined arguments
-- Pass multiple arguments with the same key
+- Pass additional named or positional arguments to the underlying command
 - Add extra environment variables or load an environment file
-- Define task version for specific system
-- Multiplatform (supports Windows, Linux and macOs)
-- Simple syntax thanks to TOML files
-
-## Planned features
-- Support for YAML files
-- Input missing arguments
-- Distribute installers for easier installation
+- Define task for specific operating systems
 
 
 ## Install
@@ -39,55 +33,59 @@ Compiled binaries are also available for Windows, Linux and MacOs under
 [releases](https://github.com/adrianmrit/yamis/releases/tag/v0.1.0).
 
 ## Quick Start
-`project.yamis.toml` should be added at the root of a project. 
-Here is an example TOML file to demostrate some features:
-```toml
-[env]  # global env variables
-DEBUG = "FALSE"
-DOCKER_CONTAINER = "sample_docker_container"
+The first step is to add a YAML or TOML file in the project root, i.e. `project.yamis.yaml`.
+ 
+Here is a sample YAML file to demonstrate some features:
+```yaml
+# project.yamis.yaml
+env:  # global env variables
+  DEBUG: FALSE
+  DOCKER_CONTAINER: sample_docker_container
 
-[tasks._debugable_task]
-private = true   # cannot be invoked directly
+tasks:
+  _debuggable_task:
+    private: true   # cannot be invoked directly
+    env:
+      DEBUG: TRUE  # Add env variables per task
 
-[tasks._debugable_task.env]
-DEBUG = "TRUE"  # Add env variables per task
+  say_hi:
+    script: "echo Hello {name}"  # name can be passed as --name=world, -name=world, or name="big world"
 
-[tasks.say_hi]
-script = "echo Hello {name}"  # name can be passed as --name=world, -name=world, or name="big world"
+  folder_content:  # Default for linux and macos, can be individually specified like for windows.
+    script: "ls {path?}"  # path is an optional argument
+    windows:  # Task version for windows systems
+      script: "dir {*}"  # Passes all arguments
 
-[tasks.folder_content]  # Default for linux and macos, can be individually specified like for windows.
-script = "ls {path?}"  # path is an optional argument
+  compose-run:
+    wd: ""  # Uses the dir where the config file appears as working dir
+    program: "docker-compose"
+    args: ["run", "{$DOCKER_CONTAINER}", "{*}"]   # This syntax for environment variables works both for windows and unix systems.
 
-[tasks.folder_content.windows]  # Task version for windows systems
-script = "dir {*}"  # Passes all arguments
-
-
-[tasks.compose-run]
-wd = ""  # Uses the dir where the config file appears as working dir
-program = "docker-compose"
-args = ["run", "{$DOCKER_CONTAINER}", "{*}"]   # This syntax for environment variables works both for windows and unix systems.
-
-[tasks.compose-debug]
-bases = ["compose-run", "_debugable_task"]  # Inherit from other tasks
-args_extend = ["{$DEBUG?}"]  # Extends args from base task. Here DEBUG is an optional environment variable
+  compose-debug:
+    bases: ["compose-run", "_debuggable_task"]  # Inherit from other tasks
+    args: ["{$DEBUG?}"]  # Extends args from base task. Here DEBUG is an optional environment variable
 ```
 
 After having a config file, you can run a task by calling `yamis`, the name of the task, and any arguments, i.e.
-`yamis say_hello name="big world"`. Passing the same argument multiple times will also add it multiple times, i.e.
-`yamis say_hello name="person 1" --name="person 2"` is equivalent to `echo Hello person 1 person 2`
+`yamis say_hi name="world"`. Passing the same argument multiple times will also add it multiple times, i.e.
+`yamis say_hi name="person 1" --name="person 2"` is equivalent to `echo Hello person 1 person 2`
 
 
 ## Usage
 ### Task files discovery
-The program will look at the directory where it was invoked and its parents until a `project.yamis.toml` is
-discovered or the root folder is reached. Valid filenames are the following:
-- `local.yamis.toml`: First one to look at for tasks. This one should hold private tasks and should not
-  be committed to the repository.
-- `yamis.toml`: Second one to look at for tasks. Should be used in sub-folders of a project for tasks specific
-  to that folder and sub-folders.
-- `project.yamis.toml`: Last one to look at for tasks. The file discovery stops when this one is found.
+The config files must be either a TOML or YAML file with the appropriate extension, i.e. `project.yamis.toml`, or
+`project.yamis.yml`.
 
-Note that you can have multiple `local.yamis.toml` and `yamis.toml` files in a project.
+The program will look for the following files at the directory where it was invoked and its parents
+until a `project.yamis` is found. Note that the extension is not specified:
+
+- `local.yamis`: Should hold private tasks and should not be committed to the repository.
+- `yamis`: Should be used in sub-folders of a project for tasks specific to that folder and sub-folders.
+- `project.yamis`: Should hold tasks for the entire project.
+
+To find a task, it will look in the files in following order inside the directory `local.yamis`, `yamis`,
+`project.yamis`. It will keep looking into the parent directories until a task is found or `project.yamis`
+is reached.
 
 
 ### Script
@@ -359,11 +357,7 @@ args = ["{name}", "{phone}", "{address}"]
 ```
 
 ## Contributing
+Feel free to create issues to report bugs, ask questions or request changes.
 
-### Issues
-Feel free to create issues to report bugs, ask questions or request new features.
-
-### Contributing with code
-Code contributions are welcome and can be in the form of, but not limited to, fixes, more tests, or
-new features. You can fork the repository and make a pull request, just make sure the code is well tested.
+You can also fork the repository to make pull requests, just make sure the code is well tested.
 Signed commits are preferred.
