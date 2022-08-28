@@ -12,16 +12,16 @@ fn test_no_config_file_discovered() -> DynErrResult<()> {
     let mut cmd = Command::cargo_bin("yamis")?;
     cmd.current_dir(tmp_dir.path());
     cmd.arg("echo");
-    cmd.assert()
-        .failure()
-        .stderr(predicate::str::contains("No config file found."));
+    cmd.assert().failure().stderr(predicate::str::contains(
+        "No `project.yamis` file found. Add one with `.toml`, `.yaml` or `.yml` extension.",
+    ));
     Ok(())
 }
 
 #[test]
 fn test_run_simple_task() -> Result<(), Box<dyn std::error::Error>> {
     let tmp_dir = TempDir::new().unwrap();
-    let mut file = File::create(tmp_dir.join("../project.yamis.yml"))?;
+    let mut file = File::create(tmp_dir.join("project.yamis.toml"))?;
     file.write_all(
         r#"
     [tasks.hello]
@@ -44,7 +44,7 @@ fn test_run_simple_task() -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(windows)] // echo does not prints the quotes in unix
 fn test_escape_always_windows() -> Result<(), Box<dyn std::error::Error>> {
     let tmp_dir = TempDir::new().unwrap();
-    let mut file = File::create(tmp_dir.join("../project.yamis.yml"))?;
+    let mut file = File::create(tmp_dir.join("project.yamis.toml"))?;
     file.write_all(
         r#"
     [tasks.say_hello]
@@ -68,7 +68,7 @@ fn test_escape_always_windows() -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(windows)] // echo does not prints the quotes in unix
 fn test_escape_on_space_windows() -> Result<(), Box<dyn std::error::Error>> {
     let tmp_dir = TempDir::new().unwrap();
-    let mut file = File::create(tmp_dir.join("../project.yamis.yml"))?;
+    let mut file = File::create(tmp_dir.join("project.yamis.toml"))?;
     file.write_all(
         r#"
     [tasks.say_hello]
@@ -94,7 +94,7 @@ fn test_escape_on_space_windows() -> Result<(), Box<dyn std::error::Error>> {
 #[test]
 fn test_escape_never() -> Result<(), Box<dyn std::error::Error>> {
     let tmp_dir = TempDir::new().unwrap();
-    let mut file = File::create(tmp_dir.join("../project.yamis.yml"))?;
+    let mut file = File::create(tmp_dir.join("project.yamis.toml"))?;
     file.write_all(
         r#"
     [tasks.say_hello]
@@ -117,7 +117,7 @@ fn test_escape_never() -> Result<(), Box<dyn std::error::Error>> {
 #[test]
 fn test_run_os_task() -> Result<(), Box<dyn std::error::Error>> {
     let tmp_dir = TempDir::new().unwrap();
-    let mut file = File::create(tmp_dir.join("../project.yamis.yml"))?;
+    let mut file = File::create(tmp_dir.join("project.yamis.toml"))?;
     file.write_all(
         r#"
     [tasks.hello.windows]
@@ -168,7 +168,7 @@ fn test_run_os_task() -> Result<(), Box<dyn std::error::Error>> {
 #[test]
 fn test_set_env() -> Result<(), Box<dyn std::error::Error>> {
     let tmp_dir = TempDir::new().unwrap();
-    let mut file = File::create(tmp_dir.join("../project.yamis.yml"))?;
+    let mut file = File::create(tmp_dir.join("project.yamis.toml"))?;
     file.write_all(
         r#"
     [env]
@@ -225,7 +225,7 @@ fn test_env_file() -> Result<(), Box<dyn std::error::Error>> {
         )
         .unwrap();
 
-    let mut file = File::create(tmp_dir.join("../project.yamis.yml"))?;
+    let mut file = File::create(tmp_dir.join("project.yamis.toml"))?;
     file.write_all(
         r#"
             env_file = ".env"
@@ -283,7 +283,7 @@ fn test_run_program() -> Result<(), Box<dyn std::error::Error>> {
     let mut batch_file = File::create(tmp_dir.join(batch_file_name))?;
     batch_file.write_all(batch_file_content).unwrap();
 
-    let mut file = File::create(tmp_dir.join("../project.yamis.yml"))?;
+    let mut file = File::create(tmp_dir.join("project.yamis.toml"))?;
     file.write_all(
         format!(
             r#"
@@ -317,7 +317,7 @@ fn test_run_serial() -> Result<(), Box<dyn std::error::Error>> {
     let mut batch_file = File::create(tmp_dir.join(batch_file_name))?;
     batch_file.write_all(batch_file_content).unwrap();
 
-    let mut file = File::create(tmp_dir.join("../project.yamis.yml"))?;
+    let mut file = File::create(tmp_dir.join("project.yamis.toml"))?;
     file.write_all(
         format!(
             r#"
@@ -352,7 +352,7 @@ fn test_run_serial() -> Result<(), Box<dyn std::error::Error>> {
 #[test]
 fn test_env_inheritance() -> Result<(), Box<dyn std::error::Error>> {
     let tmp_dir = TempDir::new().unwrap();
-    let mut file = File::create(tmp_dir.join("../project.yamis.yml"))?;
+    let mut file = File::create(tmp_dir.join("project.yamis.toml"))?;
     file.write_all(
         r#" 
     [tasks.hello_base.env]
