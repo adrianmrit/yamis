@@ -8,7 +8,6 @@ use serde_derive::Deserialize;
 use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
-use std::thread::current;
 use std::{env, error, fmt, fs};
 
 /// Config file names by order of priority. The first one refers to local config and
