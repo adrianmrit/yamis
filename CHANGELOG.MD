@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.2.1] - 
+## [0.2.1] - 2022-08-28
 ### Added
 - YAML 1.2 config files support.
 - Add alias args+ for args_extend
