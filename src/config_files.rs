@@ -140,7 +140,7 @@ impl Iterator for ConfigFilePaths {
                     // Index is updated on the previous match, therefore we compare against 0
                     self.finished = true;
                 } else {
-                    let new_current = self.current.parent().unwrap().parent();
+                    let new_current = self.current.parent();
                     match new_current {
                         // Finish if found root
                         None => {
@@ -159,7 +159,6 @@ impl Iterator for ConfigFilePaths {
             }
 
             if let Some(found_file) = found_file {
-                dbg!(&found_file);
                 return Some(Ok(found_file));
             }
         }
