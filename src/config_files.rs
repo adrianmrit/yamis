@@ -281,10 +281,14 @@ impl ConfigFile {
         for (name, task) in self.tasks.iter_mut() {
             task.setup(name, folder_reference)?;
 
+            // TODO: Use a macro
             if task.linux.is_some() {
                 let os_task = std::mem::replace(&mut task.linux, None);
                 let mut os_task = *os_task.unwrap();
                 let os_task_name = format!("{}.linux", name);
+                if os_tasks.contains_key(&os_task_name) {
+                    return Err(format!("Duplicate task `{}`", os_task_name).into());
+                }
                 os_task.setup(&os_task_name, folder_reference)?;
                 os_tasks.insert(os_task_name, os_task);
             }
@@ -293,6 +297,9 @@ impl ConfigFile {
                 let os_task = std::mem::replace(&mut task.windows, None);
                 let mut os_task = *os_task.unwrap();
                 let os_task_name = format!("{}.windows", name);
+                if os_tasks.contains_key(&os_task_name) {
+                    return Err(format!("Duplicate task `{}`", os_task_name).into());
+                }
                 os_task.setup(&os_task_name, folder_reference)?;
                 os_tasks.insert(os_task_name, os_task);
             }
@@ -301,6 +308,9 @@ impl ConfigFile {
                 let os_task = std::mem::replace(&mut task.macos, None);
                 let mut os_task = *os_task.unwrap();
                 let os_task_name = format!("{}.macos", name);
+                if os_tasks.contains_key(&os_task_name) {
+                    return Err(format!("Duplicate task `{}`", os_task_name).into());
+                }
                 os_task.setup(&os_task_name, folder_reference)?;
                 os_tasks.insert(os_task_name, os_task);
             }
