@@ -12,9 +12,9 @@ fn test_no_config_file_discovered() -> DynErrResult<()> {
     let mut cmd = Command::cargo_bin("yamis")?;
     cmd.current_dir(tmp_dir.path());
     cmd.arg("echo");
-    cmd.assert()
-        .failure()
-        .stderr(predicate::str::contains("No config file found."));
+    cmd.assert().failure().stderr(predicate::str::contains(
+        "No `project.yamis` file found. Add one with `.toml`, `.yaml` or `.yml` extension.",
+    ));
     Ok(())
 }
 
@@ -392,28 +392,28 @@ fn test_extend_args() -> Result<(), Box<dyn std::error::Error>> {
     let mut batch_file = File::create(tmp_dir.join(batch_file_name))?;
     batch_file.write_all(batch_file_content).unwrap();
 
-    let mut file = File::create(tmp_dir.join("project.yamis.toml"))?;
+    let mut file = File::create(tmp_dir.join("project.yamis.yml"))?;
     file.write_all(
         format!(
             r#"
-            [tasks.echo_program]
-            program = "bash"
-            args = ["{b}"]
-            private=true
-            
-            [tasks.echo_program.windows]
-            program = "cmd.exe"
-            args = ["/C", "{b}"]
-            private=true
-
-            [tasks.hello]
-            bases = ["echo_program"]
-            args_extend = ["hello", "world"]
-            
-            [tasks.hello.windows]
-            bases = ["echo_program.windows"]
-            args_extend = ["hello", "world"]
-            "#,
+tasks:
+  echo_program:
+    program: "bash"
+    args: ["{b}"]
+    private: true  
+    
+    windows:
+      program: "cmd.exe"
+      args: ["/C", "{b}"]
+     
+  hello:
+    bases: ["echo_program"]
+    args_extend: ["hello", "world"]
+      
+    windows:
+      bases: ["echo_program.windows"]
+      args+: ["hello", "world"]
+"#,
             b = batch_file_name
         )
         .as_bytes(),

@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.2.1] - 
+### Added
+- YAML 1.2 config files support.
+- Add alias args+ for args_extend
+
 ## [0.2.0] - 2022-08-15
 ### Added
 - Tasks can inherit from others.

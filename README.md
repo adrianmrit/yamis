@@ -10,22 +10,16 @@ limited to positional arguments or passing all arguments inline.
 
 
 ## Features
+- Multiplatform (Windows, Linux and macOs)
+- Write config files in either YAML and TOML format
 - Separate configuration files for teams and local development
 - Powerful argument parsing
 - Run scripts or programs with arguments
-- Setting the interpreter for scripts
+- Set the interpreter for scripts
 - Tasks can inherit from one or more tasks
-- Pass extra named or positional arguments to the underlying command, and mix them with predefined arguments
-- Pass multiple arguments with the same key
+- Pass additional named or positional arguments to the underlying command
 - Add extra environment variables or load an environment file
-- Define task version for specific system
-- Multiplatform (supports Windows, Linux and macOs)
-- Simple syntax thanks to TOML files
-
-## Planned features
-- Support for YAML files
-- Input missing arguments
-- Distribute installers for easier installation
+- Define task for specific operating systems
 
 
 ## Install
@@ -39,55 +33,71 @@ Compiled binaries are also available for Windows, Linux and MacOs under
 [releases](https://github.com/adrianmrit/yamis/releases/tag/v0.1.0).
 
 ## Quick Start
-`project.yamis.toml` should be added at the root of a project. 
-Here is an example TOML file to demostrate some features:
-```toml
-[env]  # global env variables
-DEBUG = "FALSE"
-DOCKER_CONTAINER = "sample_docker_container"
+The first step is to add a YAML or TOML file in the project root, i.e. `project.yamis.yaml`.
+ 
+Here is a sample YAML file to demonstrate some features:
+```yaml
+# project.yamis.yaml
+env:  # global env variables
+  DEBUG: "FALSE"
+  DOCKER_CONTAINER: sample_docker_container
 
-[tasks._debugable_task]
-private = true   # cannot be invoked directly
+tasks:
+  _debuggable_task:
+    private: true   # cannot be invoked directly
+    env:
+      DEBUG: "TRUE"  # Add env variables per task
 
-[tasks._debugable_task.env]
-DEBUG = "TRUE"  # Add env variables per task
+  say_hi:
+    script: "echo Hello {name}"  # name can be passed as --name=world, -name=world, or name="big world"
 
-[tasks.say_hi]
-script = "echo Hello {name}"  # name can be passed as --name=world, -name=world, or name="big world"
+  folder_content:  # Default for linux and macos, can be individually specified like for windows.
+    script: "ls {path?}"  # path is an optional argument
+    windows:  # Task version for windows systems
+      script: "dir {*}"  # Passes all arguments
 
-[tasks.folder_content]  # Default for linux and macos, can be individually specified like for windows.
-script = "ls {path?}"  # path is an optional argument
+  compose-run:
+    wd: ""  # Uses the dir where the config file appears as working dir
+    program: "docker-compose"
+    args: ["run", "{$DOCKER_CONTAINER}", "{*}"]   # This syntax for environment variables works both for windows and unix systems.
 
-[tasks.folder_content.windows]  # Task version for windows systems
-script = "dir {*}"  # Passes all arguments
-
-
-[tasks.compose-run]
-wd = ""  # Uses the dir where the config file appears as working dir
-program = "docker-compose"
-args = ["run", "{$DOCKER_CONTAINER}", "{*}"]   # This syntax for environment variables works both for windows and unix systems.
-
-[tasks.compose-debug]
-bases = ["compose-run", "_debugable_task"]  # Inherit from other tasks
-args_extend = ["{$DEBUG?}"]  # Extends args from base task. Here DEBUG is an optional environment variable
+  compose-debug:
+    bases: ["compose-run", "_debuggable_task"]  # Inherit from other tasks
+    args+: ["{$DEBUG?}"]  # Extends args from base task. Here DEBUG is an optional environment variable
 ```
 
 After having a config file, you can run a task by calling `yamis`, the name of the task, and any arguments, i.e.
-`yamis say_hello name="big world"`. Passing the same argument multiple times will also add it multiple times, i.e.
-`yamis say_hello name="person 1" --name="person 2"` is equivalent to `echo Hello person 1 person 2`
+`yamis say_hi name="world"`. Passing the same argument multiple times will also add it multiple times, i.e.
+`yamis say_hi name="person 1" --name="person 2"` is equivalent to `echo Hello person 1 person 2`
 
+
+## Notes about YAML files:
+Unlike TOML, YAML can sometimes be ambiguous, thus, the types are not converted by the program
+and will raise an error if they are improperly set. 
+
+For example this will raise an error because `Yes` is converted to True. If we did the conversion
+we wouldn't know the original value, and we could get `DEBUG=true` in the environment which is undesired
+in this example.
+```yaml
+env:
+  DEBUG: Yes
+```
 
 ## Usage
 ### Task files discovery
-The program will look at the directory where it was invoked and its parents until a `project.yamis.toml` is
-discovered or the root folder is reached. Valid filenames are the following:
-- `local.yamis.toml`: First one to look at for tasks. This one should hold private tasks and should not
-  be committed to the repository.
-- `yamis.toml`: Second one to look at for tasks. Should be used in sub-folders of a project for tasks specific
-  to that folder and sub-folders.
-- `project.yamis.toml`: Last one to look at for tasks. The file discovery stops when this one is found.
+The config files must be either a TOML or YAML file with the appropriate extension, i.e. `project.yamis.toml`, or
+`project.yamis.yml`.
 
-Note that you can have multiple `local.yamis.toml` and `yamis.toml` files in a project.
+The program will look for the following files at the directory where it was invoked and its parents
+until a `project.yamis` is found. Note that the extension is not specified:
+
+- `local.yamis`: Should hold private tasks and should not be committed to the repository.
+- `yamis`: Should be used in sub-folders of a project for tasks specific to that folder and sub-folders.
+- `project.yamis`: Should hold tasks for the entire project.
+
+To find a task, it will look in the files in following order inside the directory `local.yamis`, `yamis`,
+`project.yamis`. It will keep looking into the parent directories until a task is found or `project.yamis`
+is reached.
 
 
 ### Script
@@ -304,7 +314,7 @@ configuration file and not the directory where the task was executed, this means
 working directory the same one as the directory for the configuration file.
 
 
-##### Task inheritance
+### Task inheritance
 
 A task can inherit from multiple tasks by adding a `bases` property, which should be a list names of tasks in
 the same file. This works like class inheritance in common languages like Python, but not all values are 
@@ -323,47 +333,55 @@ The inherited values are:
 - env_file (the values are merged instead of overwriting)
 
 Values not inherited are:
-- args_extend (added to `args` when parsing the child task,
+- `args_extend` (added to `args` when parsing the child task,
  so the parent task would actually inherit `args`)
-- private
+- `args+` (alias for `args_extend`)
+- `private`
 
 The inheritance works from bottom to top, with childs being processed before the parents. Circular dependencies
 are not allowed and will result in an error.
 
+#### Extending args
+
+Args can be extended with `args_extend` or it's alias `args+`. These will append the given list to the `args`
+inherited from the bases.
+
 Examples:
-```toml
-[tasks.program]
-program = "program"
-args = ["{name}"]
+```yaml
+tasks:
+  program:
+    program: "program"
+    args: ["{name}"]
 
-[tasks.program_extend]
-bases = ["program"]
-args_extend = ["{phone}"]
+  program_extend:
+    bases: ["program"]
+    args_extend: ["{phone}"]
 
-[tasks.other]
-env = {"KEY" = "VAL"}
-args = ["{other_param}"]
-private = true  # cannot be called directly, field not inherited
+  other:
+    env: {"KEY": "VAL"}
+    args: ["{other_param}"]
+    private: true  # cannot be called directly, field not inherited
 
-[tasks.program_extend_again]
-bases = ["program_extend", "other"]
-args_extend = ["{address}"]
+  program_extend_again:
+    bases: ["program_extend", "other"]
+    args+: ["{address}"]  # args+ is an alias for args_extend
 ```
 
 In the example above, `program_extend_again` will be equivalent to
-```toml
-[tasks.program_extend_again]
-program = "program"
-env = {"KEY" = "VAL"}
-args = ["{name}", "{phone}", "{address}"]
+```yaml
+tasks:
+  program_extend_again:
+    program: "program"
+    env: {"KEY": "VAL"}
+    args: ["{name}", "{phone}", "{address}"]
 ```
 
+#### Marking a task as private
+
+Tasks can be marked as private by setting `private = true`. Private tasks cannot be called by the user.
+
 ## Contributing
+Feel free to create issues to report bugs, ask questions or request changes.
 
-### Issues
-Feel free to create issues to report bugs, ask questions or request new features.
-
-### Contributing with code
-Code contributions are welcome and can be in the form of, but not limited to, fixes, more tests, or
-new features. You can fork the repository and make a pull request, just make sure the code is well tested.
+You can also fork the repository to make pull requests, just make sure the code is well tested.
 Signed commits are preferred.

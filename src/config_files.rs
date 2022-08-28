@@ -14,7 +14,9 @@ use std::{env, error, fmt, fs};
 /// should not be committed to the repository. The program should discover config files
 /// by looping on the parent folders and current directory until reaching the root path
 /// or a the project config (last one on the list) is found.
-const CONFIG_FILES_PRIO: &[&str] = &["local.yamis.toml", "yamis.toml", "project.yamis.toml"];
+const CONFIG_FILES_PRIO: &[&str] = &["local.yamis", "yamis", "project.yamis"];
+/// Allowed extensions for config files.
+const ALLOWED_EXTENSIONS: &[&str] = &["yml", "yaml", "toml"];
 
 /// Errors related to config files and tasks
 #[derive(Debug, PartialEq, Eq)]
@@ -24,7 +26,12 @@ pub enum ConfigError {
     /// Raised when no config file is found during auto-discovery
     NoConfigFile, // No config file was discovered
     /// Bad Config error
-    BadConfigFile(String),
+    BadConfigFile(PathBuf, String),
+    /// Found a config file multiple times with different extensions
+    DuplicateConfigFile(String),
+    /// No root config found, i.e. reached the root of the filesystem without
+    /// finding a project.yamis file
+    NoRootConfig,
 }
 
 impl fmt::Display for ConfigError {
@@ -32,7 +39,10 @@ impl fmt::Display for ConfigError {
         match *self {
             // ConfigError::FileNotFound(ref s) => write!(f, "File {} not found.", s),
             ConfigError::NoConfigFile => write!(f, "No config file found."),
-            ConfigError::BadConfigFile(ref s) => write!(f, "Bad config file. {}", s),
+            ConfigError::BadConfigFile(ref path, ref reason) => write!(f, "Bad config file `{}`:\n    {}", path.to_string_lossy(), reason),
+            ConfigError::DuplicateConfigFile(ref s) => write!(f,
+                                                              "Config file `{}` defined multiple times with different extensions in the same directory.", s),
+            ConfigError::NoRootConfig => write!(f, "No `project.yamis` file found. Add one with `.toml`, `.yaml` or `.yml` extension."),
         }
     }
 }
@@ -42,7 +52,9 @@ impl error::Error for ConfigError {
         match *self {
             // ConfigError::FileNotFound(_) => "file not found",
             ConfigError::NoConfigFile => "no config discovered",
-            ConfigError::BadConfigFile(_) => "bad config file",
+            ConfigError::BadConfigFile(_, _) => "bad config file",
+            ConfigError::DuplicateConfigFile(_) => "duplicate config file",
+            ConfigError::NoRootConfig => "no root config file found",
         }
     }
 
@@ -72,6 +84,7 @@ pub struct ConfigFile {
     #[serde(default = "default_quote")]
     pub(crate) quote: EscapeMode,
     /// Tasks inside the config file.
+    #[serde(default)]
     tasks: HashMap<String, Task>,
     /// Env variables for all the tasks.
     pub(crate) env: Option<HashMap<String, String>>,
@@ -82,30 +95,58 @@ pub struct ConfigFile {
 #[derive(Debug)]
 /// Iterates over existing config file paths, in order of priority.
 pub struct ConfigFilePaths {
+    /// Index of value to use from `CONFIG_FILES_PRIO`
     index: usize,
+    /// Whether the iterator finished or not
     finished: bool,
+    /// Current directory
     current: PathBuf,
 }
 
 impl Iterator for ConfigFilePaths {
-    type Item = PathBuf;
+    type Item = Result<PathBuf, ConfigError>;
 
     fn next(&mut self) -> Option<Self::Item> {
         while !self.finished {
-            let path = self.current.join(CONFIG_FILES_PRIO[self.index]);
-            let is_last_index = CONFIG_FILES_PRIO.len() - 1 == self.index;
-            let is_file = path.is_file();
-            if is_last_index {
-                if is_file {
+            let config_file_name = CONFIG_FILES_PRIO[self.index];
+
+            // project file is the last one on the list
+            let is_project_config = CONFIG_FILES_PRIO.len() - 1 == self.index;
+
+            // Counts files with same name and different extension
+            let mut files_count: u8 = 0;
+            let mut found_file: Option<PathBuf> = None;
+
+            for file_extension in ALLOWED_EXTENSIONS {
+                let file_name = format!("{}.{}", config_file_name, file_extension);
+                let path = self.current.join(file_name);
+                if path.is_file() {
+                    files_count += 1;
+                    found_file = Some(path);
+                }
+            }
+
+            if files_count > 1 {
+                self.finished = true;
+                return Some(Err(ConfigError::DuplicateConfigFile(String::from(
+                    config_file_name,
+                ))));
+            }
+
+            if is_project_config {
+                if found_file.is_some() {
                     // Break if the file found is the root file
                     // Index is updated on the previous match, therefore we compare against 0
                     self.finished = true;
                 } else {
-                    let new_current = path.parent().unwrap().parent();
+                    let new_current = self.current.parent();
                     match new_current {
+                        // Finish if found root
                         None => {
                             self.finished = true;
+                            return Some(Err(ConfigError::NoRootConfig));
                         }
+                        // Continue if found a parent folder
                         Some(new_current) => {
                             self.current = new_current.to_path_buf();
                         }
@@ -115,10 +156,12 @@ impl Iterator for ConfigFilePaths {
             } else {
                 self.index += 1;
             }
-            if is_file {
-                return Some(path);
+
+            if let Some(found_file) = found_file {
+                return Some(Ok(found_file));
             }
         }
+        self.finished = true;
         None
     }
 }
@@ -136,28 +179,43 @@ impl ConfigFilePaths {
 }
 
 impl ConfigFile {
+    fn extract(path: &Path) -> DynErrResult<ConfigFile> {
+        let extension = path
+            .extension()
+            .unwrap_or_else(|| OsStr::new(""))
+            .to_string_lossy()
+            .to_string();
+
+        let is_yaml = match extension.as_str() {
+            "yaml" => true,
+            "yml" => true,
+            "toml" => false,
+            _ => {
+                return Err(ConfigError::BadConfigFile(
+                    path.to_path_buf(),
+                    String::from("Extension must be either `.toml`, `.yaml` or `.yml`"),
+                )
+                .into());
+            }
+        };
+        let contents = match fs::read_to_string(&path) {
+            Ok(file_contents) => file_contents,
+            Err(e) => return Err(format!("There was an error reading the file:\n{}", e).into()),
+        };
+        if is_yaml {
+            Ok(serde_yaml::from_str(&*contents)?)
+        } else {
+            Ok(toml::from_str(&*contents)?)
+        }
+    }
+
     /// Loads a config file from the TOML representation.
     ///
     /// # Arguments
     ///
     /// * path - path of the toml file to load
     pub fn load(path: &Path) -> DynErrResult<ConfigFile> {
-        let contents = match fs::read_to_string(&path) {
-            Ok(file_contents) => file_contents,
-            Err(e) => return Err(format!("There was an error reading the file:\n{}", e).into()),
-        };
-        let mut conf: ConfigFile = match toml::from_str(&*contents) {
-            Ok(conf) => conf,
-            Err(e) => {
-                let err_msg = e.to_string();
-                return Err(ConfigError::BadConfigFile(format!(
-                    "There was an error parsing the toml file:\n{}{}",
-                    &err_msg[..1].to_uppercase(),
-                    &err_msg[1..]
-                ))
-                .into());
-            }
-        };
+        let mut conf: ConfigFile = ConfigFile::extract(path)?;
         conf.filepath = path.to_path_buf();
         conf.move_system_tasks_up_and_setup()?;
 
@@ -223,10 +281,14 @@ impl ConfigFile {
         for (name, task) in self.tasks.iter_mut() {
             task.setup(name, folder_reference)?;
 
+            // TODO: Use a macro
             if task.linux.is_some() {
                 let os_task = std::mem::replace(&mut task.linux, None);
                 let mut os_task = *os_task.unwrap();
                 let os_task_name = format!("{}.linux", name);
+                if os_tasks.contains_key(&os_task_name) {
+                    return Err(format!("Duplicate task `{}`", os_task_name).into());
+                }
                 os_task.setup(&os_task_name, folder_reference)?;
                 os_tasks.insert(os_task_name, os_task);
             }
@@ -235,6 +297,9 @@ impl ConfigFile {
                 let os_task = std::mem::replace(&mut task.windows, None);
                 let mut os_task = *os_task.unwrap();
                 let os_task_name = format!("{}.windows", name);
+                if os_tasks.contains_key(&os_task_name) {
+                    return Err(format!("Duplicate task `{}`", os_task_name).into());
+                }
                 os_task.setup(&os_task_name, folder_reference)?;
                 os_tasks.insert(os_task_name, os_task);
             }
@@ -243,6 +308,9 @@ impl ConfigFile {
                 let os_task = std::mem::replace(&mut task.macos, None);
                 let mut os_task = *os_task.unwrap();
                 let os_task_name = format!("{}.macos", name);
+                if os_tasks.contains_key(&os_task_name) {
+                    return Err(format!("Duplicate task `{}`", os_task_name).into());
+                }
                 os_task.setup(&os_task_name, folder_reference)?;
                 os_tasks.insert(os_task_name, os_task);
             }
@@ -282,7 +350,7 @@ impl ConfigFiles {
     pub fn discover<S: AsRef<OsStr> + ?Sized>(path: &S) -> DynErrResult<ConfigFiles> {
         let mut confs: Vec<ConfigFile> = Vec::new();
         for config_path in ConfigFilePaths::new(path) {
-            let config = ConfigFile::load(config_path.as_path())?;
+            let config = ConfigFile::load(config_path?.as_path())?;
             confs.push(config);
         }
         if confs.is_empty() {
