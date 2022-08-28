@@ -7,7 +7,7 @@ description = "A task runner that accepts positional and named arguments."
 homepage = "https://github.com/adrianmrit/yamis/"
 repository = "https://github.com/adrianmrit/yamis/"
 readme = "README.md"
-keywords = ["task", "build", "subcommand"]
+keywords = ["task", "build", "subcommand", "runner", "command"]
 categories = [
     "command-line-utilities",
     "development-tools",
