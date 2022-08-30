@@ -1,4 +1,4 @@
-use crate::app::TaskArgs;
+use crate::cli::TaskArgs;
 use lazy_static::lazy_static;
 use regex::Regex;
 use serde_derive::Deserialize;

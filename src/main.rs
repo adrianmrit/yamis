@@ -1,6 +1,6 @@
 use colored::Colorize;
 
-use yamis::app::exec;
+use yamis::cli::exec;
 
 fn main() {
     match exec() {

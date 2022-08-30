@@ -1,5 +1,4 @@
 use crate::config_files::ConfigFiles;
-use clap::{crate_authors, crate_description, crate_name, crate_version, App, Arg, ArgMatches};
 use regex::Regex;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
@@ -9,8 +8,6 @@ use std::{env, fmt};
 const HELP: &str = "The appropriate YAML or TOML config files need to exist \
 in the directory or parents, or a file is specified with the `-f` or `--file` \
 options. For help about the config files check https://github.com/adrianmrit/yamis";
-
-pub type YamisArgMatches = ArgMatches;
 
 /// Extra args passed that will be mapped to the task.
 pub type TaskArgs = HashMap<String, Vec<String>>;
@@ -51,7 +48,7 @@ impl Error for ArgsError {
 
 impl TaskSubcommand {
     /// Returns a new TaskSubcommand
-    pub(crate) fn new(args: &ArgMatches) -> Result<TaskSubcommand, ArgsError> {
+    pub(crate) fn new(args: &clap::ArgMatches) -> Result<TaskSubcommand, ArgsError> {
         let arg_regex: Regex =
             // TODO: Check best way to implement
             Regex::new(r"-*(?P<key>[a-zA-Z]+\w*)=(?P<val>[\s\S]*)")
@@ -98,22 +95,21 @@ impl TaskSubcommand {
 /// are returned immediately. The wrapping method needs to take care of formatting
 /// and displaying these errors appropriately.
 pub fn exec() -> Result<(), Box<dyn Error>> {
-    let app = App::new(crate_name!())
-        .version(crate_version!())
-        .about(crate_description!())
-        .author(crate_authors!())
+    let app = clap::Command::new(clap::crate_name!())
+        .version(clap::crate_version!())
+        .about(clap::crate_description!())
+        .author(clap::crate_authors!())
         .after_help(HELP)
         .allow_external_subcommands(true)
         .arg(
-            Arg::new("file")
+            clap::Arg::new("file")
                 .short('f')
                 .long("file")
                 .help("Search for tasks in the given file")
                 .takes_value(true)
                 .value_name("FILE"),
         );
-
-    let matches: YamisArgMatches = app.get_matches();
+    let matches = app.get_matches();
 
     let task_command = TaskSubcommand::new(&matches)?;
 

@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::{error, fmt, mem};
 
-use crate::app::TaskArgs;
+use crate::cli::TaskArgs;
 use crate::args_format::{format_arg, format_script, EscapeMode};
 use crate::config_files::{ConfigFile, ConfigFiles};
 use crate::defaults::default_false;
