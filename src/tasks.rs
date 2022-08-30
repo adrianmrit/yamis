@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::{error, fmt, mem};
 
-use crate::args::ArgsMap;
+use crate::app::TaskArgs;
 use crate::args_format::{format_arg, format_script, EscapeMode};
 use crate::config_files::{ConfigFile, ConfigFiles};
 use crate::defaults::default_false;
@@ -37,6 +37,7 @@ cfg_if::cfg_if! {
 pub enum TaskError {
     /// Raised when there is an error running a task
     RuntimeError(String, String),
+    /// Raised when the task is improperly configured
     ImproperlyConfigured(String, String),
 }
 
@@ -386,7 +387,7 @@ impl Task {
     /// * `name` - Name of the task, displayed in errors.
     /// * `args` - Arguments to format the task args with
     /// * `config_file` - Configuration file of the task
-    fn run_program(&self, args: &ArgsMap, config_file: &ConfigFile) -> DynErrResult<()> {
+    fn run_program(&self, args: &TaskArgs, config_file: &ConfigFile) -> DynErrResult<()> {
         let program = self.program.as_ref().unwrap();
         let mut command = Command::new(program);
         self.set_command_basics(&mut command, config_file)?;
@@ -421,7 +422,7 @@ impl Task {
     /// * `name` - Name of the task, displayed in errors.
     /// * `args` - Arguments to format the task args with
     /// * `config_file` - Configuration file of the task
-    fn run_script(&self, args: &ArgsMap, config_file: &ConfigFile) -> DynErrResult<()> {
+    fn run_script(&self, args: &TaskArgs, config_file: &ConfigFile) -> DynErrResult<()> {
         let script = self.script.as_ref().unwrap();
 
         // Interpreter is a list, because sometimes there is need to pass extra arguments to the
@@ -472,7 +473,7 @@ impl Task {
     /// # Arguments
     /// * `args` - Arguments to format the task args with
     /// * `config_file` - Configuration file of the task
-    fn run_serial(&self, args: &ArgsMap, config_files: &ConfigFiles) -> DynErrResult<()> {
+    fn run_serial(&self, args: &TaskArgs, config_files: &ConfigFiles) -> DynErrResult<()> {
         let serial = self.serial.as_ref().unwrap();
         let mut tasks: Vec<(&Task, &ConfigFile)> = Vec::new();
         for task_name in serial {
@@ -502,7 +503,7 @@ impl Task {
     /// * `config_files` - global ConfigurationFiles instance
     pub fn run(
         &self,
-        args: &ArgsMap,
+        args: &TaskArgs,
         config_file: &ConfigFile,
         config_files: &ConfigFiles,
     ) -> DynErrResult<()> {

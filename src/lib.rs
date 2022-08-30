@@ -1,6 +1,6 @@
 extern crate core;
 
-pub mod args;
+pub mod app;
 pub mod args_format;
 pub mod config_files;
 mod defaults;

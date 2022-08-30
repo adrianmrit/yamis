@@ -1,4 +1,4 @@
-use crate::args::ArgsMap;
+use crate::app::TaskArgs;
 use lazy_static::lazy_static;
 use regex::Regex;
 use serde_derive::Deserialize;
@@ -274,7 +274,7 @@ fn replace_tag_with_env_variable(
 ///
 /// returns: Option<Vec<String, Global>>
 ///
-fn replace_tag_with_args(tag: &ArgumentTag, args: &ArgsMap) -> Option<Vec<String>> {
+fn replace_tag_with_args(tag: &ArgumentTag, args: &TaskArgs) -> Option<Vec<String>> {
     let index_arg = usize::from_str(&tag.arg).unwrap_or(0);
     let key = if index_arg > 0 { "*" } else { &tag.arg };
 
@@ -309,7 +309,7 @@ fn replace_tag_with_args(tag: &ArgumentTag, args: &ArgsMap) -> Option<Vec<String
 ///
 fn replace_tag(
     tag: &ArgumentTag,
-    args: &ArgsMap,
+    args: &TaskArgs,
     additional_env: &HashMap<String, String>,
 ) -> Option<Vec<String>> {
     if tag.is_env {
@@ -333,7 +333,7 @@ fn replace_tag(
 ///
 pub fn format_script(
     fmtstr: &str,
-    args: &ArgsMap,
+    args: &TaskArgs,
     additional_env: &HashMap<String, String>,
     escape_mode: &EscapeMode,
 ) -> Result<String, FormatError> {
@@ -404,7 +404,7 @@ pub fn format_script(
 ///  or env file loaded by the task/file
 pub fn format_arg(
     fmtstr: &str,
-    args: &ArgsMap,
+    args: &TaskArgs,
     additional_env: &HashMap<String, String>,
 ) -> Result<Vec<String>, FormatError> {
     let mut out: Vec<String> = Vec::new();

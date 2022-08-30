@@ -3,7 +3,8 @@ name = "yamis"
 version = "0.3.0"
 edition = "2021"
 license = "GPL-3.0-only"
-description = "A task runner that accepts positional and named arguments."
+authors = ["Adrian Martinez <adrianmrit@gmail.com>"]
+description = "Task runner for teams and individuals."
 homepage = "https://github.com/adrianmrit/yamis/"
 repository = "https://github.com/adrianmrit/yamis/"
 readme = "README.md"
@@ -18,7 +19,7 @@ categories = [
 
 [dependencies]
 regex = "1"
-cfg-if = "1.0.0"
+cfg-if = "1.0"
 colored = "2"
 toml = "0.5"
 serde_yaml = "0.9"
@@ -26,9 +27,10 @@ lazy_static = "1.4"
 serde_derive = "1.0"
 serde = {version = "1.0", features = ["derive"]}
 petgraph = "0.6"
-uuid = { version = "1.1.2", features = ["serde", "v4"] }
+uuid = { version = "1.1", features = ["serde", "v4"] }
 ctrlc = "3.2"
-dotenv-parser = "0.1.3"
+dotenv-parser = "0.1"
+clap = { version = "3.2", features = ["derive", "cargo"] }
 
 [dev-dependencies]
 assert_cmd = "2.0"
