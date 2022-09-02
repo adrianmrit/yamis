@@ -1,5 +1,18 @@
 # Changelog
 
+## []
+## Added
+- Get help in the command like by calling yamis with the --help or -h option
+- Get the version in the command line by calling yamis with -V 
+- Support for functions inside tasks
+- Better parsing error messages
+
+### Changed
+- Use clap
+- Use pest to parse scripts and arguments
+- A program argument can contain either a task or a literal, not both at the same time
+- Remove prefix and suffix feature in favor of functions
+
 ## [0.3.0] - 2022-08-28
 ### Added
 - YAML 1.2 config files support.
