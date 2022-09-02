@@ -854,6 +854,8 @@ dependencies = [
  "ctrlc",
  "dotenv-parser",
  "lazy_static",
+ "pest",
+ "pest_derive",
  "petgraph",
  "predicates",
  "regex",

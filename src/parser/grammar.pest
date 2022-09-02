@@ -1,0 +1,55 @@
+// Modifiers that can be applied to args, kwargs and env_var
+modifier = { "?" }
+
+
+// Parses positional arg inside tag and functions
+digits = @{ ASCII_DIGIT+}
+arg = ${digits ~ modifier? }
+
+// Parses named arguments inside tag and functions
+kwarg_name = { ( "_" | ASCII_ALPHA ) ~ ("_" | "-" | ASCII_ALPHANUMERIC )* }
+kwarg = ${ kwarg_name ~ modifier? }
+
+// Parses env var inside tag
+env_var_name = @{ ( "_" | ASCII_ALPHA ) ~ ( "_" | "-" | ASCII_ALPHANUMERIC )*}
+env_var = ${ "$" ~ env_var_name ~ modifier? }
+
+
+// Parses fun inside tag
+fun_name = @{ ( "_" | ASCII_ALPHA ) ~ ( "_" | ASCII_ALPHANUMERIC )* }
+fun_param = { fun | kwarg | arg | string | env_var | star }
+fun_params = ${ fun_param ~ ("," ~ fun_param)* }
+fun = ${ fun_name ~ "(" ~ fun_params? ~ ")" }
+
+// Star inside tag, i.e. * or *?
+star = ${ "*" ~ modifier? }
+
+// Tag, that can contain either a fun, arg, kwarg, end_var or star
+tag = { "{" ~ (fun | arg | kwarg | env_var | star ) ~ "}" }
+
+// Escape values inside string
+special_val = { "n" | "r" | "t" | "\\" | "0" }
+escape     = { "\\" ~ special_val }
+escape_dq = {"\\\""}
+escape_sq = {"\\\'"}
+
+// Parses string inside tag
+string_content = { (!("\\" | PEEK | NEWLINE ) ~ ANY)+ }
+string = { PUSH("'" | "\"") ~ (string_content | escape | escape_dq | escape_sq)* ~ POP }
+
+// Escape open and close brackets in literal
+esc_ob = { "{{" }
+esc_cb = { "}}" }
+
+literal_content = {(!("{" | "}") ~ ANY)+}
+// values outside tag
+literal = { literal_content | ( esc_ob | esc_cb )}
+
+// Multiline comment outside tag
+comment = _{ "{/" ~ (!"/}" ~ ANY)* ~ "/}" }
+
+// Parses the whole string, empty strings allowed
+all = ${ SOI ~ (comment | tag | literal)* ~ EOI }
+
+// Matches a task argument, which can be either a task or literal
+task_arg = ${ SOI ~ (tag | literal+) ~ EOI }

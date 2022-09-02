@@ -31,6 +31,8 @@ uuid = { version = "1.1", features = ["serde", "v4"] }
 ctrlc = "3.2"
 dotenv-parser = "0.1"
 clap = { version = "3.2", features = ["derive", "cargo"] }
+pest = "2.0"
+pest_derive = "2.0"
 
 [dev-dependencies]
 assert_cmd = "2.0"
