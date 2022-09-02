@@ -1,14 +1,26 @@
-use crate::args_format::EscapeMode;
 use crate::cli::TaskArgs;
 use crate::parser::functions::{FunResult, DEFAULT_FUNCTIONS};
 use crate::types::DynErrResult;
 use pest::iterators::Pair;
 use pest::Parser;
 use pest_derive::Parser;
+use serde_derive::Deserialize;
 use std::collections::HashMap;
 use std::str::FromStr;
 
 mod functions;
+
+/// Modes to escape (add quotes) the arguments passed to the script
+#[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum EscapeMode {
+    /// Always quote the arguments
+    Always,
+    /// Only add quotes if the argument has spaces
+    Spaces,
+    /// Never quote the argument
+    Never,
+}
 
 /// Pest parser for script
 #[derive(Parser)]
@@ -99,7 +111,7 @@ fn parse_arg(tag: Pair<Rule>, cli_args: &TaskArgs) -> DynErrResult<FunResult> {
     match val {
         None => {
             if modifier.is_none() {
-                Err(format!("Argument at position {arg_index} is required").into())
+                Err(format!("Mandatory argument at position {arg_index} not set.").into())
             } else {
                 Ok(FunResult::Vec(vec![]))
             }
@@ -117,7 +129,7 @@ fn parse_kwargs(tag: Pair<Rule>, cli_args: &TaskArgs) -> DynErrResult<FunResult>
     match values {
         None => {
             if modifier.is_none() {
-                return Err(format!("Argument {arg_name} is required").into());
+                return Err(format!("Mandatory argument `{arg_name}` not set.").into());
             } else {
                 Ok(FunResult::Vec(vec![]))
             }
@@ -136,7 +148,7 @@ fn parse_env_var(tag: Pair<Rule>, env: &HashMap<String, String>) -> DynErrResult
     match env_var {
         None => {
             if required {
-                Err(format!("Env var {env_var_name} not found").into())
+                Err(format!("Mandatory environment variable `{env_var_name}` not set.").into())
             } else {
                 Ok(FunResult::Vec(vec![]))
             }

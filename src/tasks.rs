@@ -6,11 +6,10 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::{error, fmt, mem};
 
-use crate::args_format::EscapeMode;
 use crate::cli::TaskArgs;
 use crate::config_files::{ConfigFile, ConfigFiles};
 use crate::defaults::default_false;
-use crate::parser::{parse_params, parse_script};
+use crate::parser::{parse_params, parse_script, EscapeMode};
 use serde_derive::Deserialize;
 use uuid::Uuid;
 
