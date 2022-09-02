@@ -1,3 +1,4 @@
+use crate::args_format::EscapeMode;
 use crate::cli::TaskArgs;
 use crate::parser::functions::{FunResult, DEFAULT_FUNCTIONS};
 use crate::types::DynErrResult;
@@ -187,12 +188,13 @@ fn parse_tag(
 ///
 /// returns: Result<String, Box<dyn Error, Global>>
 ///
-pub fn parse_script(
-    script: &str,
+pub fn parse_script<S: AsRef<str>>(
+    script: S,
     args: &TaskArgs,
     env: &HashMap<String, String>,
+    escape_mode: &EscapeMode,
 ) -> DynErrResult<String> {
-    let tokens = ScriptParser::parse(Rule::all, script);
+    let tokens = ScriptParser::parse(Rule::all, script.as_ref());
 
     let mut result = String::new();
 
@@ -219,14 +221,41 @@ pub fn parse_script(
             Rule::tag => {
                 let tag_val = parse_tag(token, args, env)?;
                 match tag_val {
-                    FunResult::String(val) => result.push_str(&val),
+                    FunResult::String(val) => {
+                        let escape = match escape_mode {
+                            EscapeMode::Always => true,
+                            EscapeMode::Spaces => val.contains(' '),
+                            EscapeMode::Never => false,
+                        };
+                        if escape {
+                            result.push('"');
+                        }
+                        result.push_str(&val);
+                        if escape {
+                            result.push('"');
+                        }
+                    }
                     FunResult::Vec(values) => {
                         if values.len() > 0 {
-                            for val in &values[0..values.len() - 1] {
+                            let last_val_index = values.len() - 1;
+                            for (i, val) in values.iter().enumerate() {
+                                let escape = match escape_mode {
+                                    EscapeMode::Always => true,
+                                    EscapeMode::Spaces => val.contains(' '),
+                                    EscapeMode::Never => false,
+                                };
+
+                                if escape {
+                                    result.push('"');
+                                }
                                 result.push_str(val);
-                                result.push(' ');
+                                if escape {
+                                    result.push('"');
+                                }
+                                if i != last_val_index {
+                                    result.push(' ');
+                                }
                             }
-                            result.push_str(values.last().unwrap());
                         }
                     }
                 }
@@ -311,7 +340,7 @@ fn parse_param(
 ///
 /// returns: Result<String, Box<dyn Error, Global>>
 ///
-fn parse_params(
+pub fn parse_params(
     params: &Vec<String>,
     args: &TaskArgs,
     env: &HashMap<String, String>,
@@ -352,8 +381,7 @@ fn test_parse_script() {
 
     let script =
         "Echo {{Hello}} {*} {key} {1} {2} {5?} {$TEST_ENV_VARIABLE} {$TEST_ENV_VARIABLE2?}";
-
-    let result = parse_script(script, &vars, &env).unwrap();
+    let result = parse_script(script, &vars, &env, &EscapeMode::Never).unwrap();
     assert_eq!(
         result,
         "Echo {Hello} positional --key=val1 --key=val2 val1 val2 positional --key=val1  sample_val "
@@ -361,7 +389,7 @@ fn test_parse_script() {
 
     let script = r#"Echo {{map(Hello)}} {map("--f=\"{}.txt\"",key)}"#;
 
-    let result = parse_script(script, &vars, &env).unwrap();
+    let result = parse_script(script, &vars, &env, &EscapeMode::Never).unwrap();
     assert_eq!(
         result,
         "Echo {map(Hello)} --f=\"val1.txt\" --f=\"val2.txt\""
@@ -381,7 +409,7 @@ a = [
 ]
 print("values are:", a)"#;
 
-    let result = parse_script(script, &vars, &env).unwrap();
+    let result = parse_script(script, &vars, &env, &EscapeMode::Never).unwrap();
     assert_eq!(result, expected);
 }
 

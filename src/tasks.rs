@@ -6,10 +6,11 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::{error, fmt, mem};
 
+use crate::args_format::EscapeMode;
 use crate::cli::TaskArgs;
-use crate::args_format::{format_arg, format_script, EscapeMode};
 use crate::config_files::{ConfigFile, ConfigFiles};
 use crate::defaults::default_false;
+use crate::parser::{parse_params, parse_script};
 use serde_derive::Deserialize;
 use uuid::Uuid;
 
@@ -396,18 +397,14 @@ impl Task {
         command.envs(&env);
 
         if let Some(task_args) = &self.args {
-            for task_arg in task_args {
-                match format_arg(task_arg, args, &env) {
-                    Ok(task_args) => {
-                        command.args(task_args);
-                    }
-                    Err(e) => {
-                        return Err(TaskError::ImproperlyConfigured(
-                            self.name.clone(),
-                            e.to_string(),
-                        )
-                        .into());
-                    }
+            match parse_params(task_args, args, &env) {
+                Ok(task_args) => {
+                    command.args(task_args);
+                }
+                Err(e) => {
+                    return Err(
+                        TaskError::ImproperlyConfigured(self.name.clone(), e.to_string()).into(),
+                    );
                 }
             }
         }
@@ -453,7 +450,7 @@ impl Task {
             &config_file.quote
         };
 
-        match format_script(script, args, &env, quote) {
+        match parse_script(script, args, &env, quote) {
             Ok(script) => {
                 let script_file = get_temp_script(&script, script_extension)?;
                 command.arg(script_file.to_str().unwrap());
