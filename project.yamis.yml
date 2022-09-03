@@ -14,7 +14,7 @@ tasks:
     script: "rm -r target_releases/v{1}"
 
   cleanup.windows:
-    script: "rmdir {(target_releases/v)1} /s /q"
+    script: "rmdir {fmt('target_releases/v{}',1)} /s /q"
 
   pack:
     serial: ["build-releases", "package-releases", "cleanup"]
