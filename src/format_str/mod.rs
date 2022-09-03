@@ -16,8 +16,8 @@ struct StrFormatParser;
 /// * `vars`: Values to replace for
 ///
 /// returns: Result<String, Box<dyn Error, Global>>
-pub fn format_string(fmt_string: &str, vars: &Vec<&str>) -> DynErrResult<String> {
-    let tokens = StrFormatParser::parse(Rule::all, fmt_string);
+pub fn format_string<S: AsRef<str>>(fmt_string: S, vars: &Vec<&str>) -> DynErrResult<String> {
+    let tokens = StrFormatParser::parse(Rule::all, fmt_string.as_ref());
 
     let tokens = match tokens {
         Ok(mut tokens) => tokens.next().unwrap().into_inner(),
@@ -45,7 +45,7 @@ pub fn format_string(fmt_string: &str, vars: &Vec<&str>) -> DynErrResult<String>
                     return Err("Not enough variables".into());
                 }
                 Some(val) => {
-                    result.push_str(val);
+                    result.push_str(val.as_ref());
                     i += 1;
                 }
             },

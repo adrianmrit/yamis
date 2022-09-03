@@ -133,11 +133,98 @@ fn flat(args: &Vec<FunVal>) -> DynErrResult<FunResult> {
     };
 }
 
+/// Joins multiple values.
+///
+/// # Arguments
+///
+/// * `args`: Function values
+///
+/// returns: Result<FunResult, Box<dyn Error, Global>>
+///
+/// # Examples
+///
+/// ```ignore
+/// let values = vec!["world".to_string(), "people".to_string()];
+/// let vars = vec![FunVal::String(" and "), FunVal::Vec(&values)];
+/// let result = map(&vars).unwrap();
+/// let expected = FunResult::String("world and people".to_string());
+/// assert_eq!(result, expected);
+/// ```
+fn join(args: &Vec<FunVal>) -> DynErrResult<FunResult> {
+    if args.len() != 2 {
+        return Err("join takes exactly two arguments".into());
+    }
+    let join_val = match args.index(0) {
+        FunVal::String(s) => s,
+        FunVal::Vec(_) => return Err("The first argument of join should be a string".into()),
+    };
+    match args.index(1) {
+        FunVal::String(s) => Ok(FunResult::String(s.to_string())),
+        FunVal::Vec(values) => {
+            if values.is_empty() {
+                Ok(FunResult::String(String::new()))
+            } else if values.len() == 1 {
+                Ok(FunResult::String(values.first().unwrap().clone()))
+            } else {
+                let mut result = String::with_capacity(values.capacity() * 5);
+
+                for val in &values[0..values.len() - 1] {
+                    result.push_str(val);
+                    result.push_str(join_val);
+                }
+
+                result.push_str(&values[values.len() - 1]);
+                Ok(FunResult::String(result))
+            }
+        }
+    }
+}
+
+/// Formats teh string
+///
+/// # Arguments
+///
+/// * `args`: Function values
+///
+/// returns: Result<FunResult, Box<dyn Error, Global>>
+///
+/// # Examples
+///
+/// ```ignore
+/// let values = vec!["world".to_string(), "people".to_string()];
+/// let vars = vec![FunVal::String(" and "), FunVal::Vec(&values)];
+/// let result = map(&vars).unwrap();
+/// let expected = FunResult::String("world and people".to_string());
+/// assert_eq!(result, expected);
+/// ```
+fn fmt(args: &Vec<FunVal>) -> DynErrResult<FunResult> {
+    if args.len() < 2 {
+        return Err("fmt takes at least two arguments".into());
+    }
+    let mut args_iter = args.iter();
+    let fmt_string = match args_iter.next().unwrap() {
+        FunVal::String(s) => s,
+        FunVal::Vec(_) => return Err("The first argument of fmt should be a string".into()),
+    };
+    let mut values: Vec<&str> = Vec::with_capacity(args.len() - 1);
+    for (i, arg) in args_iter.enumerate() {
+        match arg {
+            FunVal::String(s) => values.push(*s),
+            FunVal::Vec(_) => {
+                return Err(format!("fmt got multiple values at argument at position {i}").into())
+            }
+        }
+    }
+    Ok(FunResult::String(format_string(fmt_string, &values)?))
+}
+
 /// Returns a FunctionRegistry with the default functions
 fn load_default_functions() -> FunctionRegistry {
     let mut functions: HashMap<String, Function> = HashMap::new();
     functions.insert(String::from("map"), map);
     functions.insert(String::from("flat"), flat);
+    functions.insert(String::from("join"), join);
+    functions.insert(String::from("fmt"), fmt);
     FunctionRegistry { functions }
 }
 
@@ -205,4 +292,30 @@ fn test_flat() {
   |
   = expected EOI, literal, or tag"#;
     assert_eq!(result, expected_result);
+}
+
+#[test]
+fn test_join() {
+    let values = vec!["world".to_string(), "people".to_string()];
+    let vars = vec![FunVal::String(", "), FunVal::Vec(&values)];
+    let result = join(&vars).unwrap();
+    let expected = FunResult::String(String::from("world, people"));
+    assert_eq!(result, expected);
+
+    let vars = vec![FunVal::String(","), FunVal::String("world")];
+    let result = join(&vars).unwrap();
+    let expected = FunResult::String(String::from("world"));
+    assert_eq!(result, expected);
+}
+
+#[test]
+fn test_fmt() {
+    let vars = vec![
+        FunVal::String("Hello {} and {}"),
+        FunVal::String("world"),
+        FunVal::String("people"),
+    ];
+    let result = fmt(&vars).unwrap();
+    let expected = FunResult::String(String::from("Hello world and people"));
+    assert_eq!(result, expected);
 }
