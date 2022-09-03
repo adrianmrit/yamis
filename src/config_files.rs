@@ -179,6 +179,7 @@ impl ConfigFilePaths {
 }
 
 impl ConfigFile {
+    /// Reads the file from the path and constructs a config file
     fn extract(path: &Path) -> DynErrResult<ConfigFile> {
         let extension = path
             .extension()

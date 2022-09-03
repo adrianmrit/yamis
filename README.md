@@ -221,12 +221,13 @@ The downside however, is that we cannot execute builtin shell commands such as `
 and we need to define the arguments as a list.
 
 
-### Common Options
+### Parameters
+Parameters and environment variables can be passed inside brackets. Furthermore, they can be transformed
+through functions. 
 
 #### Passing parameters to tasks
-When calling a task, you can pass args to insert into the scripts or the argument of programs. These arguments,
-or ___argument tags___ can have different forms:
-- positional: passed by position, i.e. `{1}`, `{2}`, etc.
+Parameters can be either passed by position or by name.
+- positional: 1-indexed, i.e. `{1}`, `{2}`, etc.
 - named: case-sensitive and passed by name, i.e. `{out}`, `{file}`, etc. Note that any dash before the argument
 is removed, i.e. if `--file=out.txt` is passed, `{file}` will accept it. Also note that the named argument passed
 to the task will need to be in the form `<key>=<value>`, i.e. `-o out.txt` is not recognized as a named argument,
@@ -234,19 +235,12 @@ this is to prevent ambiguities as the parsing of arguments can change from appli
 - all: defined by `{*}`, all arguments will be passed as they are.
 
 #### Valid named argument tags
-Named argument tasks must start with a letter, and be followed by any number of letters, digits, `-` or `_`.
+Named argument tasks must start with an ascii alpha character or underscore, and should be followed by any number
+of letters, digits, `-` or `_`.
 
 #### Optional argument tags
 Argument tags are mandatory by default, but they can be made optional by adding `?`, i.e. `{*?}`
 does not raise an error if no arguments are given.
-
-#### Adding prefix and suffix
-Argument tags can also include a prefix or suffix, which will be only added if the argument was passed,
-i.e. `{(--f=)file?(.txt)}` will result in `--file=out.txt` of a file parameter is passed. Note that
-`{(--f=)file(.txt)}`, even though `file` is mandatory, it is useful if we want to unpack it (see next section). 
-Also, you can include anything inside the prefix and suffix except newlines or brackets. Note that
-parenthesis can be included in the prefix or suffix, only the surrounding ones will be excluded, i.e.
-`{(()sample())}` will result in `(hello)` if `sample=hello` is passed.
 
 #### Arguments unpacking
 When the same named argument it passed multiple times, the program or script will include them multiple time.
@@ -258,12 +252,12 @@ script = "echo hello {person}"
 
 [tasks.something]
 program = "imaginary-program"
-args = ["{(-o )f}"]
+args = ["{map('-o {}',f)}"]
 ```
 
 If we call `yamis hello person=John1 person=John2`, it will run `echo hello "John1" "John2"`.
 Similarly, `yamis something --f=out1.txt out2.txt` will call `imaginary-program` with
-`["-o out1.txt", "-o out2.txt""]`
+`["-o out1.txt", "-o out2.txt""]`. You might have noticed we call a `map`, more on functions later.
 
 
 #### Environment variables
@@ -311,6 +305,77 @@ export SAMPLE=VALUE
 echo {$SAMPLE}
 """
 ```
+
+### Functions
+Predefined functions can be used to transform arguments in different ways. They can take strings, positional
+or named arguments, environment variables, and the output of other functions. Strings are defined by single
+or double quotes, cannot contain unescaped new lines. I.e. `"\"hello\" \n 'world'"` is a valid string. Some
+functions take a format script; in these the brackets can be escaped by duplicating them, i.e. `}}` will be
+replaced with `}`.
+
+Under the hood the values passed to functions can be either strings or arrays, i.e. if we pass `*` we are
+passing an array with multiple values. Functions can also return either a single string or an array with
+multiple values. When multiple values are unpacked in a script, these are separated by a space, while in
+program these are inserted in the argument list.
+
+#### map
+`map` takes two parameters. The first argument is a format string, i.e. `"-o {}.txt"`, where the brackets
+will be replaced by the second argument. In the case multiple values are passed, all the arguments will be
+mapped in the same way. Brackets can be escaped bu using double 
+
+Example:
+```yaml
+sample:
+  quote: never
+  script: |
+    echo {map("'{}'",*)}
+
+
+sample2:
+  program: merge_txt_files
+  args: ["{map('{}.txt',*)}"]
+```
+
+`yamis sample person1 person2` will result in `echo hi 'person1' 'person2'`
+
+`yamis sample2 file1 file2` will result in calling `merge_txt_files` with arguments `["file1.txt", "file2.txt"]`
+
+
+#### flat
+`flat` is similar to map, but in scripts extra spaces won't be added, and in arguments it will not be unpacked. This is
+because calling `flat` is like calling `map` and joining the resulting array values into a single string.
+
+Example:
+```yaml
+sample:
+  quote: never
+  script: |
+    echo hi{flat(" '{}'",*)}
+
+
+sample2:
+  program: some_program
+  args: ["{flat('{},',*)}"]
+```
+
+`yamis sample person1 person2` will result in `echo hi 'person1' 'person2' `
+
+`yamis sample2 arg1 arg2` will result in calling `some_program` with arguments `["arg1,arg2,"]`
+
+
+#### join
+The first parameter of `join` is a string that will be inserted between all values given in the second parameter.
+Note that join returns a single string.
+
+Example:
+```yaml
+sample:
+  quote: never
+  script: |
+    echo hello {flat(" and ",*)}
+```
+
+`yamis sample person1 person2` will result in `echo hi person1 and person2'`
 
 #### Os Specific Tasks
 You can have a different OS version for each task. If a task for the current OS is not found, it will
