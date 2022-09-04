@@ -37,7 +37,7 @@ fn parse_fun(
     let fun_name = tag_inner.next().unwrap().as_str();
     let arguments = tag_inner.next();
     let fun = match DEFAULT_FUNCTIONS.functions.get(fun_name) {
-        None => return Err(format!("There is no function named {fun_name}").into()),
+        None => return Err(format!("There is no function named {}", fun_name).into()),
         Some(fun) => fun,
     };
 
@@ -60,13 +60,13 @@ fn parse_fun(
                     Rule::star => arguments_list.push(parse_star(param_type, cli_args)?),
                     Rule::env_var => arguments_list.push(parse_env_var(param_type, env)?),
                     Rule::string => arguments_list.push(parse_string(param_type)?),
-                    v => panic!("Unexpected rule {v:?}"),
+                    v => panic!("Unexpected rule {:?}", v),
                 }
             }
             arguments_list
         }
     };
-    Ok(fun(&arguments.iter().map(|v| v.as_val()).collect())?)
+    fun(&arguments.iter().map(|v| v.as_val()).collect())
 }
 
 /// Parses a string
@@ -90,12 +90,12 @@ fn parse_string(tag: Pair<Rule>) -> DynErrResult<FunResult> {
                     }
                 }
                 if let Some(other) = inner.next() {
-                    panic!("Unexpected pair {other:?}")
+                    panic!("Unexpected pair {:?}", other)
                 }
             }
             Rule::escape_dq => result.push('"'),
             Rule::escape_sq => result.push('\''),
-            v => panic!("Unexpected rule {v:?}"),
+            v => panic!("Unexpected rule {:?}", v),
         }
     }
     Ok(FunResult::String(result))
@@ -107,16 +107,16 @@ fn parse_arg(tag: Pair<Rule>, cli_args: &TaskArgs) -> DynErrResult<FunResult> {
     let arg_index = tag_inner.next().unwrap().as_str();
     let real_index: usize = usize::from_str(arg_index).unwrap() - 1;
     let modifier = tag_inner.next();
-    let val = cli_args.get("*").unwrap().get(real_index);
+    let val: Option<&String> = cli_args.get("*").unwrap().get(real_index);
     match val {
         None => {
             if modifier.is_none() {
-                Err(format!("Mandatory argument at position {arg_index} not set.").into())
+                Err(format!("Mandatory argument at position {} not set.", arg_index).into())
             } else {
                 Ok(FunResult::Vec(vec![]))
             }
         }
-        Some(val) => Ok(FunResult::String(val.clone())),
+        Some(val) => Ok(FunResult::String(String::from(val))),
     }
 }
 
@@ -129,7 +129,7 @@ fn parse_kwargs(tag: Pair<Rule>, cli_args: &TaskArgs) -> DynErrResult<FunResult>
     match values {
         None => {
             if modifier.is_none() {
-                return Err(format!("Mandatory argument `{arg_name}` not set.").into());
+                Err(format!("Mandatory argument `{}` not set.", arg_name).into())
             } else {
                 Ok(FunResult::Vec(vec![]))
             }
@@ -148,7 +148,7 @@ fn parse_env_var(tag: Pair<Rule>, env: &HashMap<String, String>) -> DynErrResult
     match env_var {
         None => {
             if required {
-                Err(format!("Mandatory environment variable `{env_var_name}` not set.").into())
+                Err(format!("Mandatory environment variable `{}` not set.", env_var_name).into())
             } else {
                 Ok(FunResult::Vec(vec![]))
             }
@@ -160,13 +160,21 @@ fn parse_env_var(tag: Pair<Rule>, env: &HashMap<String, String>) -> DynErrResult
 /// Parses the star variable
 fn parse_star(tag: Pair<Rule>, cli_args: &TaskArgs) -> DynErrResult<FunResult> {
     // * is assumed to exist
-    let values = cli_args.get("*").unwrap();
+    match cli_args.get("*") {
+        None => (),
+        Some(v) => {
+            if !v.is_empty() {
+                return Ok(FunResult::Vec(v.clone()));
+            }
+        }
+    }
     let modifier = tag.into_inner().next();
     // for now modifier can only be '?'
-    if modifier.is_some() && values.len() == 0 {
-        return Err("Arguments are required".into());
+    if modifier.is_none() {
+        Err("Arguments are required".into())
+    } else {
+        Ok(FunResult::Vec(vec![]))
     }
-    Ok(FunResult::Vec(values.clone()))
 }
 
 /// Parses a tag
@@ -183,7 +191,7 @@ fn parse_tag(
             Rule::arg => parse_arg(tag, cli_args),
             Rule::fun => parse_fun(tag, cli_args, env),
             v => {
-                panic!("Unexpected rule {v:?}");
+                panic!("Unexpected rule {:?}", v);
             }
         };
     }
@@ -225,7 +233,7 @@ pub fn parse_script<S: AsRef<str>>(
                         Rule::esc_cb => result.push('}'),
                         Rule::literal_content => result.push_str(literal.as_str()),
                         v => {
-                            panic!("Unexpected rule {v:?}");
+                            panic!("Unexpected rule {:?}", v);
                         }
                     }
                 }
@@ -248,7 +256,7 @@ pub fn parse_script<S: AsRef<str>>(
                         }
                     }
                     FunResult::Vec(values) => {
-                        if values.len() > 0 {
+                        if !values.is_empty() {
                             let last_val_index = values.len() - 1;
                             for (i, val) in values.iter().enumerate() {
                                 let escape = match escape_mode {
@@ -312,7 +320,7 @@ fn parse_param(
             match next.as_rule() {
                 Rule::EOI => (), // expected
                 v => {
-                    panic!("Unexpected rule {v:?}");
+                    panic!("Unexpected rule {:?}", v);
                 }
             }
             parse_tag(tag, args, env)
@@ -328,17 +336,17 @@ fn parse_param(
                                 Rule::esc_ob => buffer.push('{'),
                                 Rule::esc_cb => buffer.push('}'),
                                 Rule::literal_content => buffer.push_str(pair.as_str()),
-                                v => panic!("Unexpected rule {v:?}"),
+                                v => panic!("Unexpected rule {:?}", v),
                             }
                         }
                     }
-                    v => panic!("Unexpected rule {v:?}"),
+                    v => panic!("Unexpected rule {:?}", v),
                 }
             }
             Ok(FunResult::String(buffer))
         }
         Rule::EOI => Ok(FunResult::String(String::new())),
-        v => panic!("Unexpected rule {v:?}"),
+        v => panic!("Unexpected rule {:?}", v),
     }
 }
 
@@ -372,6 +380,10 @@ fn test_parse_script() {
     let mut vars = HashMap::<String, Vec<String>>::new();
     let mut env = HashMap::new();
 
+    let script = "hello {*?}";
+    let result = parse_script(script, &vars, &env, &EscapeMode::Never).unwrap();
+    assert_eq!(result, "hello ");
+
     env.insert(
         String::from("TEST_ENV_VARIABLE"),
         String::from("sample_val"),
@@ -392,7 +404,7 @@ fn test_parse_script() {
     );
 
     let script =
-        "Echo {{Hello}} {*} {key} {1} {2} {5?} {$TEST_ENV_VARIABLE} {$TEST_ENV_VARIABLE2?}";
+        "Echo {{Hello}} {*}{hello?} {key} {1} {2} {5?} {$TEST_ENV_VARIABLE} {$TEST_ENV_VARIABLE2?}";
     let result = parse_script(script, &vars, &env, &EscapeMode::Never).unwrap();
     assert_eq!(
         result,
