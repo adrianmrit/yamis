@@ -5,13 +5,15 @@
 - Get help in the command like by calling yamis with the --help or -h option
 - Get the version in the command line by calling yamis with -V 
 - Support for functions inside tasks
-- Better parsing error messages
+- Better error message parsing
 
 ### Changed
 - Use clap
 - Use pest to parse scripts and arguments
 - A program argument can contain either a task or a literal, not both at the same time
 - Remove prefix and suffix feature in favor of functions
+- Config files are lazily loaded
+- Tasks inherit from os-specific bases if they exist
 
 ## [0.3.0] - 2022-08-28
 ### Added
