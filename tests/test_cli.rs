@@ -278,7 +278,7 @@ fn test_run_program() -> Result<(), Box<dyn std::error::Error>> {
     let (program, param, batch_file_name, batch_file_content) = if cfg!(target_os = "windows") {
         ("cmd", "/C", "echo_args.cmd", "echo %1 %2 %*".as_bytes())
     } else {
-        ("bash", "", "echo_args.bash", "echo $1 $2 $*".as_bytes())
+        ("bash", "", "echo_args.sh", "echo $1 $2 $*".as_bytes())
     };
     let mut batch_file = File::create(tmp_dir.join(batch_file_name))?;
     batch_file.write_all(batch_file_content).unwrap();
@@ -411,7 +411,7 @@ tasks:
     args_extend: ["hello", "world"]
       
     windows:
-      bases: ["echo_program.windows"]
+      bases: ["echo_program"]
       args+: ["hello", "world"]
 "#,
             b = batch_file_name

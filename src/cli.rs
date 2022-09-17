@@ -1,9 +1,12 @@
-use crate::config_files::ConfigFiles;
-use regex::Regex;
+use std::borrow::Borrow;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::error::Error;
 use std::{env, fmt};
+
+use regex::Regex;
+
+use crate::config_files::ConfigFilePaths;
 
 const HELP: &str = "The appropriate YAML or TOML config files need to exist \
 in the directory or parents, or a file is specified with the `-f` or `--file` \
@@ -113,16 +116,20 @@ pub fn exec() -> Result<(), Box<dyn Error>> {
 
     let task_command = TaskSubcommand::new(&matches)?;
 
-    let config_files = match matches.value_of("file") {
-        None => ConfigFiles::discover(&env::current_dir()?)?,
-        Some(file_path) => ConfigFiles::for_path(&file_path)?,
+    let current_dir = env::current_dir()?;
+
+    let mut config_files = match matches.value_of("file") {
+        None => ConfigFilePaths::new(&current_dir),
+        Some(file_path) => ConfigFilePaths::only(file_path)?,
     };
 
-    let name_task_and_config = config_files.get_system_task(&task_command.task);
+    let name_task_and_config = config_files.get_task(&task_command.task)?;
     match name_task_and_config {
         None => Err(format!("Task {} not found.", task_command.task).into()),
-        Some((task, config)) => {
-            task.run(&task_command.args, config, &config_files)?;
+        Some((conf, task)) => {
+            // let conf_mutex= conf.borrow();
+            let conf_lock = conf.lock().unwrap();
+            task.run(&task_command.args, conf_lock.borrow())?;
             Ok(())
         }
     }

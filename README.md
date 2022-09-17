@@ -377,6 +377,20 @@ sample:
 
 `yamis sample person1 person2` will result in `echo hi person1 and person2'`
 
+#### fmt
+The first parameter of `fmt` is a format string, and the rest of the values are parameters to format the string with.
+Note that those extra parameters must be i individual values, not arrays, i.e. cannot use `*`.
+
+Example:
+```yaml
+sample:
+  quote: never
+  script: |
+    echo {fmt("hello {}",*)}
+```
+
+`yamis sample person1 person2` will result in `echo hi person1 and person2'`
+
 #### Os Specific Tasks
 You can have a different OS version for each task. If a task for the current OS is not found, it will
 fall back to the non os-specific task if it exists. I.e.

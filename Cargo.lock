@@ -853,6 +853,7 @@ dependencies = [
  "colored",
  "ctrlc",
  "dotenv-parser",
+ "indexmap",
  "lazy_static",
  "pest",
  "pest_derive",

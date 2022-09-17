@@ -3,12 +3,16 @@ use crate::parser::EscapeMode;
 use crate::tasks::Task;
 use crate::types::DynErrResult;
 use crate::utils::{get_path_relative_to_base, get_task_dependency_graph, read_env_file};
+use indexmap::IndexMap;
 use petgraph::algo::toposort;
 use serde_derive::Deserialize;
 use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use std::{env, error, fmt, fs};
+
+type ConfigFileSharedPtr = Arc<Mutex<ConfigFile>>;
 
 /// Config file names by order of priority. The first one refers to local config and
 /// should not be committed to the repository. The program should discover config files
@@ -63,13 +67,6 @@ impl error::Error for ConfigError {
     }
 }
 
-/// Used to discover files.
-#[derive(Debug)]
-pub struct ConfigFiles {
-    /// First config file to check.
-    pub configs: Vec<ConfigFile>,
-}
-
 /// Represents a config file.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -85,11 +82,13 @@ pub struct ConfigFile {
     pub(crate) quote: EscapeMode,
     /// Tasks inside the config file.
     #[serde(default)]
-    tasks: HashMap<String, Task>,
+    pub(crate) tasks: HashMap<String, Task>,
     /// Env variables for all the tasks.
     pub(crate) env: Option<HashMap<String, String>>,
     /// Env file to read environment variables from
     pub(crate) env_file: Option<String>,
+    #[serde(skip)]
+    pub(crate) loaded_tasks: HashMap<String, Arc<Task>>,
 }
 
 #[derive(Debug)]
@@ -100,18 +99,20 @@ pub struct ConfigFilePaths {
     /// Whether the iterator finished or not
     finished: bool,
     /// Current directory
-    current: PathBuf,
+    current_dir: PathBuf,
+    /// Cached config files
+    cached: IndexMap<PathBuf, ConfigFileSharedPtr>,
 }
 
 impl Iterator for ConfigFilePaths {
-    type Item = Result<PathBuf, ConfigError>;
+    type Item = DynErrResult<ConfigFileSharedPtr>;
 
     fn next(&mut self) -> Option<Self::Item> {
         while !self.finished {
             let config_file_name = CONFIG_FILES_PRIO[self.index];
-
             // project file is the last one on the list
             let is_project_config = CONFIG_FILES_PRIO.len() - 1 == self.index;
+            self.index = (self.index + 1) % CONFIG_FILES_PRIO.len();
 
             // Counts files with same name and different extension
             let mut files_count: u8 = 0;
@@ -119,7 +120,7 @@ impl Iterator for ConfigFilePaths {
 
             for file_extension in ALLOWED_EXTENSIONS {
                 let file_name = format!("{}.{}", config_file_name, file_extension);
-                let path = self.current.join(file_name);
+                let path = self.current_dir.join(file_name);
                 if path.is_file() {
                     files_count += 1;
                     found_file = Some(path);
@@ -130,7 +131,8 @@ impl Iterator for ConfigFilePaths {
                 self.finished = true;
                 return Some(Err(ConfigError::DuplicateConfigFile(String::from(
                     config_file_name,
-                ))));
+                ))
+                .into()));
             }
 
             if is_project_config {
@@ -139,26 +141,35 @@ impl Iterator for ConfigFilePaths {
                     // Index is updated on the previous match, therefore we compare against 0
                     self.finished = true;
                 } else {
-                    let new_current = self.current.parent();
+                    let new_current = self.current_dir.parent();
                     match new_current {
                         // Finish if found root
                         None => {
                             self.finished = true;
-                            return Some(Err(ConfigError::NoRootConfig));
+                            return Some(Err(ConfigError::NoRootConfig.into()));
                         }
                         // Continue if found a parent folder
                         Some(new_current) => {
-                            self.current = new_current.to_path_buf();
+                            self.current_dir = new_current.to_path_buf();
                         }
                     }
                 }
-                self.index = 0;
-            } else {
-                self.index += 1;
             }
 
             if let Some(found_file) = found_file {
-                return Some(Ok(found_file));
+                let config_file = ConfigFile::load(found_file.clone());
+                return match config_file {
+                    Ok(config_file) => {
+                        let arc_config_file = Arc::new(Mutex::new(config_file));
+                        let result = Some(Ok(Arc::clone(&arc_config_file)));
+                        self.cached.insert(found_file, arc_config_file);
+                        result
+                    }
+                    Err(e) => {
+                        self.finished = true;
+                        Some(Err(e))
+                    }
+                };
             }
         }
         self.finished = true;
@@ -168,13 +179,55 @@ impl Iterator for ConfigFilePaths {
 
 impl ConfigFilePaths {
     /// Returns a new iterator that starts at the given path.
-    fn new<S: AsRef<OsStr> + ?Sized>(path: &S) -> ConfigFilePaths {
-        let current = PathBuf::from(&path);
+    pub fn new<S: AsRef<OsStr> + ?Sized>(path: &S) -> ConfigFilePaths {
+        let current = PathBuf::from(path);
         ConfigFilePaths {
             index: 0,
             finished: false,
-            current,
+            current_dir: current,
+            cached: IndexMap::with_capacity(1),
         }
+    }
+
+    pub fn only<S: AsRef<OsStr> + ?Sized>(path: &S) -> DynErrResult<ConfigFilePaths> {
+        let path = PathBuf::from(path);
+        let mut config_files = ConfigFilePaths {
+            index: 0,
+            finished: true,
+            current_dir: path.clone(),
+            cached: IndexMap::with_capacity(1),
+        };
+        let config_file = ConfigFile::load(path.clone())?;
+        config_files
+            .cached
+            .insert(path, Arc::new(Mutex::new(config_file)));
+        Ok(config_files)
+    }
+
+    pub fn get_task<S: AsRef<str>>(
+        &mut self,
+        name: S,
+    ) -> DynErrResult<Option<(ConfigFileSharedPtr, Arc<Task>)>> {
+        for config_file in self.cached.values() {
+            let config_file_ptr = config_file.as_ref();
+            let handle = config_file_ptr.lock().unwrap();
+            if let Some(task) = handle.get_task(name.as_ref()) {
+                return Ok(Some((Arc::clone(config_file), task)));
+            }
+        }
+        for config_file in self {
+            match config_file {
+                Ok(config_file) => {
+                    let config_file_ptr = config_file.as_ref();
+                    let handle = config_file_ptr.lock().unwrap();
+                    if let Some(task) = handle.get_task(name.as_ref()) {
+                        return Ok(Some((Arc::clone(&config_file), task)));
+                    }
+                }
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(None)
     }
 }
 
@@ -210,18 +263,18 @@ impl ConfigFile {
         }
     }
 
-    /// Loads a config file from the TOML representation.
+    /// Loads a config file
     ///
     /// # Arguments
     ///
     /// * path - path of the toml file to load
-    pub fn load(path: &Path) -> DynErrResult<ConfigFile> {
-        let mut conf: ConfigFile = ConfigFile::extract(path)?;
-        conf.filepath = path.to_path_buf();
-        conf.move_system_tasks_up_and_setup()?;
+    pub fn load(path: PathBuf) -> DynErrResult<ConfigFile> {
+        let mut conf: ConfigFile = ConfigFile::extract(path.as_path())?;
+        conf.filepath = path;
 
-        if let Some(env_file) = &conf.env_file {
-            let env_from_file = read_env_file(Path::new(&env_file))?;
+        if let Some(env_file_path) = &conf.env_file {
+            let env_file_path = get_path_relative_to_base(conf.directory(), &env_file_path);
+            let env_from_file = read_env_file(&env_file_path)?;
             match conf.env.as_mut() {
                 None => {
                     conf.env = Some(HashMap::from_iter(env_from_file.into_iter()));
@@ -235,7 +288,9 @@ impl ConfigFile {
             }
         }
 
-        let dep_graph = get_task_dependency_graph(&conf.tasks)?;
+        let mut tasks = conf.get_flat_tasks()?;
+
+        let dep_graph = get_task_dependency_graph(&tasks)?;
         let dependencies = toposort(&dep_graph, None);
         let dependencies = match dependencies {
             Ok(dependencies) => dependencies,
@@ -248,22 +303,35 @@ impl ConfigFile {
             .rev()
             .map(|v| String::from(*v))
             .collect();
-        for task_name in dependencies {
+
+        for dependency_name in dependencies {
             // temp remove because of rules of references
-            let mut task = conf.tasks.remove(&task_name).unwrap();
+            let mut task = tasks.remove(&dependency_name).unwrap();
             // task.bases should be empty for the first item in the iteration
             // we no longer need the bases
             let bases = std::mem::take(&mut task.bases);
             for base in bases {
-                let base_task = conf.tasks.get(&base).unwrap();
-                task.extend_task(base_task);
+                let os_task_name = format!("{}.{}", &base, env::consts::OS);
+                if let Some(base_task) = conf.loaded_tasks.get(&os_task_name) {
+                    task.extend_task(base_task);
+                } else if let Some(base_task) = conf.loaded_tasks.get(&base) {
+                    task.extend_task(base_task);
+                } else {
+                    panic!("found non existent task {}", base);
+                }
             }
             // insert modified task back in
-            conf.tasks.insert(task_name, task);
+            conf.loaded_tasks.insert(dependency_name, Arc::new(task));
+        }
+
+        // Store the other tasks left
+        for (task_name, task) in tasks {
+            conf.loaded_tasks.insert(task_name, Arc::new(task));
         }
         Ok(conf)
     }
 
+    /// Returns the directory where the config file
     pub fn directory(&self) -> &Path {
         self.filepath.parent().unwrap()
     }
@@ -275,127 +343,68 @@ impl ConfigFile {
         get_path_relative_to_base(self.filepath.parent().unwrap(), &self.wd)
     }
 
-    /// Moves OS specific tasks up and runs the task setup
-    fn move_system_tasks_up_and_setup(&mut self) -> DynErrResult<()> {
-        let mut os_tasks: HashMap<String, Task> = HashMap::new();
-        let folder_reference = self.filepath.parent().unwrap();
-        for (name, task) in self.tasks.iter_mut() {
-            task.setup(name, folder_reference)?;
+    pub fn dir(&self) -> &Path {
+        self.filepath.parent().unwrap()
+    }
 
+    /// Returns plain and OS specific tasks with normalized names. This consumes `self.tasks`
+    fn get_flat_tasks(&mut self) -> DynErrResult<HashMap<String, Task>> {
+        let mut flat_tasks = HashMap::new();
+        let tasks = std::mem::take(&mut self.tasks);
+        for (name, mut task) in tasks {
             // TODO: Use a macro
             if task.linux.is_some() {
                 let os_task = std::mem::replace(&mut task.linux, None);
                 let mut os_task = *os_task.unwrap();
                 let os_task_name = format!("{}.linux", name);
-                if os_tasks.contains_key(&os_task_name) {
+                if flat_tasks.contains_key(&os_task_name) {
                     return Err(format!("Duplicate task `{}`", os_task_name).into());
                 }
-                os_task.setup(&os_task_name, folder_reference)?;
-                os_tasks.insert(os_task_name, os_task);
+                os_task.setup(&os_task_name, self.directory())?;
+                flat_tasks.insert(os_task_name, os_task);
             }
 
             if task.windows.is_some() {
                 let os_task = std::mem::replace(&mut task.windows, None);
                 let mut os_task = *os_task.unwrap();
                 let os_task_name = format!("{}.windows", name);
-                if os_tasks.contains_key(&os_task_name) {
+                if flat_tasks.contains_key(&os_task_name) {
                     return Err(format!("Duplicate task `{}`", os_task_name).into());
                 }
-                os_task.setup(&os_task_name, folder_reference)?;
-                os_tasks.insert(os_task_name, os_task);
+                os_task.setup(&os_task_name, self.directory())?;
+                flat_tasks.insert(os_task_name, os_task);
             }
 
             if task.macos.is_some() {
                 let os_task = std::mem::replace(&mut task.macos, None);
                 let mut os_task = *os_task.unwrap();
                 let os_task_name = format!("{}.macos", name);
-                if os_tasks.contains_key(&os_task_name) {
+                if flat_tasks.contains_key(&os_task_name) {
                     return Err(format!("Duplicate task `{}`", os_task_name).into());
                 }
-                os_task.setup(&os_task_name, folder_reference)?;
-                os_tasks.insert(os_task_name, os_task);
+                os_task.setup(&os_task_name, self.directory())?;
+                flat_tasks.insert(os_task_name, os_task);
             }
+            task.setup(&name, self.directory())?;
+            flat_tasks.insert(name, task);
         }
-        for (name, task) in os_tasks {
-            self.tasks.insert(name, task);
-        }
-        Ok(())
+        Ok(flat_tasks)
     }
 
-    /// Finds a task by name on this config file if it exists.
+    /// Finds and task by name on this config file and returns it if it exists.
+    /// It searches fist for the current OS version of the task, if None is found,
+    /// it tries with the plain name.
     ///
     /// # Arguments
     ///
     /// * task_name - Name of the task to search for
-    fn get_task(&self, task_name: &str) -> Option<&Task> {
-        if let Some(task) = self.tasks.get(task_name) {
-            return Some(task);
-        }
-        None
-    }
-
-    pub(crate) fn get_system_task(&self, task_name: &str) -> Option<&Task> {
+    pub fn get_task(&self, task_name: &str) -> Option<Arc<Task>> {
         let os_task_name = format!("{}.{}", task_name, env::consts::OS);
 
-        if let Some(task) = self.tasks.get(&os_task_name) {
-            return Some(task);
-        } else if let Some(task) = self.tasks.get(task_name) {
-            return Some(task);
-        }
-        None
-    }
-}
-
-impl ConfigFiles {
-    /// Discovers the config files.
-    pub fn discover<S: AsRef<OsStr> + ?Sized>(path: &S) -> DynErrResult<ConfigFiles> {
-        let mut confs: Vec<ConfigFile> = Vec::new();
-        for config_path in ConfigFilePaths::new(path) {
-            let config = ConfigFile::load(config_path?.as_path())?;
-            confs.push(config);
-        }
-        if confs.is_empty() {
-            return Err(ConfigError::NoConfigFile.into());
-        }
-        Ok(ConfigFiles { configs: confs })
-    }
-
-    /// Only loads the config file for the given path.
-    ///
-    /// # Arguments
-    ///
-    /// * path - Config file to load
-    pub fn for_path<S: AsRef<OsStr> + ?Sized>(path: &S) -> DynErrResult<ConfigFiles> {
-        let config = ConfigFile::load(Path::new(path))?;
-        Ok(ConfigFiles {
-            configs: vec![config],
-        })
-    }
-
-    /// Returns a task for the given name and the config file that contains it.
-    ///
-    /// # Arguments
-    ///
-    /// * task_name - Name of the task to search for
-    pub fn get_task(&self, task_name: &str) -> Option<(&Task, &ConfigFile)> {
-        for conf in &self.configs {
-            if let Some(task) = conf.get_task(task_name) {
-                return Some((task, conf));
-            }
-        }
-        None
-    }
-
-    /// Returns a task for the given name and the config file that contains it.
-    ///
-    /// # Arguments
-    ///
-    /// * task_name - Name of the task to search for
-    pub fn get_system_task(&self, task_name: &str) -> Option<(&Task, &ConfigFile)> {
-        for conf in &self.configs {
-            if let Some(task) = conf.get_system_task(task_name) {
-                return Some((task, conf));
-            }
+        if let Some(task) = self.loaded_tasks.get(&os_task_name) {
+            return Some(Arc::clone(task));
+        } else if let Some(task) = self.loaded_tasks.get(task_name) {
+            return Some(Arc::clone(task));
         }
         None
     }

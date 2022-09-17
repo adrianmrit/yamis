@@ -51,5 +51,5 @@ comment = _{ "{/" ~ (!"/}" ~ ANY)* ~ "/}" }
 // Parses the whole string, empty strings allowed
 all = ${ SOI ~ (comment | tag | literal)* ~ EOI }
 
-// Matches a task argument, which can be either a task or literal
-task_arg = ${ SOI ~ (tag | literal+) ~ EOI }
+        // Matches a task argument, which can be either a task or literal, or empty
+task_arg = ${ SOI ~ (tag | literal+)? ~ EOI }
