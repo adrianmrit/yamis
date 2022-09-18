@@ -49,7 +49,7 @@ fn test_escape_always_windows() -> Result<(), Box<dyn std::error::Error>> {
         r#"
     [tasks.say_hello]
     quote = "always"
-    script = "echo {1} {2} {hello}{4?} {*}"
+    script = "echo {$1} {$2} {hello}{$4?} {$@}"
     "#
         .as_bytes(),
     )?;
@@ -73,7 +73,7 @@ fn test_escape_on_space_windows() -> Result<(), Box<dyn std::error::Error>> {
         r#"
     [tasks.say_hello]
     quote = "spaces"
-    script = "echo {1} {2} {hello}{4?} {*}"
+    script = "echo {$1} {$2} {hello}{$4?} {$@}"
     "#
         .as_bytes(),
     )?;
