@@ -52,14 +52,19 @@ tasks:
     script: "echo Hello {name}"  # name can be passed as --name=world, -name=world, or name="big world"
 
   folder_content:  # Default for linux and macOS, can be individually specified like for windows.
-    script: "ls {path?}"  # path is an optional argument
+    script: "ls {$1?}"  # Takes a single optional argument
     windows:  # Task version for windows systems
-      script: "dir {*}"  # Passes all arguments
+      script: "dir {$1?}"
 
   compose-run:
     wd: ""  # Uses the dir where the config file appears as working dir
     program: "docker-compose"
-    args: ["run", "{$DOCKER_CONTAINER}", "{*}"]   # This syntax for environment variables works both for windows and unix systems.
+    # `{$DOCKER_CONTAINER}` 
+    args: [
+      "run",
+      "{$DOCKER_CONTAINER}",  # passes an environment variable into the program arguments
+      "{ $@ }"  # passes all extra given arguments 
+    ]
 
   compose-debug:
     bases: ["compose-run", "_debuggable_task"]  # Inherit from other tasks
@@ -99,27 +104,26 @@ We do not implicitly perform this conversion because we would need to modify the
 If we performed the conversion after parsing the file we would get `AGENT=7` which might be undesired.
 
 ## Usage
-### Task files discovery
-The config files must be either a TOML or YAML file with the appropriate extension, i.e. `project.yamis.toml`, or
-`project.yamis.yml`. Note that across this document examples are given in either version, but it is very
-straightforward to convert between each other.
+### Task files
+The task files must be either a TOML or YAML file with the appropriate extension, i.e. `project.yamis.toml`, or
+`project.yamis.yml`. Note that across this document examples are given in either version, but the conversion between
+them is straightforward.
 
-The program will look for the following files at the directory where it was invoked and its parents
-until a `project.yamis` is found. Note that the extension is not specified:
+When invoking a task, starting in the working directory and continuing to the root directory, the program will
+look configuration files in a certain order until either a task is found, a `project.yamis` (either TOML or YAML)
+task file is found, or there are no more parent folders (reached root directory). The name of these files is
+case-sensitive in case-sensitive systems, i.e. `PROJECT.yamis.toml` will not work in linux.
 
+The configuration files (in order of precedence, with extension omitted) are named as following:
 - `local.yamis`: Should hold private tasks and should not be committed to the repository.
 - `yamis`: Should be used in sub-folders of a project for tasks specific to that folder and sub-folders.
 - `project.yamis`: Should hold tasks for the entire project.
-
-To find a task, it will look in the files in following order inside the directory `local.yamis`, `yamis`,
-`project.yamis`. It will keep looking into the parent directories until a task is found or `project.yamis`
-is reached.
 
 
 ### Script
 The `script` value inside a task will be executed in the command line (defaults to cmd in Windows
 and bash in Unix). Scripts can spawn multiple lines, and contain shell built-ins and programs. When
-passing multiple arguments, they will be expanded by default, the common example would be the `"{*}"`
+passing multiple arguments, they will be expanded by default, the common example would be the `"{ $@ }"`
 tag which expands to all the passed arguments.
 
 #### ⚠️Warning :
@@ -136,8 +140,8 @@ This can be changed at the task or file level by specifying the
 - `spaces`: Quote arguments if they contain spaces
 - `never`: Never quote arguments
 
-Although quoting prevents common errors like things breaking because a space,
-it might fail in certain cases.
+Although quoting prevents common errors like things breaking because an argument with a space was passed,
+it might fail in certain edge cases.
 
 
 ##### Replacing interpreter
@@ -164,13 +168,13 @@ print(datetime.now())
 
 If using this feature frequently it would be useful to use inheritance to shorten the task. The above can become:
 ```toml
-[tasks.py]
+[tasks._py_script]
 interpreter = ["python"]
 script_ext = "py"  # or .py
 private = true
 
 [tasks.hello_world]
-bases = ["py"]
+bases = ["_py_script"]
 script = """
 from datetime import datetime
 
@@ -181,16 +185,15 @@ print(datetime.now())
 
 ### Program
 The `program` value inside a task will be executed as a separate process, with the arguments passed
-on `args`. Note that each argument can contain at most one tag, that is, `{1}{2}` is not valid. When
-passing multiple values, they are unpacked into the program arguments, i.e. `"{*}"` will result in
-all arguments passed down to the program. Argument like `-f={*}.txt` will be also unpacked as expected,
-with the argument surrounded by the suffix and prefix.
+on `args`. Note that each argument can contain at most one tag, that is, `{$1}{$2}` is not valid. When
+passing multiple values, they are unpacked into the program arguments, i.e. `"{$@}"` will result in
+all arguments passed down to the program.
 
 When using inheritance, the arguments for the base can be extended by using `args_extend` instead of `args`.
 This is useful for adding extra parameters without rewriting them.
 
 
-###$ Running tasks serially
+### Running tasks serially
 One obvious option to run tasks one after the other is to create a script, i.e. with the following:
 ```
 yamis say_hi
@@ -221,30 +224,61 @@ The downside however, is that we cannot execute builtin shell commands such as `
 and we need to define the arguments as a list.
 
 
-### Parameters
-Parameters and environment variables can be passed inside brackets. Furthermore, they can be transformed
-through functions. 
+### Tags
+Tags are used to insert dynamic values into the scripts and arguments of program we want to call. Tags can be
+used to insert positional and named arguments, environment variables (with a cross-platform syntax) and invoke
+functions.
 
-#### Passing parameters to tasks
-Parameters can be either passed by position or by name.
-- positional: 1-indexed, i.e. `{1}`, `{2}`, etc.
-- named: case-sensitive and passed by name, i.e. `{out}`, `{file}`, etc. Note that any dash before the argument
+The expressions inside tasks can return values either as a string, or as a list of strings. If no values are passed,
+the value will be an empty list, or an empty string in the case of positional arguments. This is specially relevant
+when slicing and invoking functions.
+
+#### Slicing
+Arguments (more on arguments below) can be sliced for more flexibility. The slices are 0 indexed, here are some examples:
+
+```text
+{ $@[0] }                         # same as { $1 }
+
+{ $@[0..2] }                      # first two arguments
+
+{ map(f"hello {}", name)[0..2] }  # same as { map(f"hello {}", name[0..2]) }
+
+{ fmt(f"hello {}", $1)[0] }       # returns `h`
+
+{ $1[0] }                         # returns first char of first argument
+
+{ $@[0][0] }                      # also returns first char of first argument
+```
+
+### Type of parameters
+
+#### Positional
+1-indexed, start with `$` and followed by a number, i.e. `{$1}`, `{$2}`. Represent a single string, so slices of them
+will return a substring.
+
+#### Named
+Case-sensitive and passed by name, i.e. `{out}`, `{file}`, etc. Note that any dash before the argument
 is removed, i.e. if `--file=out.txt` is passed, `{file}` will accept it. Also note that the named argument passed
 to the task will need to be in the form `<key>=<value>`, i.e. `-o out.txt` is not recognized as a named argument,
 this is to prevent ambiguities as the parsing of arguments can change from application to application.
-- all: defined by `{*}`, all arguments will be passed as they are.
 
-#### Valid named argument tags
+These are represented by arrays of strings, so an index slice will return a string, while a range slice will return
+a subarray. I.e. `{ file[0][0] }` returns the first character of the first passed `file` argument, while `file[0]`
+will return the first file argument.
+
+#### All arguments
+With `{ $@ }`, all arguments will be passed as they are. Can be treated as a named argument
+
+### Valid named argument tags
 Named argument tasks must start with an ascii alpha character or underscore, and should be followed by any number
 of letters, digits, `-` or `_`.
 
-#### Optional argument tags
-Argument tags are mandatory by default, but they can be made optional by adding `?`, i.e. `{*?}`
-does not raise an error if no arguments are given.
+### Optional expressions
+By default, expressions must return a non-empty string or non-empty array of strings, otherwise an error will be raised.
+Expressions can be made optional by adding `?`, i.e. `{ $1? }`, `{ map("hello {}", person?)? }`.
 
-#### Arguments unpacking
-When the same named argument it passed multiple times, the program or script will include them multiple time.
-For example, given the following tasks:
+### Unpacking
+Expressions that return an array will be unpacked. For example, given the following tasks:
 
 ```toml
 [tasks.say-hi]
@@ -252,7 +286,7 @@ script = "echo hello {person}"
 
 [tasks.something]
 program = "imaginary-program"
-args = ["{map('-o {}',f)}"]
+args = ["{ map('-o {}', f) }"]
 ```
 
 If we call `yamis hello person=John1 person=John2`, it will run `echo hello "John1" "John2"`.
@@ -260,7 +294,7 @@ Similarly, `yamis something --f=out1.txt out2.txt` will call `imaginary-program`
 `["-o out1.txt", "-o out2.txt""]`. You might have noticed we call a `map`, more on functions later.
 
 
-#### Environment variables
+### Environment variables
 Environment variables can be defined at the task level. These two forms are equivalent:
 ```toml
 [tasks.echo]
@@ -289,7 +323,7 @@ are also set there, with the env variables defined on the task taking precedence
 
 
 #### Passing environment variables as arguments
-Environment variables can be passed in `args`, `args_extend` or `scripts` similar to argument tags, i.e. `{$ENV_VAR}`
+Environment variables can be passed in `args`, `args_extend` or `scripts` similar to argument tags, i.e. `{ $ENV_VAR }`
 loads `ENV_VAR`. This works with environment variables defined in the config file or task, or in environment files
 loaded with the `env_file` option. Although it is possible to pass environment variables to scripts using the native
 syntax, it will not work for program arguments, and it is not multiplatform either.
@@ -302,38 +336,43 @@ program arguments are parsed, i.e. the following will not work:
 # $SAMPLE is not set yet when the script is parsed
 script = """
 export SAMPLE=VALUE
-echo {$SAMPLE}
+echo { $SAMPLE }
 """
 ```
 
-### Functions
-Predefined functions can be used to transform arguments in different ways. They can take strings, positional
-or named arguments, environment variables, and the output of other functions. Strings are defined by single
-or double quotes, cannot contain unescaped new lines. I.e. `"\"hello\" \n 'world'"` is a valid string. Some
-functions take a format script; in these the brackets can be escaped by duplicating them, i.e. `}}` will be
-replaced with `}`.
+### Strings
+Strings are another type of valid expressions. Tags also accept plain strings, but they are more relevant in the
+function's context. Strings are defined by single or double quotes, cannot contain unescaped new lines.
+I.e. `"\"hello\" \n 'world'"` is a valid string. Strings can also be sliced, but this is a more side effect of trying
+to keep the parser simple than a useful feature.
 
-Under the hood the values passed to functions can be either strings or arrays, i.e. if we pass `*` we are
-passing an array with multiple values. Functions can also return either a single string or an array with
-multiple values. When multiple values are unpacked in a script, these are separated by a space, while in
-program these are inserted in the argument list.
+### Functions
+Predefined functions can be used to transform arguments in different ways. They can take values and can be
+nested.
+
+Functions can take string or array values, and also return either a single string or an array.
 
 #### map
-`map` takes two parameters. The first argument is a format string, i.e. `"-o {}.txt"`, where the brackets
-will be replaced by the second argument. In the case multiple values are passed, all the arguments will be
-mapped in the same way. Brackets can be escaped bu using double 
+**Signature:** `map(fmt_string: str, values: str[]) -> str[]`
+
+Maps each value to `fmt(fmt_string, val)`, where `fmt` replaces `{}` with value. Note that brackets
+can be escaped by duplicating them, i.e. `{{` will be replaced with `{`
+
+**Parameters:**
+- fmt_string: String to format, i.e. `"-o {}.txt"`
+- values: Values to map
 
 Example:
 ```yaml
 sample:
   quote: never
   script: |
-    echo {map("'{}'",*)}
+    echo {map("'{}'", $@)}
 
 
 sample2:
   program: merge_txt_files
-  args: ["{map('{}.txt',*)}"]
+  args: ["{map('{}.txt', $@)}"]
 ```
 
 `yamis sample person1 person2` will result in `echo hi 'person1' 'person2'`
@@ -342,20 +381,26 @@ sample2:
 
 
 #### flat
+**Signature:** `flat(fmt_string: str, values: str[]) -> str`
+
 `flat` is similar to map, but in scripts extra spaces won't be added, and in arguments it will not be unpacked. This is
 because calling `flat` is like calling `map` and joining the resulting array values into a single string.
+
+**Parameters:**
+- fmt_string: String to format, i.e. `"-o {}.txt"`
+- values: Values to map
 
 Example:
 ```yaml
 sample:
   quote: never
   script: |
-    echo hi{flat(" '{}'",*)}
+    echo hi{flat(" '{}'", $@)}
 
 
 sample2:
   program: some_program
-  args: ["{flat('{},',*)}"]
+  args: ["{flat('{},', $@)}"]
 ```
 
 `yamis sample person1 person2` will result in `echo hi 'person1' 'person2' `
@@ -364,43 +409,55 @@ sample2:
 
 
 #### join
-The first parameter of `join` is a string that will be inserted between all values given in the second parameter.
-Note that join returns a single string.
+**Signature**: `join(join_str: str, values: str[]) -> str`
+
+The first parameter of `join` is a string that will be inserted between all values given in the second parameter
+returning a single string.
+
+**Parameters:**
+- join_str: String to insert between the values
+- values: Values to join
 
 Example:
 ```yaml
 sample:
   quote: never
   script: |
-    echo hello {flat(" and ",*)}
+    echo hello {flat(" and ", $@)}
 ```
 
 `yamis sample person1 person2` will result in `echo hi person1 and person2'`
 
 #### fmt
+**Signature**: `fmt(fmt_string: str, ...args: str[]) -> str`
+
 The first parameter of `fmt` is a format string, and the rest of the values are parameters to format the string with.
-Note that those extra parameters must be i individual values, not arrays, i.e. cannot use `*`.
+Note that those extra parameters must be i individual values, not arrays, i.e. cannot use `$@`.
+
+**Parameters:**
+- fmt_string: String to format, i.e. `"-o {}.txt"`
+- args: Arguments that will replace the `{}` occurrence of the same index
 
 Example:
 ```yaml
 sample:
   quote: never
   script: |
-    echo {fmt("hello {}",*)}
+    echo {fmt("Hi {} and {}", $1, $2)}
 ```
 
-`yamis sample person1 person2` will result in `echo hi person1 and person2'`
+`yamis sample person1 person2` will result in `echo Hi person1 and person2`
 
-#### Os Specific Tasks
+### Os Specific Tasks
 You can have a different OS version for each task. If a task for the current OS is not found, it will
 fall back to the non os-specific task if it exists. I.e.
 ```yaml
 tasks:
   ls: # Runs if not in windows 
-    script: "ls {*?}"
+    script: "ls {$@?}"
 
   windows:  # Other options are linux and macOS
-    script: "dir {*?}"
+    script: "dir {$@?}"
 ```
 
 Os tasks can also be specified in a single key, i.e. the following is equivalent to the example above.
@@ -408,13 +465,13 @@ Os tasks can also be specified in a single key, i.e. the following is equivalent
 ```yaml
 tasks:
   ls: 
-    script: "ls {*?}"
+    script: "ls {$@?}"
 
   ls.windows:
-    script: "dir {*?}"
+    script: "dir {$@?}"
 ```
 
-##### Working directory
+### Working directory
 By default, the working directory of the task is one where it was executed. This can be changed at the task level
 or root level, with `wd`. The path can be relative or absolute, with relative paths being resolved against the
 configuration file and not the directory where the task was executed, this means `""` can be used to make the
@@ -422,7 +479,6 @@ working directory the same one as the directory for the configuration file.
 
 
 ### Task inheritance
-
 A task can inherit from multiple tasks by adding a `bases` property, which should be a list names of tasks in
 the same file. This works like class inheritance in common languages like Python, but not all values are 
 inherited. 
