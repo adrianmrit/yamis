@@ -5,6 +5,7 @@ use pest::iterators::Pair;
 use pest::Parser;
 use pest_derive::Parser;
 use serde_derive::Deserialize;
+use std::cmp::min;
 use std::collections::HashMap;
 use std::str::FromStr;
 
@@ -22,10 +23,141 @@ pub enum EscapeMode {
     Never,
 }
 
+struct Range {
+    from: Option<usize>,
+    to: Option<usize>,
+}
+
+enum Slice {
+    Index(usize),
+    Range(Range),
+}
+
 /// Pest parser for script
 #[derive(Parser)]
 #[grammar = "parser/grammar.pest"]
 struct ScriptParser;
+
+/// Returns a `Slice` enum from the pair
+fn get_slice_repr(slice: Pair<Rule>) -> Slice {
+    let mut slice_inner = slice.into_inner();
+    let val = slice_inner.next().unwrap();
+    match val.as_rule() {
+        Rule::index => Slice::Index(usize::from_str(val.as_str()).unwrap()),
+        Rule::slice => {
+            let mut range = Range {
+                from: None,
+                to: None,
+            };
+            let val_inner = val.into_inner();
+            for val in val_inner {
+                match val.as_rule() {
+                    Rule::range_from => range.from = Some(usize::from_str(val.as_str()).unwrap()),
+                    Rule::range_to => range.to = Some(usize::from_str(val.as_str()).unwrap()),
+                    v => panic!("Unexpected rule {:?}", v),
+                }
+            }
+            Slice::Range(range)
+        }
+        v => panic!("Unexpected rule {:?}", v),
+    }
+}
+
+/// Slices a string
+fn slice_string(val: String, slice: Slice) -> FunResult {
+    match slice {
+        Slice::Index(i) => FunResult::String(String::from(&val[i..i + 1])),
+        Slice::Range(range) => {
+            let from = range.from.unwrap_or(0);
+            let to = min(range.to.unwrap_or(val.len()), val.len());
+            FunResult::String(String::from(val.get(from..to).unwrap_or("")))
+        }
+    }
+}
+
+/// Slices a vector
+fn slice_vec(mut val: Vec<String>, slice: Slice) -> FunResult {
+    match slice {
+        Slice::Index(i) => FunResult::String(String::from(&val[i])),
+        Slice::Range(range) => {
+            let from = range.from.unwrap_or(0);
+            if from >= val.len() {
+                FunResult::Vec(vec![])
+            } else {
+                let to = min(range.to.unwrap_or(val.len()), val.len());
+                let result = val.drain(from..to).collect();
+                FunResult::Vec(result)
+            }
+        }
+    }
+}
+
+/// Slices a value
+fn slice_val(val: FunResult, slice: Slice) -> FunResult {
+    match val {
+        FunResult::String(v) => slice_string(v, slice),
+        FunResult::Vec(v) => slice_vec(v, slice),
+    }
+}
+
+/// Parses the inner value of a expression, excluding immediate following slices and modifiers
+fn parse_expression_inner(
+    expression_inner: Pair<Rule>,
+    cli_args: &TaskArgs,
+    env: &HashMap<String, String>,
+) -> DynErrResult<FunResult> {
+    let mut expression_inner = expression_inner.into_inner();
+    let param = expression_inner.next().unwrap();
+    match param.as_rule() {
+        Rule::fun => parse_fun(param, cli_args, env),
+        Rule::arg => parse_arg(param, cli_args),
+        Rule::kwarg => parse_kwargs(param, cli_args),
+        Rule::all_args => parse_all(cli_args),
+        Rule::env_var => parse_env_var(param, env),
+        Rule::string => parse_string(param),
+        v => panic!("Unexpected rule {:?}", v),
+    }
+}
+
+/// Parses an expression
+fn parse_expression(
+    expression: Pair<Rule>,
+    cli_args: &TaskArgs,
+    env: &HashMap<String, String>,
+) -> DynErrResult<FunResult> {
+    // We need to get the string representation even if there is no error because into_inner
+    // consumes the pair, making it impossible (at least that I know of) to get the
+    // representation later.
+    let expression_copy = expression.clone();
+    let mut expression_inner_values = expression.into_inner();
+    let expression_inner = expression_inner_values.next().unwrap();
+    let mut val = match expression_inner.as_rule() {
+        Rule::expression_inner => parse_expression_inner(expression_inner, cli_args, env)?,
+        v => panic!("Unexpected rule {:?}", v),
+    };
+    let mut mandatory = true;
+    for slice_or_modifier in expression_inner_values {
+        match slice_or_modifier.as_rule() {
+            Rule::optional => {
+                mandatory = false;
+            }
+            Rule::slice => {
+                let slice = get_slice_repr(slice_or_modifier);
+                val = slice_val(val, slice)
+            }
+            v => panic!("Unexpected rule {:?}", v),
+        }
+    }
+    if mandatory && val.is_empty() {
+        Err(format!(
+            "Expression `{}` should return a value",
+            expression_copy.as_span().as_str()
+        )
+        .into())
+    } else {
+        Ok(val)
+    }
+}
 
 /// Parses a function
 fn parse_fun(
@@ -48,20 +180,8 @@ fn parse_fun(
         Some(arguments) => {
             let mut arguments_list: Vec<FunResult> = vec![];
             for param in arguments.into_inner() {
-                // Param takes a single value that can be of different types
-                let param_type = param.into_inner().next().unwrap();
-                match param_type.as_rule() {
-                    Rule::fun => {
-                        let fun_result = parse_fun(param_type, cli_args, env)?;
-                        arguments_list.push(fun_result);
-                    }
-                    Rule::arg => arguments_list.push(parse_arg(param_type, cli_args)?),
-                    Rule::kwarg => arguments_list.push(parse_kwargs(param_type, cli_args)?),
-                    Rule::star => arguments_list.push(parse_star(param_type, cli_args)?),
-                    Rule::env_var => arguments_list.push(parse_env_var(param_type, env)?),
-                    Rule::string => arguments_list.push(parse_string(param_type)?),
-                    v => panic!("Unexpected rule {:?}", v),
-                }
+                let param = parse_expression(param, cli_args, env)?;
+                arguments_list.push(param);
             }
             arguments_list
         }
@@ -106,16 +226,9 @@ fn parse_arg(tag: Pair<Rule>, cli_args: &TaskArgs) -> DynErrResult<FunResult> {
     let mut tag_inner = tag.into_inner();
     let arg_index = tag_inner.next().unwrap().as_str();
     let real_index: usize = usize::from_str(arg_index).unwrap() - 1;
-    let modifier = tag_inner.next();
     let val: Option<&String> = cli_args.get("*").unwrap().get(real_index);
     match val {
-        None => {
-            if modifier.is_none() {
-                Err(format!("Mandatory argument at position {} not set.", arg_index).into())
-            } else {
-                Ok(FunResult::Vec(vec![]))
-            }
-        }
+        None => Ok(FunResult::Vec(vec![])),
         Some(val) => Ok(FunResult::String(String::from(val))),
     }
 }
@@ -124,16 +237,9 @@ fn parse_arg(tag: Pair<Rule>, cli_args: &TaskArgs) -> DynErrResult<FunResult> {
 fn parse_kwargs(tag: Pair<Rule>, cli_args: &TaskArgs) -> DynErrResult<FunResult> {
     let mut tag_inner = tag.into_inner();
     let arg_name = tag_inner.next().unwrap().as_str();
-    let modifier = tag_inner.next();
     let values = cli_args.get(arg_name);
     match values {
-        None => {
-            if modifier.is_none() {
-                Err(format!("Mandatory argument `{}` not set.", arg_name).into())
-            } else {
-                Ok(FunResult::Vec(vec![]))
-            }
-        }
+        None => Ok(FunResult::Vec(vec![])),
         Some(values) => Ok(FunResult::Vec(values.clone())),
     }
 }
@@ -142,38 +248,19 @@ fn parse_kwargs(tag: Pair<Rule>, cli_args: &TaskArgs) -> DynErrResult<FunResult>
 fn parse_env_var(tag: Pair<Rule>, env: &HashMap<String, String>) -> DynErrResult<FunResult> {
     let mut tag_inner = tag.into_inner();
     let env_var_name = tag_inner.next().unwrap();
-    // for now modifier can only be '?'
-    let required = tag_inner.next().is_none();
     let env_var = env.get(env_var_name.as_str());
     match env_var {
-        None => {
-            if required {
-                Err(format!("Mandatory environment variable `{}` not set.", env_var_name).into())
-            } else {
-                Ok(FunResult::Vec(vec![]))
-            }
-        }
+        None => Ok(FunResult::Vec(vec![])),
         Some(val) => Ok(FunResult::String(val.clone())),
     }
 }
 
 /// Parses the star variable
-fn parse_star(tag: Pair<Rule>, cli_args: &TaskArgs) -> DynErrResult<FunResult> {
+fn parse_all(cli_args: &TaskArgs) -> DynErrResult<FunResult> {
     // * is assumed to exist
     match cli_args.get("*") {
-        None => (),
-        Some(v) => {
-            if !v.is_empty() {
-                return Ok(FunResult::Vec(v.clone()));
-            }
-        }
-    }
-    let modifier = tag.into_inner().next();
-    // for now modifier can only be '?'
-    if modifier.is_none() {
-        Err("Arguments are required".into())
-    } else {
-        Ok(FunResult::Vec(vec![]))
+        None => Ok(FunResult::Vec(vec![])),
+        Some(v) => Ok(FunResult::Vec(v.clone())),
     }
 }
 
@@ -184,16 +271,7 @@ fn parse_tag(
     env: &HashMap<String, String>,
 ) -> DynErrResult<FunResult> {
     if let Some(tag) = tag.into_inner().next() {
-        return match tag.as_rule() {
-            Rule::star => parse_star(tag, cli_args),
-            Rule::env_var => parse_env_var(tag, env),
-            Rule::kwarg => parse_kwargs(tag, cli_args),
-            Rule::arg => parse_arg(tag, cli_args),
-            Rule::fun => parse_fun(tag, cli_args, env),
-            v => {
-                panic!("Unexpected rule {:?}", v);
-            }
-        };
+        return parse_expression(tag, cli_args, env);
     }
     panic!("tag should have inner values");
 }
@@ -380,7 +458,7 @@ fn test_parse_script() {
     let mut vars = HashMap::<String, Vec<String>>::new();
     let mut env = HashMap::new();
 
-    let script = "hello {*?}";
+    let script = "hello {$@?}";
     let result = parse_script(script, &vars, &env, &EscapeMode::Never).unwrap();
     assert_eq!(result, "hello ");
 
@@ -404,7 +482,7 @@ fn test_parse_script() {
     );
 
     let script =
-        "Echo {{Hello}} {*}{hello?} {key} {1} {2} {5?} {$TEST_ENV_VARIABLE} {$TEST_ENV_VARIABLE2?}";
+        "Echo {{Hello}} {$@}{hello?} {key} {$1} {$2} {$5?} {$TEST_ENV_VARIABLE} {$TEST_ENV_VARIABLE2?}";
     let result = parse_script(script, &vars, &env, &EscapeMode::Never).unwrap();
     assert_eq!(
         result,
@@ -421,7 +499,7 @@ fn test_parse_script() {
 
     let script = r#"
 print("hello world")
-a = [{map("{}\n",flat("\n      '\\{}\\',",*))}]
+a = [{map("{}\n",flat("\n      '\\{}\\',",$@))}]
 print("values are:", a)"#;
 
     let expected = r#"
@@ -464,11 +542,11 @@ fn test_parse_params() {
     let params = vec![
         "Echo",
         "{{Hello}}",
-        "{*}",
+        "{$@}",
         "{key}",
-        "{1}",
-        "{2}",
-        "{5?}",
+        "{$1}",
+        "{$2}",
+        "{$5?}",
         "{$TEST_ENV_VARIABLE}",
         "{$TEST_ENV_VARIABLE2?}",
     ];
@@ -491,7 +569,11 @@ fn test_parse_params() {
         ]
     );
 
-    let params = vec!["Echo", "{{map(Hello)}}", r#"{map("--f=\"{}.txt\"",key)}"#];
+    let params = vec![
+        "Echo",
+        "{{map(Hello)}}",
+        r#"{ map("--f=\"{}.txt\"", key) }"#,
+    ];
 
     let result =
         parse_params(&params.iter().map(|v| v.to_string()).collect(), &vars, &env).unwrap();
@@ -508,7 +590,7 @@ fn test_parse_params() {
     let params = vec![
         "Echo",
         "{{flat(Hello)}}",
-        r#"{flat("--f=\"{}.txt\" ",key)}"#,
+        r#"{ flat("--f=\"{}.txt\" ", key) }"#,
     ];
 
     let result =

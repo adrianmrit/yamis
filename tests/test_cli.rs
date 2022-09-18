@@ -99,7 +99,7 @@ fn test_escape_never() -> Result<(), Box<dyn std::error::Error>> {
         r#"
     [tasks.say_hello]
     quote = "never"
-    script = "echo {1} {2} {hello}{4?} {*}"
+    script = "echo {$1} {$2} {hello}{$4?} {$@}"
     "#
         .as_bytes(),
     )?;
@@ -323,11 +323,11 @@ fn test_run_serial() -> Result<(), Box<dyn std::error::Error>> {
             r#"
             [tasks.hello]
             program = "{}"
-            args = ["{}", "{}", "{{1}}"]
+            args = ["{}", "{}", "{{$1}}"]
             
             [tasks.bye]
             quote = "never"
-            script = "echo Bye {{2}}"
+            script = "echo Bye {{$2}}"
             
             [tasks.greet]
             serial = ["hello", "bye"]

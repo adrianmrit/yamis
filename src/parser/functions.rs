@@ -29,6 +29,13 @@ impl FunResult {
             FunResult::Vec(val) => FunVal::Vec(val),
         }
     }
+
+    pub fn is_empty(&self) -> bool {
+        match self {
+            FunResult::String(val) => val.is_empty(),
+            FunResult::Vec(val) => val.is_empty(),
+        }
+    }
 }
 
 /// Signature that functions must follow
