@@ -6,6 +6,7 @@
 - Get the version in the command line by calling yamis with -V 
 - Support for functions inside tasks
 - Better error message parsing
+- Can index or slice expressions
 
 ### Changed
 - Use clap
@@ -14,6 +15,7 @@
 - Remove prefix and suffix feature in favor of functions
 - Config files are lazily loaded
 - Tasks inherit from os-specific bases if they exist
+- Changed how all arguments and positional arguments are passed
 
 ## [0.3.0] - 2022-08-28
 ### Added
