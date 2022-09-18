@@ -50,7 +50,7 @@ pub struct FunctionRegistry {
 
 /// Used by [map] to format a single string value
 fn map_format_string(fmt_string: &str, val: &str) -> DynErrResult<String> {
-    match format_string(fmt_string, &vec![val]) {
+    match format_string(fmt_string, &[val]) {
         Ok(val) => Ok(val),
         Err(e) => Err(format!("Error formatting the string:\n{e}").into()),
     }

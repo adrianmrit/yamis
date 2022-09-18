@@ -16,7 +16,7 @@ struct StrFormatParser;
 /// * `vars`: Values to replace for
 ///
 /// returns: Result<String, Box<dyn Error, Global>>
-pub fn format_string<S: AsRef<str>>(fmt_string: S, vars: &Vec<&str>) -> DynErrResult<String> {
+pub fn format_string<S: AsRef<str>>(fmt_string: S, vars: &[&str]) -> DynErrResult<String> {
     let tokens = StrFormatParser::parse(Rule::all, fmt_string.as_ref());
 
     let tokens = match tokens {
