@@ -2,19 +2,19 @@ wd: ""
 tasks:
   build-releases:
     script: |
-      cross build --target x86_64-apple-darwin --release --target-dir=target_releases/v{1}
-      cross build --target x86_64-pc-windows-gnu --release --target-dir=target_releases/v{1}
-      cross build --target x86_64-unknown-linux-gnu --release --target-dir=target_releases/v{1}
+      cross build --target x86_64-apple-darwin --release --target-dir=target_releases/v{$1}
+      cross build --target x86_64-pc-windows-gnu --release --target-dir=target_releases/v{$1}
+      cross build --target x86_64-unknown-linux-gnu --release --target-dir=target_releases/v{$1}
 
   package-releases:
     program: "python"
-    args: ["zip_releases.py", "{1}"]
+    args: ["zip_releases.py", "{$1}"]
 
   cleanup:
-    script: "rm -r target_releases/v{1}"
+    script: "rm -r target_releases/v{$1}"
 
   cleanup.windows:
-    script: "rmdir {(target_releases/v)1} /s /q"
+    script: "rmdir {fmt('target_releases/v{}', $1)} /s /q"
 
   pack:
     serial: ["build-releases", "package-releases", "cleanup"]

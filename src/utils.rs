@@ -4,8 +4,26 @@ use dotenv_parser::parse_dotenv;
 use petgraph::graphmap::DiGraphMap;
 use std::collections::{BTreeMap, HashMap};
 use std::ffi::OsStr;
-use std::fs;
 use std::path::{Path, PathBuf};
+use std::{env, fs};
+
+/// Returns the task name as per the current OS.
+///
+/// # Arguments
+///
+/// * `task_name`: Plain name of the task
+///
+/// returns: ()
+///
+/// # Examples
+///
+/// ```ignore
+/// // Assuming it is a linux system
+/// assert_eq!(to_os_task_name("sample"), "sample.linux");
+/// ```
+pub fn to_os_task_name(task_name: &str) -> String {
+    format!("{}.{}", task_name, env::consts::OS)
+}
 
 /// Returns a directed graph containing dependency relations dependency for the given tasks, where
 /// the nodes are the names of the tasks. The graph does not include tasks that do not depend, or
@@ -32,11 +50,19 @@ pub fn get_task_dependency_graph<'a>(
         }
 
         loop {
-            for base in &current_task.bases {
-                if !graph.contains_node(base) {
-                    bases_stack.push(base);
+            for base_name in &current_task.bases {
+                let os_base_name = to_os_task_name(base_name);
+                let base_name = if tasks.contains_key(&os_base_name) {
+                    // os_base_name needs to be a reference to the string in the HashMap
+                    let (os_base_name, _) = tasks.get_key_value(&os_base_name).unwrap();
+                    os_base_name
+                } else {
+                    base_name
+                };
+                if !graph.contains_node(base_name) {
+                    bases_stack.push(base_name);
                 }
-                graph.add_edge(current_task_name, base, ());
+                graph.add_edge(current_task_name, base_name, ());
             }
             while let Some(base) = bases_stack.pop() {
                 match tasks.get(base) {

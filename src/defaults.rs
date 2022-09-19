@@ -1,4 +1,4 @@
-use crate::args_format::EscapeMode;
+use crate::parser::EscapeMode;
 
 /// Returns the default quote mode for config files during serde deserialization
 pub(crate) fn default_quote() -> EscapeMode {

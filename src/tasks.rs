@@ -4,12 +4,13 @@ use std::fs::File;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::Arc;
 use std::{error, fmt, mem};
 
-use crate::args::ArgsMap;
-use crate::args_format::{format_arg, format_script, EscapeMode};
-use crate::config_files::{ConfigFile, ConfigFiles};
+use crate::cli::TaskArgs;
+use crate::config_files::ConfigFile;
 use crate::defaults::default_false;
+use crate::parser::{parse_params, parse_script, EscapeMode};
 use serde_derive::Deserialize;
 use uuid::Uuid;
 
@@ -37,6 +38,7 @@ cfg_if::cfg_if! {
 pub enum TaskError {
     /// Raised when there is an error running a task
     RuntimeError(String, String),
+    /// Raised when the task is improperly configured
     ImproperlyConfigured(String, String),
 }
 
@@ -182,8 +184,6 @@ impl Task {
     ///
     /// returns: Result<(), Box<dyn Error, Global>>
     ///
-    /// # Examples
-    ///
     pub fn setup(&mut self, name: &str, base_path: &Path) -> DynErrResult<()> {
         self.name = String::from(name);
         self.load_env_file(base_path)?;
@@ -257,7 +257,7 @@ impl Task {
     /// * `config_file`: Config file to load extra environment variables from
     ///
     /// returns: HashMap<String, String, RandomState>
-    fn get_env(&self, config_file: &ConfigFile) -> HashMap<String, String> {
+    pub fn get_env(&self, config_file: &ConfigFile) -> HashMap<String, String> {
         let mut env = self.env.clone();
         if let Some(config_file_env) = &config_file.env {
             for (key, val) in config_file_env {
@@ -386,7 +386,7 @@ impl Task {
     /// * `name` - Name of the task, displayed in errors.
     /// * `args` - Arguments to format the task args with
     /// * `config_file` - Configuration file of the task
-    fn run_program(&self, args: &ArgsMap, config_file: &ConfigFile) -> DynErrResult<()> {
+    fn run_program(&self, args: &TaskArgs, config_file: &ConfigFile) -> DynErrResult<()> {
         let program = self.program.as_ref().unwrap();
         let mut command = Command::new(program);
         self.set_command_basics(&mut command, config_file)?;
@@ -395,18 +395,15 @@ impl Task {
         command.envs(&env);
 
         if let Some(task_args) = &self.args {
-            for task_arg in task_args {
-                match format_arg(task_arg, args, &env) {
-                    Ok(task_args) => {
-                        command.args(task_args);
-                    }
-                    Err(e) => {
-                        return Err(TaskError::ImproperlyConfigured(
-                            self.name.clone(),
-                            e.to_string(),
-                        )
-                        .into());
-                    }
+            match parse_params(task_args, args, &env) {
+                Ok(task_args) => {
+                    // Programs need to exclude empty arguments, otherwise they might be passed as real parameters
+                    command.args(task_args.iter().filter(|val| !val.is_empty()));
+                }
+                Err(e) => {
+                    return Err(
+                        TaskError::ImproperlyConfigured(self.name.clone(), e.to_string()).into(),
+                    );
                 }
             }
         }
@@ -421,7 +418,7 @@ impl Task {
     /// * `name` - Name of the task, displayed in errors.
     /// * `args` - Arguments to format the task args with
     /// * `config_file` - Configuration file of the task
-    fn run_script(&self, args: &ArgsMap, config_file: &ConfigFile) -> DynErrResult<()> {
+    fn run_script(&self, args: &TaskArgs, config_file: &ConfigFile) -> DynErrResult<()> {
         let script = self.script.as_ref().unwrap();
 
         // Interpreter is a list, because sometimes there is need to pass extra arguments to the
@@ -452,7 +449,7 @@ impl Task {
             &config_file.quote
         };
 
-        match format_script(script, args, &env, quote) {
+        match parse_script(script, args, &env, quote) {
             Ok(script) => {
                 let script_file = get_temp_script(&script, script_extension)?;
                 command.arg(script_file.to_str().unwrap());
@@ -472,12 +469,12 @@ impl Task {
     /// # Arguments
     /// * `args` - Arguments to format the task args with
     /// * `config_file` - Configuration file of the task
-    fn run_serial(&self, args: &ArgsMap, config_files: &ConfigFiles) -> DynErrResult<()> {
+    fn run_serial(&self, args: &TaskArgs, config_file: &ConfigFile) -> DynErrResult<()> {
         let serial = self.serial.as_ref().unwrap();
-        let mut tasks: Vec<(&Task, &ConfigFile)> = Vec::new();
+        let mut tasks: Vec<Arc<Task>> = Vec::new();
         for task_name in serial {
-            if let Some((task, task_config_file)) = config_files.get_system_task(task_name) {
-                tasks.push((task, task_config_file));
+            if let Some(task) = config_file.get_task(task_name) {
+                tasks.push(task);
             } else {
                 return Err(TaskError::RuntimeError(
                     self.name.clone(),
@@ -486,8 +483,8 @@ impl Task {
                 .into());
             }
         }
-        for (task, task_config_file) in tasks {
-            task.run(args, task_config_file, config_files)?;
+        for task in tasks {
+            task.run(args, config_file)?;
         }
         Ok(())
     }
@@ -500,12 +497,7 @@ impl Task {
     /// * `args` - Arguments to format the task args with
     /// * `config_file` - Configuration file of the task
     /// * `config_files` - global ConfigurationFiles instance
-    pub fn run(
-        &self,
-        args: &ArgsMap,
-        config_file: &ConfigFile,
-        config_files: &ConfigFiles,
-    ) -> DynErrResult<()> {
+    pub fn run(&self, args: &TaskArgs, config_file: &ConfigFile) -> DynErrResult<()> {
         return if self.private {
             Err(
                 TaskError::RuntimeError(self.name.clone(), String::from("Cannot run private task"))
@@ -516,7 +508,7 @@ impl Task {
         } else if self.program.is_some() {
             self.run_program(args, config_file)
         } else if self.serial.is_some() {
-            self.run_serial(args, config_files)
+            self.run_serial(args, config_file)
         } else {
             Err(
                 TaskError::ImproperlyConfigured(self.name.clone(), String::from("Nothing to run."))

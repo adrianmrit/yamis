@@ -1,38 +1,9 @@
 use colored::Colorize;
-use std::env;
-use std::error::Error;
-use yamis::args::YamisArgs;
-use yamis::config_files::ConfigFiles;
 
-/// Runs the program but returns errors. The main method should be
-/// the one to print the actual error.
-fn program() -> Result<(), Box<dyn Error>> {
-    let args = YamisArgs::new(env::args());
-    return match args {
-        YamisArgs::CommandArgs(args) => {
-            let config_files = match args.file {
-                None => ConfigFiles::discover(&env::current_dir()?)?,
-                Some(file_path) => ConfigFiles::for_path(&file_path)?,
-            };
-            match args.task {
-                None => return Err("No task to run was given.".into()),
-                Some(task_name) => {
-                    let name_task_and_config = config_files.get_system_task(&task_name);
-                    match name_task_and_config {
-                        None => return Err(format!("Task {} not found.", task_name).into()),
-                        Some((task, config)) => {
-                            task.run(&args.args, config, &config_files)?;
-                            Ok(())
-                        }
-                    }
-                }
-            }
-        }
-    };
-}
+use yamis::cli::exec;
 
 fn main() {
-    match program() {
+    match exec() {
         Ok(_) => {}
         Err(e) => {
             let err_msg = e.to_string();

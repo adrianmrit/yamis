@@ -1,0 +1,11 @@
+// Escape open and close brackets in literal
+esc_ob = { "{{" }
+esc_cb = { "}}" }
+
+// values outside tag
+literal_content = { (!("{" | "}") ~ ANY)+ }
+literal = ${ literal_content | ( esc_ob | esc_cb )}
+
+
+tag = { "{}" }
+all = ${ SOI ~ (tag | literal)* ~ EOI }
