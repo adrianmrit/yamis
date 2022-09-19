@@ -2,7 +2,9 @@ use crate::defaults::default_quote;
 use crate::parser::EscapeMode;
 use crate::tasks::Task;
 use crate::types::DynErrResult;
-use crate::utils::{get_path_relative_to_base, get_task_dependency_graph, read_env_file};
+use crate::utils::{
+    get_path_relative_to_base, get_task_dependency_graph, read_env_file, to_os_task_name,
+};
 use indexmap::IndexMap;
 use petgraph::algo::toposort;
 use serde_derive::Deserialize;
@@ -399,7 +401,7 @@ impl ConfigFile {
     ///
     /// * task_name - Name of the task to search for
     pub fn get_task(&self, task_name: &str) -> Option<Arc<Task>> {
-        let os_task_name = format!("{}.{}", task_name, env::consts::OS);
+        let os_task_name = to_os_task_name(task_name);
 
         if let Some(task) = self.loaded_tasks.get(&os_task_name) {
             return Some(Arc::clone(task));

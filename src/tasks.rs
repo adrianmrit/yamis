@@ -184,8 +184,6 @@ impl Task {
     ///
     /// returns: Result<(), Box<dyn Error, Global>>
     ///
-    /// # Examples
-    ///
     pub fn setup(&mut self, name: &str, base_path: &Path) -> DynErrResult<()> {
         self.name = String::from(name);
         self.load_env_file(base_path)?;
