@@ -34,6 +34,7 @@ clap = { version = "3.2", features = ["derive", "cargo"] }
 pest = "2.0"
 pest_derive = "2.0"
 indexmap = "1.9"
+shellexpand = "2.1.2"
 
 [dev-dependencies]
 assert_cmd = "2.0"
