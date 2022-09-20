@@ -23,14 +23,18 @@ limited to positional arguments or passing all arguments inline.
 
 
 ## Install
-
-If you already have rustc and cargo installer, the easiest way to install is with:
+If you have [Rust](https://www.rust-lang.org/) and [Cargo](https://doc.rust-lang.org/cargo/) installed ([rust installation instructions](https://www.rust-lang.org/tools/install)). Then run:
 ```bash
 cargo install --force yamis
 ```
 
-Compiled binaries are also available for Windows, Linux and macOS under
-[releases](https://github.com/adrianmrit/yamis/releases/tag/v0.1.0).
+Pro-tip: make sure `~/.cargo/bin` directory is in your `PATH` environment variable.
+
+### Binary Release:
+Binaries are also available for Windows, Linux and macOS under
+[releases](https://github.com/adrianmrit/yamis/releases/). To install, download the zip for your system, extract,
+and copy the binary to the desired location. You will need to ensure the folder that contains the binary is available
+in the `PATH`.
 
 ## Quick Start
 The first step is to add a YAML or TOML file in the project root, i.e. `project.yamis.yaml`.
