@@ -185,7 +185,13 @@ impl Iterator for ConfigFilePaths {
 }
 
 impl ConfigFilePaths {
-    /// Returns a new iterator that starts at the given path.
+    /// Initializes ConfigFilePaths to start at the given path.
+    ///
+    /// # Arguments
+    ///
+    /// * `path`: Path to start searching for config files.
+    ///
+    /// returns: ConfigFilePaths
     pub fn new<S: AsRef<OsStr> + ?Sized>(path: &S) -> ConfigFilePaths {
         let current = PathBuf::from(path);
         ConfigFilePaths {
@@ -197,6 +203,13 @@ impl ConfigFilePaths {
         }
     }
 
+    /// Initializes ConfigFilePaths such that it only loads the config file for the given path.
+    ///
+    /// # Arguments
+    ///
+    /// * `path`: Path of the config file to load
+    ///
+    /// returns:  Result<ConfigFilePaths, Box<dyn error::Error>>
     pub fn only<S: AsRef<OsStr> + ?Sized>(path: &S) -> DynErrResult<ConfigFilePaths> {
         let path = PathBuf::from(path);
         let mut config_files = ConfigFilePaths {
@@ -213,12 +226,14 @@ impl ConfigFilePaths {
         Ok(config_files)
     }
 
+    /// Returns the path of the global config file directory.
     #[cfg(not(test))]
     pub(crate) fn get_global_config_file_dir(&self) -> PathBuf {
         let global_config_dir = shellexpand::tilde(GLOBAL_CONFIG_FILE_PATH);
         PathBuf::from(global_config_dir.as_ref())
     }
 
+    /// Returns the path of the global config file directory.
     #[cfg(test)]
     pub(crate) fn get_global_config_file_dir(&self) -> PathBuf {
         use assert_fs::TempDir;
@@ -231,19 +246,13 @@ impl ConfigFilePaths {
         TEST_GLOBAL_CONFIG_PATH.clone()
     }
 
-    /// Reads the config file from the given path buf
+    /// Reads the config file from the given path.
     ///
     /// # Arguments
     ///
-    /// * `path`:
+    /// * `path`: Path to read the config file from
     ///
     /// returns: Result<Arc<Mutex<ConfigFile>>, Box<dyn Error, Global>>
-    ///
-    /// # Examples
-    ///
-    /// ```
-    ///
-    /// ```
     fn read_config_file(&mut self, path: PathBuf) -> DynErrResult<ConfigFileSharedPtr> {
         let config_file = ConfigFile::load(path.clone());
         match config_file {
@@ -268,12 +277,6 @@ impl ConfigFilePaths {
     /// * `config_file_name`:
     ///
     /// returns: Result<Option<PathBuf>, ConfigError>
-    ///
-    /// # Examples
-    ///
-    /// ```
-    ///
-    /// ```
     fn get_config_file_path(
         &self,
         dir: &Path,
@@ -300,6 +303,14 @@ impl ConfigFilePaths {
         }
     }
 
+    /// Searches for a task with the given name, loading config files as needed. It returns
+    /// both the task and the config file it was found in.
+    ///
+    /// # Arguments
+    ///
+    /// * `name`: Name of the task to search for
+    ///
+    /// returns: Result<Option<(Arc<Mutex<ConfigFile>>, Arc<Task>)>, Box<dyn Error, Global>>
     pub fn get_task<S: AsRef<str>>(
         &mut self,
         name: S,
