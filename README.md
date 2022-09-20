@@ -175,6 +175,9 @@ The configuration files (in order of precedence, with extension omitted) are nam
 - `yamis`: Should be used in sub-folders of a project for tasks specific to that folder and sub-folders.
 - `project.yamis`: Should hold tasks for the entire project.
 
+If none of those files is found, it will look at `~/.yamis/user.yamis.toml` or `~/.yamis/user.yamis.yaml` or
+`~/.yamis/user.yamis.yml` for user-wide tasks. This is useful for everyday tasks not related to a specific project.
+
 
 <a name="script"></a>
 ### Script
