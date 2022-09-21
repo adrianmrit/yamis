@@ -7,6 +7,7 @@
 - Support for functions inside tasks
 - Better error message parsing
 - Can index or slice expressions
+- Support for global config files
 
 ### Changed
 - Use clap

@@ -3,99 +3,16 @@ use assert_fs::TempDir;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::Write;
-use yamis::config_files::{ConfigFile, ConfigFilePaths};
+use yamis::config_files::ConfigFile;
 use yamis::tasks::TaskError;
-use yamis::types::DynErrResult;
 
 mod utils;
 
 #[test]
-fn test_discovery() -> DynErrResult<()> {
-    let tmp_dir = TempDir::new().unwrap();
-    let project_config_path = tmp_dir.path().join("project.yamis.toml");
-    let mut project_config_file = File::create(project_config_path.as_path())?;
-    project_config_file.write_all(
-        r#"
-    [tasks.hello_project]
-    script = "echo hello project"
-    "#
-        .as_bytes(),
-    )?;
-
-    let config_path = tmp_dir.path().join("yamis.yaml");
-    let mut config_file = File::create(config_path.as_path())?;
-    config_file.write_all(
-        r#"
-    tasks:
-        hello:
-            script: echo hello
-    "#
-        .as_bytes(),
-    )?;
-
-    let local_config_path = tmp_dir.path().join("local.yamis.yaml");
-    let mut local_file = File::create(local_config_path.as_path())?;
-    local_file.write_all(
-        r#"
-    tasks:
-        hello_local:
-            script: echo hello local
-    "#
-        .as_bytes(),
-    )?;
-
-    let mut config = ConfigFilePaths::new(&tmp_dir.path());
-
-    match config.get_task("non_existent")? {
-        None => {}
-        Some((_, _)) => {
-            panic!("task non_existent should not exist");
-        }
-    }
-
-    match config.get_task("hello_project")? {
-        None => {
-            panic!("task hello_project should exist");
-        }
-        Some((_, _)) => {}
-    }
-
-    match config.get_task("hello")? {
-        None => {
-            panic!("task hello should exist");
-        }
-        Some((_, _)) => {}
-    }
-
-    match config.get_task("hello_local")? {
-        None => {
-            panic!("task hello_local should exist");
-        }
-        Some((_, _)) => {}
-    }
-
-    let mut config = ConfigFilePaths::only(project_config_path.as_path()).unwrap();
-
-    match config.get_task("hello_project")? {
-        None => {
-            panic!("task hello_project should exist");
-        }
-        Some((_, _)) => {}
-    }
-    match config.get_task("hello")? {
-        None => {}
-        Some((_, _)) => {
-            panic!("task non_existent should not exist");
-        }
-    }
-    Ok(())
-}
-
-#[test]
-fn test_env_inheritance() -> DynErrResult<()> {
+fn test_env_inheritance() {
     let tmp_dir = TempDir::new().unwrap();
     let config_file_path = tmp_dir.join("project.yamis.toml");
-    let mut file = File::create(&config_file_path)?;
+    let mut file = File::create(&config_file_path).unwrap();
     file.write_all(
         r#" 
     [tasks.hello_base.env]
@@ -113,9 +30,10 @@ fn test_env_inheritance() -> DynErrResult<()> {
     script = "echo %greeting%, 1+1=%one_plus_one%"
     "#
         .as_bytes(),
-    )?;
+    )
+    .unwrap();
 
-    let config_file = ConfigFile::load(config_file_path)?;
+    let config_file = ConfigFile::load(config_file_path).unwrap();
 
     let task = config_file.get_task("hello").unwrap();
 
@@ -125,17 +43,16 @@ fn test_env_inheritance() -> DynErrResult<()> {
         ("one_plus_one".to_string(), "2".to_string()),
     ]);
     assert_eq!(env, expected);
-
-    Ok(())
 }
 
 #[test]
-fn test_read_env() -> DynErrResult<()> {
+fn test_read_env() {
     let tmp_dir = TempDir::new().unwrap();
     let project_config_path = tmp_dir.join("project.yamis.toml");
     let mut project_config_file = File::create(project_config_path.as_path()).unwrap();
-    project_config_file.write_all(
-        r#"
+    project_config_file
+        .write_all(
+            r#"
             env_file = ".env"
             
             [tasks.test.windows]
@@ -160,10 +77,11 @@ fn test_read_env() -> DynErrResult<()> {
             [tasks.test_2.env]
             VAR1 = "TASK_VAL1"
             "#
-        .as_bytes(),
-    )?;
+            .as_bytes(),
+        )
+        .unwrap();
 
-    let mut env_file = File::create(tmp_dir.join(".env").as_path())?;
+    let mut env_file = File::create(tmp_dir.join(".env").as_path()).unwrap();
     env_file
         .write_all(
             r#"
@@ -175,7 +93,7 @@ fn test_read_env() -> DynErrResult<()> {
         )
         .unwrap();
 
-    let mut env_file_2 = File::create(tmp_dir.join(".env_2").as_path())?;
+    let mut env_file_2 = File::create(tmp_dir.join(".env_2").as_path()).unwrap();
     env_file_2
         .write_all(
             r#"
@@ -186,7 +104,7 @@ fn test_read_env() -> DynErrResult<()> {
         )
         .unwrap();
 
-    let config_file = ConfigFile::load(project_config_path)?;
+    let config_file = ConfigFile::load(project_config_path).unwrap();
 
     let task = config_file.get_task("test").unwrap();
     let env = task.get_env(&config_file);
@@ -206,8 +124,6 @@ fn test_read_env() -> DynErrResult<()> {
         ("VAR3".to_string(), "VAL3".to_string()),
     ]);
     assert_eq!(env, expected);
-
-    Ok(())
 }
 
 #[test]

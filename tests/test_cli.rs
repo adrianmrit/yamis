@@ -4,18 +4,16 @@ use predicates::prelude::*;
 use std::fs::File;
 use std::io::Write;
 use std::process::Command;
-use yamis::types::DynErrResult;
 
 #[test]
-fn test_no_config_file_discovered() -> DynErrResult<()> {
+fn test_no_config_file_discovered() {
     let tmp_dir = TempDir::new().unwrap();
-    let mut cmd = Command::cargo_bin("yamis")?;
+    let mut cmd = Command::cargo_bin("yamis").unwrap();
     cmd.current_dir(tmp_dir.path());
     cmd.arg("echo");
-    cmd.assert().failure().stderr(predicate::str::contains(
-        "No `project.yamis` file found. Add one with `.toml`, `.yaml` or `.yml` extension.",
-    ));
-    Ok(())
+    cmd.assert()
+        .failure()
+        .stderr(predicate::str::contains("[YAMIS] Task echo not found."));
 }
 
 #[test]
