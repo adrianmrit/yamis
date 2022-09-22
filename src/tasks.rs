@@ -1,5 +1,7 @@
+use colored::Colorize;
 use std::collections::HashMap;
 use std::env::temp_dir;
+use std::fmt::{Display, Formatter};
 use std::fs::File;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -82,8 +84,11 @@ impl error::Error for TaskError {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Task {
+    /// Name of the task
     #[serde(skip)]
     name: String,
+    /// Help of the task
+    help: Option<String>,
     /// Whether to automatically quote argument with spaces
     quote: Option<EscapeMode>,
     /// Script to run
@@ -188,6 +193,14 @@ impl Task {
         self.name = String::from(name);
         self.load_env_file(base_path)?;
         Ok(self.validate()?)
+    }
+
+    pub fn is_private(&self) -> bool {
+        self.private
+    }
+
+    pub fn get_name(&self) -> &str {
+        &self.name
     }
 
     /// Extends from the given task.
@@ -515,5 +528,19 @@ impl Task {
                     .into(),
             )
         };
+    }
+}
+
+impl Display for Task {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        let help = match &self.help {
+            None => "No help to display".red(),
+            Some(help) => help.green(),
+        };
+        if self.private {
+            write!(f, "{} {}\n\n{}", self.name, "private".red(), help)
+        } else {
+            write!(f, "{}\n\n{}", self.name, help)
+        }
     }
 }

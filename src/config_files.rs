@@ -10,6 +10,7 @@ use petgraph::algo::toposort;
 use serde_derive::Deserialize;
 use std::collections::HashMap;
 use std::ffi::OsStr;
+use std::fmt::{Display, Formatter};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::{env, error, fmt, fs};
@@ -167,7 +168,7 @@ impl Iterator for ConfigFilePaths {
             return Some(Err(err));
         }
 
-        let global_config_dir = self.get_global_config_file_dir();
+        let global_config_dir = Self::get_global_config_file_dir();
         let found_file = self.get_config_file_path(&global_config_dir, GLOBAL_CONFIG_FILE);
         let found_file = match found_file {
             Ok(v) => v,
@@ -228,14 +229,14 @@ impl ConfigFilePaths {
 
     /// Returns the path of the global config file directory.
     #[cfg(not(test))]
-    pub(crate) fn get_global_config_file_dir(&self) -> PathBuf {
+    pub(crate) fn get_global_config_file_dir() -> PathBuf {
         let global_config_dir = shellexpand::tilde(GLOBAL_CONFIG_FILE_PATH);
         PathBuf::from(global_config_dir.as_ref())
     }
 
     /// Returns the path of the global config file directory.
     #[cfg(test)]
-    pub(crate) fn get_global_config_file_dir(&self) -> PathBuf {
+    pub(crate) fn get_global_config_file_dir() -> PathBuf {
         use assert_fs::TempDir;
         use lazy_static::lazy_static;
         lazy_static! {
@@ -517,6 +518,12 @@ impl ConfigFile {
     }
 }
 
+impl Display for ConfigFile {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.filepath.display())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::config_files::ConfigFilePaths;
@@ -613,13 +620,16 @@ mod tests {
 
         let mut config = ConfigFilePaths::new(&tmp_dir.path());
 
-        let global_config_dir = config.get_global_config_file_dir();
+        let global_config_dir = ConfigFilePaths::get_global_config_file_dir();
 
         // Global config dir should not be the same as the current dir
         assert_ne!(tmp_dir.path(), &global_config_dir);
 
         // Should always return the same global dir
-        assert_eq!(&config.get_global_config_file_dir(), &global_config_dir);
+        assert_eq!(
+            &ConfigFilePaths::get_global_config_file_dir(),
+            &global_config_dir
+        );
 
         let global_config_path = global_config_dir.join("user.yamis.toml");
         let mut global_config_file = File::create(global_config_path.as_path()).unwrap();

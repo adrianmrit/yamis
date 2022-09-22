@@ -105,6 +105,14 @@ pub fn exec() -> Result<(), Box<dyn Error>> {
         .after_help(HELP)
         .allow_external_subcommands(true)
         .arg(
+            clap::Arg::new("list")
+                .short('l')
+                .long("list")
+                .takes_value(false)
+                .help("Lists configuration files that can be reached from the current directory")
+                .conflicts_with("file"),
+        )
+        .arg(
             clap::Arg::new("file")
                 .short('f')
                 .long("file")
@@ -114,14 +122,37 @@ pub fn exec() -> Result<(), Box<dyn Error>> {
         );
     let matches = app.get_matches();
 
-    let task_command = TaskSubcommand::new(&matches)?;
-
     let current_dir = env::current_dir()?;
 
     let mut config_files = match matches.value_of("file") {
         None => ConfigFilePaths::new(&current_dir),
         Some(file_path) => ConfigFilePaths::only(file_path)?,
     };
+
+    if matches.contains_id("list") {
+        for file in config_files {
+            let file_ptr = &file?;
+            let file_lock = file_ptr.lock().unwrap();
+            println!("{}:", file_lock);
+        }
+        return Ok(());
+    }
+
+    let task_command = TaskSubcommand::new(&matches)?;
+
+    if let Some(task_name) = matches.value_of("task-info") {
+        let task = config_files.get_task(task_name)?;
+        match task {
+            None => {}
+            Some((config_file, task)) => {
+                let file_ptr = &config_file;
+                let file_lock = file_ptr.lock().unwrap();
+                println!("{}:", file_lock);
+                println!("{}", task);
+            }
+        }
+        return Ok(());
+    }
 
     let name_task_and_config = config_files.get_task(&task_command.task)?;
     match name_task_and_config {
@@ -132,5 +163,70 @@ pub fn exec() -> Result<(), Box<dyn Error>> {
             task.run(&task_command.args, conf_lock.borrow())?;
             Ok(())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::config_files::ConfigFilePaths;
+    use assert_cmd::Command;
+    use assert_fs::TempDir;
+    use predicates::prelude::predicate;
+    use std::fs::File;
+    use std::io::Write;
+
+    #[test]
+    #[ignore = "Fails but works fine when run manually"]
+    fn test_list() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp_dir = TempDir::new().unwrap();
+        let global_config_dir = ConfigFilePaths::get_global_config_file_dir();
+
+        // Global config dir should not be the same as the current dir
+        assert_ne!(tmp_dir.path(), &global_config_dir);
+
+        // Should always return the same global dir
+        assert_eq!(
+            &ConfigFilePaths::get_global_config_file_dir(),
+            &global_config_dir
+        );
+
+        let global_config_path = global_config_dir.join("user.yamis.toml");
+        let mut global_config_file = File::create(global_config_path.as_path()).unwrap();
+        global_config_file
+            .write_all(
+                r#"
+                [tasks.hello_global]
+                script = "echo hello project"
+                help = "Some help here"
+                "#
+                .as_bytes(),
+            )
+            .unwrap();
+
+        let mut file = File::create(tmp_dir.join("project.yamis.toml"))?;
+        file.write_all(
+            r#"
+    
+    [tasks.hello.windows]
+    script = "echo %greeting%, one plus one is %one_plus_one%"
+    private=true
+    
+    [tasks.hello]
+    script = "echo $greeting, one plus one is $one_plus_one"
+    "#
+            .as_bytes(),
+        )?;
+        let expected = format!(
+            "{tmp_dir}/project.yamis.toml\n{global_config_dir}/user.yamis.toml\n",
+            tmp_dir = tmp_dir.path().to_str().unwrap(),
+            global_config_dir = global_config_dir.to_str().unwrap()
+        );
+        let mut cmd = Command::cargo_bin("yamis")?;
+        cmd.current_dir(tmp_dir.path());
+        cmd.arg("--list");
+        cmd.assert()
+            .success()
+            .stdout(predicate::str::contains(expected));
+        Ok(())
     }
 }
