@@ -49,3 +49,7 @@ path = "src/main.rs"
 # fixes linker `cc` not found issue
 [package.metadata.cross.target.x86_64-apple-darwin]
 zig = true
+
+[features]
+default = ["runtime"]
+runtime = []

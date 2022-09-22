@@ -1,8 +1,10 @@
 use colored::Colorize;
 use update_informer::{registry, Check};
 
+#[cfg(feature = "runtime")]
 use yamis::cli::exec;
 
+#[cfg(feature = "runtime")]
 /// If there is a new version available, return the message to display to the user.
 fn check_update_available() -> Option<String> {
     let pkg_name = env!("CARGO_PKG_NAME");
@@ -51,6 +53,7 @@ fn check_update_available() -> Option<String> {
     }
 }
 
+#[cfg(feature = "runtime")]
 fn main() {
     if let Some(update_msg) = check_update_available() {
         println!("{}", update_msg);
