@@ -6,5 +6,5 @@ mod defaults;
 mod format_str;
 mod parser;
 pub mod tasks;
-pub mod types;
+pub(crate) mod types;
 mod utils;

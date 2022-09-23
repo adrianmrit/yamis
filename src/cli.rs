@@ -1,4 +1,3 @@
-use std::borrow::Borrow;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::error::Error;
@@ -6,14 +5,14 @@ use std::{env, fmt};
 
 use regex::Regex;
 
-use crate::config_files::ConfigFilePaths;
+use crate::config_files::{ConfigFilePaths, ConfigFilesContainer};
 
 const HELP: &str = "The appropriate YAML or TOML config files need to exist \
 in the directory or parents, or a file is specified with the `-f` or `--file` \
 options. For help about the config files check https://github.com/adrianmrit/yamis";
 
 /// Extra args passed that will be mapped to the task.
-pub type TaskArgs = HashMap<String, Vec<String>>;
+pub(crate) type TaskArgs = HashMap<String, Vec<String>>;
 
 /// Holds the data for running the given task.
 struct TaskSubcommand {
@@ -24,7 +23,7 @@ struct TaskSubcommand {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub enum ArgsError {
+enum ArgsError {
     /// Raised when no task to run is given
     MissingTaskArg,
 }
@@ -124,46 +123,44 @@ pub fn exec() -> Result<(), Box<dyn Error>> {
 
     let current_dir = env::current_dir()?;
 
-    let mut config_files = match matches.value_of("file") {
+    let config_files = match matches.value_of("file") {
         None => ConfigFilePaths::new(&current_dir),
         Some(file_path) => ConfigFilePaths::only(file_path)?,
     };
 
     if matches.contains_id("list") {
-        for file in config_files {
-            let file_ptr = &file?;
-            let file_lock = file_ptr.lock().unwrap();
-            println!("{}:", file_lock);
+        for path in config_files {
+            let path = &path?;
+            println!("{}:", path.to_string_lossy());
         }
         return Ok(());
     }
 
     let task_command = TaskSubcommand::new(&matches)?;
 
-    if let Some(task_name) = matches.value_of("task-info") {
-        let task = config_files.get_task(task_name)?;
-        match task {
-            None => {}
-            Some((config_file, task)) => {
-                let file_ptr = &config_file;
-                let file_lock = file_ptr.lock().unwrap();
-                println!("{}:", file_lock);
-                println!("{}", task);
+    let mut v1_files_container = ConfigFilesContainer::new();
+
+    for path in config_files {
+        let path = path?;
+        let version = ConfigFilePaths::get_version(&path)?;
+        match version.as_str() {
+            "1" => {
+                let config_file_ptr = v1_files_container.read_config_file(path)?;
+                let config_file_lock = config_file_ptr.lock().unwrap();
+                match config_file_lock.get_task(&task_command.task) {
+                    Some(task) => {
+                        task.run(&task_command.args, &config_file_lock)?;
+                        return Ok(());
+                    }
+                    None => continue,
+                }
+            }
+            _ => {
+                return Err(format!("Unsupported config file version: {}", version).into());
             }
         }
-        return Ok(());
     }
-
-    let name_task_and_config = config_files.get_task(&task_command.task)?;
-    match name_task_and_config {
-        None => Err(format!("Task {} not found.", task_command.task).into()),
-        Some((conf, task)) => {
-            // let conf_mutex= conf.borrow();
-            let conf_lock = conf.lock().unwrap();
-            task.run(&task_command.args, conf_lock.borrow())?;
-            Ok(())
-        }
-    }
+    Err(format!("Task {} not found.", task_command.task).into())
 }
 
 #[cfg(test)]
