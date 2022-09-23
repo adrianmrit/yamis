@@ -37,6 +37,8 @@ indexmap = "1.9"
 shellexpand = "2.1.2"
 update-informer = { version = "0.5.0", default_features = false, features = ["github"] }
 
+#yamis_v2 = { package="yamis",  git = "https://github.com/adrianmrit/yamis", branch = "10-support-multiple-config-versions" , default-features = false, optional = true }
+
 [dev-dependencies]
 assert_cmd = "2.0"
 predicates = "2.1"
@@ -52,4 +54,5 @@ zig = true
 
 [features]
 default = ["runtime"]
+#runtime = ["yamis_v2"]
 runtime = []

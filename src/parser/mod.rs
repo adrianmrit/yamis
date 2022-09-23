@@ -1,6 +1,5 @@
-use crate::cli::TaskArgs;
 use crate::parser::functions::{FunResult, DEFAULT_FUNCTIONS};
-use crate::types::DynErrResult;
+use crate::types::{DynErrResult, TaskArgs};
 use pest::iterators::Pair;
 use pest::Parser;
 use pest_derive::Parser;

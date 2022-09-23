@@ -6,13 +6,11 @@ use std::{env, fmt};
 use regex::Regex;
 
 use crate::config_files::{ConfigFilePaths, ConfigFilesContainer};
+use crate::types::TaskArgs;
 
 const HELP: &str = "The appropriate YAML or TOML config files need to exist \
 in the directory or parents, or a file is specified with the `-f` or `--file` \
 options. For help about the config files check https://github.com/adrianmrit/yamis";
-
-/// Extra args passed that will be mapped to the task.
-pub(crate) type TaskArgs = HashMap<String, Vec<String>>;
 
 /// Holds the data for running the given task.
 struct TaskSubcommand {
@@ -139,6 +137,7 @@ pub fn exec() -> Result<(), Box<dyn Error>> {
     let task_command = TaskSubcommand::new(&matches)?;
 
     let mut v1_files_container = ConfigFilesContainer::new();
+    // let mut v2_files_container = yamis_v2::config_files::ConfigFilesContainer::new();
 
     for path in config_files {
         let path = path?;
@@ -155,6 +154,17 @@ pub fn exec() -> Result<(), Box<dyn Error>> {
                     None => continue,
                 }
             }
+            // "2" => {
+            //     let config_file_ptr = v2_files_container.read_config_file(path)?;
+            //     let config_file_lock = config_file_ptr.lock().unwrap();
+            //     match config_file_lock.get_task(&task_command.task) {
+            //         Some(task) => {
+            //             task.run(&task_command.args, &config_file_lock)?;
+            //             return Ok(());
+            //         }
+            //         None => continue,
+            //     }
+            // }
             _ => {
                 return Err(format!("Unsupported config file version: {}", version).into());
             }

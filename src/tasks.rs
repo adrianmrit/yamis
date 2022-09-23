@@ -9,14 +9,13 @@ use std::process::{Command, Stdio};
 use std::sync::Arc;
 use std::{error, fmt, mem};
 
-use crate::cli::TaskArgs;
 use crate::config_files::ConfigFile;
 use crate::defaults::default_false;
 use crate::parser::{parse_params, parse_script, EscapeMode};
 use serde_derive::Deserialize;
 use uuid::Uuid;
 
-use crate::types::DynErrResult;
+use crate::types::{DynErrResult, TaskArgs};
 use crate::utils::{get_path_relative_to_base, read_env_file, sub_error_str};
 
 cfg_if::cfg_if! {
