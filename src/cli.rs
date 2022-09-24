@@ -1,5 +1,4 @@
 use std::collections::hash_map::Entry;
-use std::collections::HashMap;
 use std::error::Error;
 use std::{env, fmt};
 
@@ -137,6 +136,7 @@ pub fn exec() -> Result<(), Box<dyn Error>> {
     let task_command = TaskSubcommand::new(&matches)?;
 
     let mut v1_files_container = ConfigFilesContainer::new();
+    // Example for handling a different version
     // let mut v2_files_container = yamis_v2::config_files::ConfigFilesContainer::new();
 
     for path in config_files {
@@ -154,6 +154,7 @@ pub fn exec() -> Result<(), Box<dyn Error>> {
                     None => continue,
                 }
             }
+            // Example for handling a different version
             // "2" => {
             //     let config_file_ptr = v2_files_container.read_config_file(path)?;
             //     let config_file_lock = config_file_ptr.lock().unwrap();
