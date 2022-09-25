@@ -245,6 +245,8 @@ fn parse_string(tag: Pair<Rule>) -> DynErrResult<FunResult> {
                     "t" => result.push('\t'),
                     "\\" => result.push('\\'),
                     "0" => result.push('\0'),
+                    "\"" => result.push('"'),
+                    "'" => result.push('\''),
                     v => {
                         panic!("Unexpected escaped value {}", v)
                     }
@@ -253,8 +255,6 @@ fn parse_string(tag: Pair<Rule>) -> DynErrResult<FunResult> {
                     panic!("Unexpected pair {:?}", other)
                 }
             }
-            Rule::escape_dq => result.push('"'),
-            Rule::escape_sq => result.push('\''),
             v => panic!("Unexpected rule {:?}", v),
         }
     }
