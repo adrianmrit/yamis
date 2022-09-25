@@ -99,23 +99,26 @@ impl ConfigFileContainers {
     pub(crate) fn get_file_version(path: &Path) -> DynErrResult<Version> {
         let file = File::open(path)?;
         let reader = BufReader::new(file);
-        let mut lines = reader.lines();
-        match lines.next() {
-            Some(line) => {
-                let line = line?;
-                match line.strip_prefix("#!v:") {
-                    None => Ok(Version::V1),
-                    Some(version) => {
-                        let version = version.trim();
-                        match version {
-                            "1" => Ok(Version::V1),
-                            _ => Err(format!("Unknown version {}", version).into()),
-                        }
+        let lines = reader.lines();
+        for line in lines {
+            let line = line?;
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            return match line.strip_prefix("#!v:") {
+                None => Ok(Version::V1),
+                Some(version) => {
+                    let version = version.trim();
+                    match version {
+                        "1" => Ok(Version::V1),
+                        _ => Err(format!("Unknown version {}", version).into()),
                     }
                 }
-            }
-            None => Ok(Version::V1),
+            };
         }
+
+        Ok(Version::V1)
     }
 
     /// prints config file paths and their tasks
