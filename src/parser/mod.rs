@@ -37,6 +37,47 @@ enum Slice {
 #[grammar = "parser/grammar.pest"]
 struct ScriptParser;
 
+/// Renames the rules for better error messages
+fn rename_rules(rule: &Rule) -> String {
+    match rule {
+        Rule::WHITESPACE => "whitespace".to_string(),
+        Rule::RANGE_SEPARATOR => "..".to_string(),
+        Rule::digits => "integer".to_string(),
+        Rule::optional => "?".to_string(),
+        Rule::index => "integer".to_string(),
+        Rule::range_from => "integer".to_string(),
+        Rule::range_to => "integer".to_string(),
+        Rule::range => "range".to_string(),
+        Rule::slice => "slice".to_string(),
+        Rule::arg => "positional argument".to_string(),
+        Rule::all_args => "$@".to_string(),
+        Rule::kwarg_name => "keyword argument".to_string(),
+        Rule::kwarg => "keyword argument".to_string(),
+        Rule::env_var_name => "environment variable name".to_string(),
+        Rule::env_var => "environment variable".to_string(),
+        Rule::fun_name => "function identifier".to_string(),
+        Rule::expression_inner => "expression".to_string(),
+        Rule::expression => "expression".to_string(),
+        Rule::fun_params => "function parameters".to_string(),
+        Rule::fun => "function".to_string(),
+        Rule::tag => "tag".to_string(),
+        Rule::special_val => "valid escaped character".to_string(),
+        Rule::escape => "valid escaped value".to_string(),
+        // Rule::escape_dq => "valid escaped value".to_string(),
+        // Rule::escape_sq => "valid escaped value".to_string(),
+        Rule::string_content => "string".to_string(),
+        Rule::string => "string".to_string(),
+        Rule::esc_ob => "{{".to_string(),
+        Rule::esc_cb => "{{".to_string(),
+        Rule::literal_content => "literal".to_string(),
+        Rule::literal => "literal".to_string(),
+        Rule::comment => "comment".to_string(),
+        Rule::all => "comment, tag or literal".to_string(),
+        Rule::task_arg => "tag or literal".to_string(),
+        __other__ => format!("{:?}", __other__),
+    }
+}
+
 /// Returns a `Slice` enum from the pair
 fn get_slice_repr(slice: Pair<Rule>) -> Slice {
     let mut slice_inner = slice.into_inner();
@@ -297,7 +338,7 @@ pub fn parse_script<S: AsRef<str>>(
 
     let tokens = match tokens {
         Ok(mut tokens) => tokens.next().unwrap().into_inner(),
-        Err(e) => return Err(e.to_string().into()),
+        Err(e) => return Err(e.renamed_rules(rename_rules).to_string().into()),
     };
 
     for token in tokens {
@@ -387,7 +428,7 @@ fn parse_param(
 
     let mut pairs = match pairs {
         Ok(mut tokens) => tokens.next().unwrap().into_inner(),
-        Err(e) => return Err(e.to_string().into()),
+        Err(e) => return Err(e.renamed_rules(rename_rules).to_string().into()),
     };
 
     match pairs.peek().unwrap().as_rule() {
@@ -512,6 +553,18 @@ print("values are:", a)"#;
 
     let result = parse_script(script, &vars, &env, &EscapeMode::Never).unwrap();
     assert_eq!(result, expected);
+}
+
+#[test]
+fn test_parse_script_errors() {
+    let vars = HashMap::<String, Vec<String>>::new();
+    let env = HashMap::new();
+
+    let script = "hello {$";
+    let result = parse_script(script, &vars, &env, &EscapeMode::Never).unwrap_err();
+    assert_eq!(result.to_string(), " --> 1:9\n  |\n1 | hello {$\n  |         ^---\n  |\n  = expected integer or environment variable name");
+
+    // TODO: Test more parsing errors
 }
 
 #[test]
