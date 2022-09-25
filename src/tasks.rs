@@ -228,6 +228,11 @@ impl Task {
         &self.name
     }
 
+    /// Returns weather the task is private or not
+    pub fn is_private(&self) -> bool {
+        self.private
+    }
+
     /// Returns the help for the task
     pub fn get_help(&self) -> &Option<String> {
         &self.help

@@ -1,4 +1,4 @@
-use colored::Colorize;
+use colored::{ColoredString, Colorize};
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::error::Error;
@@ -68,6 +68,16 @@ impl Error for ArgsError {
     }
 }
 
+/// Sets the color when printing the task name
+fn colorize_task_name(val: &str) -> ColoredString {
+    val.bright_cyan()
+}
+
+/// Sets the color when printing the config file path
+fn colorize_config_file_path(val: &str) -> ColoredString {
+    val.bright_blue()
+}
+
 impl ConfigFileContainers {
     /// Creates a new instance of `ConfigFileContainers`
     fn new() -> Self {
@@ -108,8 +118,34 @@ impl ConfigFileContainers {
         }
     }
 
+    /// prints config file paths and their tasks
+    fn print_tasks_list(&mut self, paths: ConfigFilePaths) -> DynErrResult<()> {
+        for path in paths {
+            let path = path?;
+            let version = ConfigFileContainers::get_file_version(&path)?;
+            match version {
+                Version::V1 => {
+                    println!("{}:", colorize_config_file_path(&path.to_string_lossy()));
+                    let container = self.containers.get_mut(&Version::V1).unwrap();
+                    let ConfigFileContainerVersion::V1(container) = container;
+                    let config_file_ptr = container.read_config_file(path.clone())?;
+                    let config_file_lock = config_file_ptr.lock().unwrap();
+                    let tasks = config_file_lock.get_non_private_task_names();
+                    if tasks.is_empty() {
+                        println!("  {}", "No tasks found.".red());
+                    } else {
+                        for task in tasks {
+                            println!(" - {}", colorize_task_name(task.get_name()));
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Prints help for the given task
-    fn print_task_help(&mut self, paths: ConfigFilePaths, task: &str) -> DynErrResult<()> {
+    fn print_task_info(&mut self, paths: ConfigFilePaths, task: &str) -> DynErrResult<()> {
         for path in paths {
             let path = path?;
             let version = ConfigFileContainers::get_file_version(&path)?;
@@ -122,11 +158,24 @@ impl ConfigFileContainers {
                     let task = config_file_lock.get_task(task);
                     match task {
                         Some(task) => {
-                            println!("{}:", path.to_string_lossy());
-                            println!("  {}", task.get_name().cyan());
+                            println!("{}:", colorize_config_file_path(&path.to_string_lossy()));
+                            print!(" - {}", colorize_task_name(task.get_name()));
+                            if task.is_private() {
+                                print!(" {}", "(private)".red());
+                            }
+                            println!();
+                            let prefix = "     ";
                             match task.get_help() {
-                                Some(help) => println!("    {}", help.green()),
-                                None => println!("    {}", "No help to display".yellow()),
+                                Some(help) => {
+                                    //                 " -   "  Two spaces after the dash
+                                    let help_lines: Vec<&str> = help.lines().collect();
+                                    println!(
+                                        "{}{}",
+                                        prefix,
+                                        help_lines.join(&format!("\n{}", prefix)).green()
+                                    )
+                                }
+                                None => println!("{}{}", prefix, "No help to display".yellow()),
                             }
                             return Ok(());
                         }
@@ -224,14 +273,22 @@ pub fn exec() -> DynErrResult<()> {
                 .long("list")
                 .takes_value(false)
                 .help("Lists configuration files that can be reached from the current directory")
-                .conflicts_with_all(&["file", "task-help"]),
+                .conflicts_with_all(&["file"]),
         )
         .arg(
-            clap::Arg::new("task-help")
+            clap::Arg::new("list-tasks")
                 .short('t')
-                .long("task-help")
+                .long("list-tasks")
+                .takes_value(false)
+                .help("Lists tasks")
+                .conflicts_with_all(&["task-info"]),
+        )
+        .arg(
+            clap::Arg::new("task-info")
+                .short('i')
+                .long("task-info")
                 .takes_value(true)
-                .help("Displays help for the given task"),
+                .help("Displays information about the given task"),
         )
         .arg(
             clap::Arg::new("file")
@@ -251,15 +308,20 @@ pub fn exec() -> DynErrResult<()> {
         Some(file_path) => ConfigFilePaths::only(file_path)?,
     };
 
-    if let Some(task_name) = matches.value_of("task-help") {
-        file_containers.print_task_help(config_file_paths, task_name)?;
+    if matches.contains_id("list-tasks") {
+        file_containers.print_tasks_list(config_file_paths)?;
+        return Ok(());
+    };
+
+    if let Some(task_name) = matches.value_of("task-info") {
+        file_containers.print_task_info(config_file_paths, task_name)?;
         return Ok(());
     };
 
     if matches.contains_id("list") {
         for path in config_file_paths {
             let path = path?;
-            println!("{}", path.to_string_lossy());
+            println!("{}", colorize_config_file_path(&path.to_string_lossy()));
         }
         return Ok(());
     }

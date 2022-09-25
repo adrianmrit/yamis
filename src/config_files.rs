@@ -531,8 +531,14 @@ impl ConfigFile {
         self.loaded_tasks.contains_key(&os_task_name) || self.loaded_tasks.contains_key(task_name)
     }
 
+    /// Returns the list of names of tasks in this config file
     pub fn get_task_names(&self) -> Vec<&String> {
         self.loaded_tasks.keys().collect()
+    }
+
+    /// Returns the list of names of tasks that are not private in this config file
+    pub fn get_non_private_task_names(&self) -> Vec<&Arc<Task>> {
+        self.loaded_tasks.values().collect()
     }
 }
 
