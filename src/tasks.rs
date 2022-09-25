@@ -16,7 +16,7 @@ use serde_derive::Deserialize;
 use uuid::Uuid;
 
 use crate::types::{DynErrResult, TaskArgs};
-use crate::utils::{get_path_relative_to_base, read_env_file, sub_error_str};
+use crate::utils::{get_path_relative_to_base, read_env_file};
 
 cfg_if::cfg_if! {
     if #[cfg(target_os = "windows")] {
@@ -47,20 +47,10 @@ impl fmt::Display for TaskError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
             TaskError::RuntimeError(ref name, ref reason) => {
-                write!(
-                    f,
-                    "Error running tasks.{}:\n{}",
-                    name,
-                    sub_error_str(reason)
-                )
+                write!(f, "Error running tasks.{}:\n{}", name, reason)
             }
             TaskError::ImproperlyConfigured(ref name, ref reason) => {
-                write!(
-                    f,
-                    "Improperly configured tasks.{}:\n{}",
-                    name,
-                    sub_error_str(reason)
-                )
+                write!(f, "Improperly configured tasks.{}:\n{}", name, reason)
             }
         }
     }
