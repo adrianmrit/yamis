@@ -165,8 +165,9 @@ impl ConfigFileContainers {
                             }
                             println!();
                             let prefix = "     ";
-                            match task.get_help() {
-                                Some(help) => {
+                            match task.get_help().trim() {
+                                "" => println!("{}{}", prefix, "No help to display".yellow()),
+                                help => {
                                     //                 " -   "  Two spaces after the dash
                                     let help_lines: Vec<&str> = help.lines().collect();
                                     println!(
@@ -175,7 +176,6 @@ impl ConfigFileContainers {
                                         help_lines.join(&format!("\n{}", prefix)).green()
                                     )
                                 }
-                                None => println!("{}{}", prefix, "No help to display".yellow()),
                             }
                             return Ok(());
                         }

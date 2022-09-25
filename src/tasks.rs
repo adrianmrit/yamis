@@ -196,6 +196,7 @@ impl Task {
         if self.quote.is_none() && base_task.quote.is_some() {
             self.quote = Some(base_task.quote.as_ref().unwrap().clone());
         }
+        inherit_value!(self.help, base_task.help);
         inherit_value!(self.script, base_task.script);
         inherit_value!(self.interpreter, base_task.interpreter);
         inherit_value!(self.script_ext, base_task.script_ext);
@@ -234,8 +235,11 @@ impl Task {
     }
 
     /// Returns the help for the task
-    pub fn get_help(&self) -> &Option<String> {
-        &self.help
+    pub fn get_help(&self) -> &str {
+        match self.help {
+            Some(ref help) => help,
+            None => "",
+        }
     }
 
     /// Loads the environment file contained between this task
@@ -529,9 +533,9 @@ impl Task {
 
 impl Display for Task {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        let help = match &self.help {
-            None => "No help to display".red(),
-            Some(help) => help.green(),
+        let help = match self.get_help() {
+            "" => "No help to display".red(),
+            help => help.green(),
         };
         if self.private {
             write!(f, "{} {}\n\n{}", self.name, "private".red(), help)
