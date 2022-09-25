@@ -1,11 +1,16 @@
+use colored::Colorize;
 use std::collections::hash_map::Entry;
+use std::collections::HashMap;
 use std::error::Error;
+use std::fs::File;
+use std::io::{BufRead, BufReader};
+use std::path::Path;
 use std::{env, fmt};
 
 use regex::Regex;
 
 use crate::config_files::{ConfigFilePaths, ConfigFilesContainer};
-use crate::types::TaskArgs;
+use crate::types::{DynErrResult, TaskArgs};
 
 const HELP: &str = "The appropriate YAML or TOML config files need to exist \
 in the directory or parents, or a file is specified with the `-f` or `--file` \
@@ -19,6 +24,24 @@ struct TaskSubcommand {
     pub args: TaskArgs,
 }
 
+/// Enum of config file containers by version
+enum ConfigFileContainerVersion {
+    V1(ConfigFilesContainer),
+}
+
+/// Enum of available config file versions
+#[derive(Hash, Eq, PartialEq)]
+enum Version {
+    V1,
+}
+
+/// Holds all the config file containers, regardless of the version they are supposed to handle
+struct ConfigFileContainers {
+    /// Holds the config file containers for each version
+    containers: HashMap<Version, ConfigFileContainerVersion>,
+}
+
+/// Argument errors
 #[derive(Debug, PartialEq, Eq)]
 enum ArgsError {
     /// Raised when no task to run is given
@@ -42,6 +65,101 @@ impl Error for ArgsError {
 
     fn cause(&self) -> Option<&dyn Error> {
         None
+    }
+}
+
+impl ConfigFileContainers {
+    /// Creates a new instance of `ConfigFileContainers`
+    fn new() -> Self {
+        let mut containers = HashMap::new();
+        containers.insert(
+            Version::V1,
+            ConfigFileContainerVersion::V1(ConfigFilesContainer::new()),
+        );
+        Self { containers }
+    }
+
+    /// Peeks at the file and returns the version of the config file.
+    ///
+    /// # Arguments
+    ///
+    /// * `path`: path to the file to extract the version from
+    ///
+    /// returns: Result<String, Box<dyn Error, Global>>
+    pub(crate) fn get_file_version(path: &Path) -> DynErrResult<Version> {
+        let file = File::open(path)?;
+        let reader = BufReader::new(file);
+        let mut lines = reader.lines();
+        match lines.next() {
+            Some(line) => {
+                let line = line?;
+                match line.strip_prefix("#!v:") {
+                    None => Ok(Version::V1),
+                    Some(version) => {
+                        let version = version.trim();
+                        match version {
+                            "1" => Ok(Version::V1),
+                            _ => Err(format!("Unknown version {}", version).into()),
+                        }
+                    }
+                }
+            }
+            None => Ok(Version::V1),
+        }
+    }
+
+    /// Prints help for the given task
+    fn print_task_help(&mut self, paths: ConfigFilePaths, task: &str) -> DynErrResult<()> {
+        for path in paths {
+            let path = path?;
+            let version = ConfigFileContainers::get_file_version(&path)?;
+            match version {
+                Version::V1 => {
+                    let container = self.containers.get_mut(&Version::V1).unwrap();
+                    let ConfigFileContainerVersion::V1(container) = container;
+                    let config_file_ptr = container.read_config_file(path.clone())?;
+                    let config_file_lock = config_file_ptr.lock().unwrap();
+                    let task = config_file_lock.get_task(task);
+                    match task {
+                        Some(task) => {
+                            println!("{}:", path.to_string_lossy());
+                            println!("  {}", task.get_name().cyan());
+                            match task.get_help() {
+                                Some(help) => println!("    {}", help.green()),
+                                None => println!("    {}", "No help to display".yellow()),
+                            }
+                            return Ok(());
+                        }
+                        None => continue,
+                    }
+                }
+            }
+        }
+        Err(format!("Task {} not found", task).into())
+    }
+
+    /// Runs the given task
+    fn run_task(&mut self, paths: ConfigFilePaths, task: &str, args: TaskArgs) -> DynErrResult<()> {
+        for path in paths {
+            let path = path?;
+            let version = ConfigFileContainers::get_file_version(&path)?;
+            match version {
+                Version::V1 => {
+                    let container = self.containers.get_mut(&Version::V1).unwrap();
+                    let ConfigFileContainerVersion::V1(container) = container;
+                    let config_file_ptr = container.read_config_file(path.clone())?;
+                    let config_file_lock = config_file_ptr.lock().unwrap();
+                    let task = config_file_lock.get_task(task);
+                    match task {
+                        Some(task) => {
+                            return task.run(&args, &config_file_lock);
+                        }
+                        None => continue,
+                    }
+                }
+            }
+        }
+        Err(format!("Task {} not found", task).into())
     }
 }
 
@@ -93,7 +211,7 @@ impl TaskSubcommand {
 /// Executes the program. If errors are encountered during the execution these
 /// are returned immediately. The wrapping method needs to take care of formatting
 /// and displaying these errors appropriately.
-pub fn exec() -> Result<(), Box<dyn Error>> {
+pub fn exec() -> DynErrResult<()> {
     let app = clap::Command::new(clap::crate_name!())
         .version(clap::crate_version!())
         .about(clap::crate_description!())
@@ -106,7 +224,14 @@ pub fn exec() -> Result<(), Box<dyn Error>> {
                 .long("list")
                 .takes_value(false)
                 .help("Lists configuration files that can be reached from the current directory")
-                .conflicts_with("file"),
+                .conflicts_with_all(&["file", "task-help"]),
+        )
+        .arg(
+            clap::Arg::new("task-help")
+                .short('t')
+                .long("task-help")
+                .takes_value(true)
+                .help("Displays help for the given task"),
         )
         .arg(
             clap::Arg::new("file")
@@ -119,59 +244,29 @@ pub fn exec() -> Result<(), Box<dyn Error>> {
     let matches = app.get_matches();
 
     let current_dir = env::current_dir()?;
+    let mut file_containers = ConfigFileContainers::new();
 
-    let config_files = match matches.value_of("file") {
+    let config_file_paths = match matches.value_of("file") {
         None => ConfigFilePaths::new(&current_dir),
         Some(file_path) => ConfigFilePaths::only(file_path)?,
     };
 
+    if let Some(task_name) = matches.value_of("task-help") {
+        file_containers.print_task_help(config_file_paths, task_name)?;
+        return Ok(());
+    };
+
     if matches.contains_id("list") {
-        for path in config_files {
-            let path = &path?;
-            println!("{}:", path.to_string_lossy());
+        for path in config_file_paths {
+            let path = path?;
+            println!("{}", path.to_string_lossy());
         }
         return Ok(());
     }
 
     let task_command = TaskSubcommand::new(&matches)?;
 
-    let mut v1_files_container = ConfigFilesContainer::new();
-    // Example for handling a different version
-    // let mut v2_files_container = yamis_v2::config_files::ConfigFilesContainer::new();
-
-    for path in config_files {
-        let path = path?;
-        let version = ConfigFilePaths::get_version(&path)?;
-        match version.as_str() {
-            "1" => {
-                let config_file_ptr = v1_files_container.read_config_file(path)?;
-                let config_file_lock = config_file_ptr.lock().unwrap();
-                match config_file_lock.get_task(&task_command.task) {
-                    Some(task) => {
-                        task.run(&task_command.args, &config_file_lock)?;
-                        return Ok(());
-                    }
-                    None => continue,
-                }
-            }
-            // Example for handling a different version
-            // "2" => {
-            //     let config_file_ptr = v2_files_container.read_config_file(path)?;
-            //     let config_file_lock = config_file_ptr.lock().unwrap();
-            //     match config_file_lock.get_task(&task_command.task) {
-            //         Some(task) => {
-            //             task.run(&task_command.args, &config_file_lock)?;
-            //             return Ok(());
-            //         }
-            //         None => continue,
-            //     }
-            // }
-            _ => {
-                return Err(format!("Unsupported config file version: {}", version).into());
-            }
-        }
-    }
-    Err(format!("Task {} not found.", task_command.task).into())
+    file_containers.run_task(config_file_paths, &task_command.task, task_command.args)
 }
 
 #[cfg(test)]

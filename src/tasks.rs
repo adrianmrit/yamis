@@ -233,6 +233,16 @@ impl Task {
         }
     }
 
+    /// Returns the name of the task
+    pub fn get_name(&self) -> &str {
+        &self.name
+    }
+
+    /// Returns the help for the task
+    pub fn get_help(&self) -> &Option<String> {
+        &self.help
+    }
+
     /// Loads the environment file contained between this task
     ///
     /// # Arguments

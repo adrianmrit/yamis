@@ -11,8 +11,6 @@ use serde_derive::Deserialize;
 use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::fmt::{Display, Formatter};
-use std::fs::File;
-use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::{env, error, fmt, fs};
@@ -300,29 +298,6 @@ impl ConfigFilePaths {
             Ok(found_file)
         }
     }
-
-    /// Peeks at the file and returns the version of the config file.
-    ///
-    /// # Arguments
-    ///
-    /// * `path`: path to the file to extract the version from
-    ///
-    /// returns: Result<String, Box<dyn Error, Global>>
-    pub(crate) fn get_version(path: &Path) -> DynErrResult<String> {
-        let file = File::open(path)?;
-        let reader = BufReader::new(file);
-        let mut lines = reader.lines();
-        match lines.next() {
-            Some(line) => {
-                let line = line?;
-                match line.strip_prefix("#!v:") {
-                    None => Ok(String::from("1")),
-                    Some(version) => Ok(String::from(version.trim())),
-                }
-            }
-            None => Ok(String::from("1")),
-        }
-    }
 }
 
 impl ConfigFilesContainer {
@@ -554,6 +529,10 @@ impl ConfigFile {
         let os_task_name = to_os_task_name(task_name);
 
         self.loaded_tasks.contains_key(&os_task_name) || self.loaded_tasks.contains_key(task_name)
+    }
+
+    pub fn get_task_names(&self) -> Vec<&String> {
+        self.loaded_tasks.keys().collect()
     }
 }
 
