@@ -329,7 +329,8 @@ pub fn exec() -> DynErrResult<()> {
                 .short('i')
                 .long("task-info")
                 .takes_value(true)
-                .help("Displays information about the given task"),
+                .help("Displays information about the given task")
+                .value_name("TASK"),
         )
         .arg(
             clap::Arg::new("file")
