@@ -1,19 +1,21 @@
-use std::borrow::Borrow;
+use colored::{ColoredString, Colorize};
+use serde_derive::Deserialize;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::error::Error;
-use std::{env, fmt};
+use std::ffi::OsStr;
+use std::fs::File;
+use std::path::Path;
+use std::{env, fmt, fs};
 
 use regex::Regex;
 
-use crate::config_files::ConfigFilePaths;
+use crate::config_files::{ConfigFilePaths, ConfigFilesContainer};
+use crate::types::{DynErrResult, TaskArgs};
 
 const HELP: &str = "The appropriate YAML or TOML config files need to exist \
 in the directory or parents, or a file is specified with the `-f` or `--file` \
 options. For help about the config files check https://github.com/adrianmrit/yamis";
-
-/// Extra args passed that will be mapped to the task.
-pub type TaskArgs = HashMap<String, Vec<String>>;
 
 /// Holds the data for running the given task.
 struct TaskSubcommand {
@@ -23,8 +25,38 @@ struct TaskSubcommand {
     pub args: TaskArgs,
 }
 
+/// Enum of config file containers by version
+enum ConfigFileContainerVersion {
+    V1(ConfigFilesContainer),
+}
+
+fn default_version() -> Version {
+    Version::V1
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ConfigFileVersionSerializer {
+    #[serde(default = "default_version")]
+    version: Version,
+}
+
+/// Enum of available config file versions
+#[derive(Hash, Eq, PartialEq, Debug, Deserialize)]
+enum Version {
+    #[serde(alias = "v1")]
+    #[serde(rename = "1")]
+    V1,
+}
+
+/// Holds all the config file containers, regardless of the version they are supposed to handle
+struct ConfigFileContainers {
+    /// Holds the config file containers for each version
+    containers: HashMap<Version, ConfigFileContainerVersion>,
+}
+
+/// Argument errors
 #[derive(Debug, PartialEq, Eq)]
-pub enum ArgsError {
+enum ArgsError {
     /// Raised when no task to run is given
     MissingTaskArg,
 }
@@ -46,6 +78,178 @@ impl Error for ArgsError {
 
     fn cause(&self) -> Option<&dyn Error> {
         None
+    }
+}
+
+/// Sets the color when printing the task name
+fn colorize_task_name(val: &str) -> ColoredString {
+    val.bright_cyan()
+}
+
+/// Sets the color when printing the config file path
+fn colorize_config_file_path(val: &str) -> ColoredString {
+    val.bright_blue()
+}
+
+impl ConfigFileContainers {
+    /// Creates a new instance of `ConfigFileContainers`
+    fn new() -> Self {
+        let mut containers = HashMap::new();
+        containers.insert(
+            Version::V1,
+            ConfigFileContainerVersion::V1(ConfigFilesContainer::new()),
+        );
+        Self { containers }
+    }
+
+    /// Peeks at the file and returns the version of the config file.
+    ///
+    /// # Arguments
+    ///
+    /// * `path`: path to the file to extract the version from
+    ///
+    /// returns: Result<String, Box<dyn Error, Global>>
+    pub(crate) fn get_file_version(path: &Path) -> DynErrResult<Version> {
+        let extension = path
+            .extension()
+            .unwrap_or_else(|| OsStr::new(""))
+            .to_string_lossy()
+            .to_string();
+
+        let is_yaml = match extension.as_str() {
+            "yaml" => true,
+            "yml" => true,
+            "toml" => false,
+            _ => {
+                panic!("Unknown file extension: {}", extension);
+            }
+        };
+
+        let file = match File::open(&path) {
+            Ok(file_contents) => file_contents,
+            Err(e) => return Err(format!("There was an error reading the file:\n{}", e).into()),
+        };
+
+        let result: ConfigFileVersionSerializer = if is_yaml {
+            serde_yaml::from_reader(file)?
+        } else {
+            // A bytes list should be slightly faster than a string list
+            toml::from_slice(&fs::read(&path)?)?
+        };
+
+        Ok(result.version)
+    }
+
+    /// prints config file paths and their tasks
+    fn print_tasks_list(&mut self, paths: ConfigFilePaths) -> DynErrResult<()> {
+        for path in paths {
+            let path = path?;
+            let version = ConfigFileContainers::get_file_version(&path)?;
+            match version {
+                Version::V1 => {
+                    println!("{}:", colorize_config_file_path(&path.to_string_lossy()));
+                    let container = self.containers.get_mut(&Version::V1).unwrap();
+                    let ConfigFileContainerVersion::V1(container) = container;
+                    let config_file_ptr = container.read_config_file(path.clone())?;
+                    let config_file_lock = config_file_ptr.lock().unwrap();
+                    let tasks = config_file_lock.get_non_private_task_names();
+                    if tasks.is_empty() {
+                        println!("  {}", "No tasks found.".red());
+                    } else {
+                        for task in tasks {
+                            println!(" - {}", colorize_task_name(task.get_name()));
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Prints help for the given task
+    fn print_task_info(&mut self, paths: ConfigFilePaths, task: &str) -> DynErrResult<()> {
+        for path in paths {
+            let path = path?;
+            let version = ConfigFileContainers::get_file_version(&path)?;
+            match version {
+                Version::V1 => {
+                    let container = self.containers.get_mut(&Version::V1).unwrap();
+                    let ConfigFileContainerVersion::V1(container) = container;
+                    let config_file_ptr = container.read_config_file(path.clone())?;
+                    let config_file_lock = config_file_ptr.lock().unwrap();
+                    let task = config_file_lock.get_task(task);
+                    match task {
+                        Some(task) => {
+                            println!("{}:", colorize_config_file_path(&path.to_string_lossy()));
+                            print!(" - {}", colorize_task_name(task.get_name()));
+                            if task.is_private() {
+                                print!(" {}", "(private)".red());
+                            }
+                            println!();
+                            let prefix = "     ";
+                            match task.get_help().trim() {
+                                "" => println!("{}{}", prefix, "No help to display".yellow()),
+                                help => {
+                                    //                 " -   "  Two spaces after the dash
+                                    let help_lines: Vec<&str> = help.lines().collect();
+                                    println!(
+                                        "{}{}",
+                                        prefix,
+                                        help_lines.join(&format!("\n{}", prefix)).green()
+                                    )
+                                }
+                            }
+                            return Ok(());
+                        }
+                        None => continue,
+                    }
+                }
+            }
+        }
+        Err(format!("Task {} not found", task).into())
+    }
+
+    /// Runs the given task
+    fn run_task(&mut self, paths: ConfigFilePaths, task: &str, args: TaskArgs) -> DynErrResult<()> {
+        for path in paths {
+            let path = path?;
+            let version = match ConfigFileContainers::get_file_version(&path) {
+                Ok(version) => version,
+                Err(e) => {
+                    // So the user knows where the error occurred
+                    let e = format!("{}:\n{}", &path.to_string_lossy().red(), e);
+                    return Err(e.into());
+                }
+            };
+            match version {
+                Version::V1 => {
+                    let container = self.containers.get_mut(&Version::V1).unwrap();
+                    let ConfigFileContainerVersion::V1(container) = container;
+                    let config_file_ptr = match container.read_config_file(path.clone()) {
+                        Ok(val) => val,
+                        Err(e) => {
+                            let e = format!("{}:\n{}", &path.to_string_lossy().red(), e);
+                            return Err(e.into());
+                        }
+                    };
+                    let config_file_lock = config_file_ptr.lock().unwrap();
+                    let task = config_file_lock.get_task(task);
+                    match task {
+                        Some(task) => {
+                            return match task.run(&args, &config_file_lock) {
+                                Ok(val) => Ok(val),
+                                Err(e) => {
+                                    let e = format!("{}:\n{}", &path.to_string_lossy().red(), e);
+                                    Err(e.into())
+                                }
+                            };
+                        }
+                        None => continue,
+                    }
+                }
+            }
+        }
+        Err(format!("Task {} not found", task).into())
     }
 }
 
@@ -97,13 +301,37 @@ impl TaskSubcommand {
 /// Executes the program. If errors are encountered during the execution these
 /// are returned immediately. The wrapping method needs to take care of formatting
 /// and displaying these errors appropriately.
-pub fn exec() -> Result<(), Box<dyn Error>> {
+pub fn exec() -> DynErrResult<()> {
     let app = clap::Command::new(clap::crate_name!())
         .version(clap::crate_version!())
         .about(clap::crate_description!())
         .author(clap::crate_authors!())
         .after_help(HELP)
         .allow_external_subcommands(true)
+        .arg(
+            clap::Arg::new("list")
+                .short('l')
+                .long("list")
+                .takes_value(false)
+                .help("Lists configuration files that can be reached from the current directory")
+                .conflicts_with_all(&["file"]),
+        )
+        .arg(
+            clap::Arg::new("list-tasks")
+                .short('t')
+                .long("list-tasks")
+                .takes_value(false)
+                .help("Lists tasks")
+                .conflicts_with_all(&["task-info"]),
+        )
+        .arg(
+            clap::Arg::new("task-info")
+                .short('i')
+                .long("task-info")
+                .takes_value(true)
+                .help("Displays information about the given task")
+                .value_name("TASK"),
+        )
         .arg(
             clap::Arg::new("file")
                 .short('f')
@@ -114,23 +342,98 @@ pub fn exec() -> Result<(), Box<dyn Error>> {
         );
     let matches = app.get_matches();
 
-    let task_command = TaskSubcommand::new(&matches)?;
-
     let current_dir = env::current_dir()?;
+    let mut file_containers = ConfigFileContainers::new();
 
-    let mut config_files = match matches.value_of("file") {
+    let config_file_paths = match matches.value_of("file") {
         None => ConfigFilePaths::new(&current_dir),
         Some(file_path) => ConfigFilePaths::only(file_path)?,
     };
 
-    let name_task_and_config = config_files.get_task(&task_command.task)?;
-    match name_task_and_config {
-        None => Err(format!("Task {} not found.", task_command.task).into()),
-        Some((conf, task)) => {
-            // let conf_mutex= conf.borrow();
-            let conf_lock = conf.lock().unwrap();
-            task.run(&task_command.args, conf_lock.borrow())?;
-            Ok(())
+    if matches.contains_id("list-tasks") {
+        file_containers.print_tasks_list(config_file_paths)?;
+        return Ok(());
+    };
+
+    if let Some(task_name) = matches.value_of("task-info") {
+        file_containers.print_task_info(config_file_paths, task_name)?;
+        return Ok(());
+    };
+
+    if matches.contains_id("list") {
+        for path in config_file_paths {
+            let path = path?;
+            println!("{}", colorize_config_file_path(&path.to_string_lossy()));
         }
+        return Ok(());
+    }
+
+    let task_command = TaskSubcommand::new(&matches)?;
+
+    file_containers.run_task(config_file_paths, &task_command.task, task_command.args)
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::config_files::ConfigFilePaths;
+    use assert_cmd::Command;
+    use assert_fs::TempDir;
+    use predicates::prelude::predicate;
+    use std::fs::File;
+    use std::io::Write;
+
+    #[test]
+    #[ignore = "Fails but works fine when run manually"]
+    fn test_list() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp_dir = TempDir::new().unwrap();
+        let global_config_dir = ConfigFilePaths::get_global_config_file_dir();
+
+        // Global config dir should not be the same as the current dir
+        assert_ne!(tmp_dir.path(), &global_config_dir);
+
+        // Should always return the same global dir
+        assert_eq!(
+            &ConfigFilePaths::get_global_config_file_dir(),
+            &global_config_dir
+        );
+
+        let global_config_path = global_config_dir.join("user.yamis.toml");
+        let mut global_config_file = File::create(global_config_path.as_path()).unwrap();
+        global_config_file
+            .write_all(
+                r#"
+                [tasks.hello_global]
+                script = "echo hello project"
+                help = "Some help here"
+                "#
+                .as_bytes(),
+            )
+            .unwrap();
+
+        let mut file = File::create(tmp_dir.join("project.yamis.toml"))?;
+        file.write_all(
+            r#"
+    
+    [tasks.hello.windows]
+    script = "echo %greeting%, one plus one is %one_plus_one%"
+    private=true
+    
+    [tasks.hello]
+    script = "echo $greeting, one plus one is $one_plus_one"
+    "#
+            .as_bytes(),
+        )?;
+        let expected = format!(
+            "{tmp_dir}/project.yamis.toml\n{global_config_dir}/user.yamis.toml\n",
+            tmp_dir = tmp_dir.path().to_str().unwrap(),
+            global_config_dir = global_config_dir.to_str().unwrap()
+        );
+        let mut cmd = Command::cargo_bin("yamis")?;
+        cmd.current_dir(tmp_dir.path());
+        cmd.arg("--list");
+        cmd.assert()
+            .success()
+            .stdout(predicate::str::contains(expected));
+        Ok(())
     }
 }

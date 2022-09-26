@@ -1,8 +1,10 @@
 use colored::Colorize;
 use update_informer::{registry, Check};
 
+#[cfg(feature = "runtime")]
 use yamis::cli::exec;
 
+#[cfg(feature = "runtime")]
 /// If there is a new version available, return the message to display to the user.
 fn check_update_available() -> Option<String> {
     let pkg_name = env!("CARGO_PKG_NAME");
@@ -17,8 +19,10 @@ fn check_update_available() -> Option<String> {
         update_informer::fake(registry::GitHub, pkg_name, current_version, "999.999.999");
 
     if let Ok(Some(version)) = informer.check_version() {
+        let current_version = format!("v{}", current_version).red();
+
         let msg = format!(
-            "A new release of {pkg_name} is available: v{current_version} -> {new_version}",
+            "A new release of {pkg_name} is available: {current_version} -> {new_version}",
             pkg_name = pkg_name.italic().cyan(),
             current_version = current_version,
             new_version = version.to_string().green()
@@ -39,12 +43,17 @@ fn check_update_available() -> Option<String> {
         };
 
         let releases_tag_url = releases_tag_url.yellow();
-        Some(format!("\n{msg}\n{url}", msg = msg, url = releases_tag_url))
+        Some(format!(
+            "\n{msg}\n{url}\n",
+            msg = msg,
+            url = releases_tag_url
+        ))
     } else {
         None
     }
 }
 
+#[cfg(feature = "runtime")]
 fn main() {
     if let Some(update_msg) = check_update_available() {
         println!("{}", update_msg);

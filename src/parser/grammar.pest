@@ -39,14 +39,12 @@ fun = ${ fun_name ~ "(" ~ WHITESPACE* ~ fun_params? ~ WHITESPACE* ~ ")" }
 tag = { "{" ~ WHITESPACE* ~ expression ~ WHITESPACE* ~ "}" }
 
 // Escape values inside string
-special_val = { "n" | "r" | "t" | "\\" | "0" }
+special_val = { "n" | "r" | "t" | "\\" | "0" | "'" | "\"" }
 escape     = { "\\" ~ special_val }
-escape_dq = {"\\\""}
-escape_sq = {"\\\'"}
 
 // Parses string inside tag
 string_content = { (!("\\" | PEEK | NEWLINE ) ~ ANY)+ }
-string = ${ PUSH("'" | "\"") ~ (string_content | escape | escape_dq | escape_sq)* ~ POP }
+string = ${ PUSH("'" | "\"") ~ (string_content | escape)* ~ POP }
 
 // Escape open and close brackets in literal
 esc_ob = { "{{" }

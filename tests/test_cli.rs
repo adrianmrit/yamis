@@ -13,7 +13,7 @@ fn test_no_config_file_discovered() {
     cmd.arg("echo");
     cmd.assert()
         .failure()
-        .stderr(predicate::str::contains("[YAMIS] Task echo not found."));
+        .stderr(predicate::str::contains("[YAMIS] Task echo not found"));
 }
 
 #[test]

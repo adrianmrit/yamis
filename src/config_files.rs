@@ -10,11 +10,12 @@ use petgraph::algo::toposort;
 use serde_derive::Deserialize;
 use std::collections::HashMap;
 use std::ffi::OsStr;
+use std::fmt::{Display, Formatter};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::{env, error, fmt, fs};
 
-type ConfigFileSharedPtr = Arc<Mutex<ConfigFile>>;
+pub type ConfigFileSharedPtr = Arc<Mutex<ConfigFile>>;
 
 /// Config file names by order of priority. The first one refers to local config and
 /// should not be committed to the repository. The program should discover config files
@@ -33,22 +34,22 @@ const ALLOWED_EXTENSIONS: &[&str] = &["yml", "yaml", "toml"];
 
 /// Errors related to config files and tasks
 #[derive(Debug, PartialEq, Eq)]
-pub enum ConfigError {
-    /// Raised when a config file is not found for a given path
+pub(crate) enum ConfigError {
+    // /// Raised when a config file is not found for a given path
     // FileNotFound(String), // Given config file not found
-    /// Raised when no config file is found during auto-discovery
-    NoConfigFile, // No config file was discovered
+    // /// Raised when no config file is found during auto-discovery
+    // NoConfigFile, // No config file was discovered
     /// Bad Config error
     BadConfigFile(PathBuf, String),
     /// Found a config file multiple times with different extensions
     DuplicateConfigFile(String),
 }
 
-impl fmt::Display for ConfigError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+impl Display for ConfigError {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match *self {
             // ConfigError::FileNotFound(ref s) => write!(f, "File {} not found.", s),
-            ConfigError::NoConfigFile => write!(f, "No config file found."),
+            // ConfigError::NoConfigFile => write!(f, "No config file found."),
             ConfigError::BadConfigFile(ref path, ref reason) => write!(f, "Bad config file `{}`:\n    {}", path.to_string_lossy(), reason),
             ConfigError::DuplicateConfigFile(ref s) => write!(f,
                                                               "Config file `{}` defined multiple times with different extensions in the same directory.", s),
@@ -60,7 +61,7 @@ impl error::Error for ConfigError {
     fn description(&self) -> &str {
         match *self {
             // ConfigError::FileNotFound(_) => "file not found",
-            ConfigError::NoConfigFile => "no config discovered",
+            // ConfigError::NoConfigFile => "no config discovered",
             ConfigError::BadConfigFile(_, _) => "bad config file",
             ConfigError::DuplicateConfigFile(_) => "duplicate config file",
         }
@@ -75,6 +76,10 @@ impl error::Error for ConfigError {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ConfigFile {
+    /// Version of the config file.
+    #[allow(dead_code)] // to avoid lint errors
+    #[serde(default, skip_serializing)]
+    version: serde::de::IgnoredAny,
     /// Path of the file.
     #[serde(skip)]
     pub(crate) filepath: PathBuf,
@@ -104,18 +109,36 @@ pub struct ConfigFilePaths {
     root_reached: bool,
     /// Whether the iterator finished or not
     ended: bool,
+    /// Only loaded one file, which should already be in the cache
+    single: bool,
     /// Current directory
     current_dir: PathBuf,
+    /// Cached config files
+    cached: Vec<PathBuf>,
+}
+
+pub struct ConfigFilesContainer {
     /// Cached config files
     cached: IndexMap<PathBuf, ConfigFileSharedPtr>,
 }
 
 impl Iterator for ConfigFilePaths {
-    type Item = DynErrResult<ConfigFileSharedPtr>;
+    // Returning &Path would be more optimal but complicates more the code. There is no need
+    // to optimize that much since it should not find that many config files.
+    type Item = DynErrResult<PathBuf>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.ended {
             return None;
+        }
+
+        if self.single {
+            self.ended = true;
+            return if self.cached.is_empty() {
+                None
+            } else {
+                Some(Ok(PathBuf::from(self.cached.last().unwrap())))
+            };
         }
 
         // Stores any error to return after breaking the loop
@@ -156,7 +179,8 @@ impl Iterator for ConfigFilePaths {
                 if checking_for_project_config {
                     self.root_reached = true;
                 }
-                return Some(self.read_config_file(found_file));
+                self.cached.push(found_file.clone());
+                return Some(Ok(found_file));
             }
         }
 
@@ -167,7 +191,7 @@ impl Iterator for ConfigFilePaths {
             return Some(Err(err));
         }
 
-        let global_config_dir = self.get_global_config_file_dir();
+        let global_config_dir = Self::get_global_config_file_dir();
         let found_file = self.get_config_file_path(&global_config_dir, GLOBAL_CONFIG_FILE);
         let found_file = match found_file {
             Ok(v) => v,
@@ -177,7 +201,8 @@ impl Iterator for ConfigFilePaths {
         };
 
         if let Some(found_file) = found_file {
-            return Some(self.read_config_file(found_file));
+            self.cached.push(found_file.clone());
+            return Some(Ok(found_file));
         }
 
         None
@@ -198,8 +223,9 @@ impl ConfigFilePaths {
             index: 0,
             ended: false,
             root_reached: false,
+            single: false,
             current_dir: current,
-            cached: IndexMap::with_capacity(1),
+            cached: Vec::with_capacity(2),
         }
     }
 
@@ -212,30 +238,27 @@ impl ConfigFilePaths {
     /// returns:  Result<ConfigFilePaths, Box<dyn error::Error>>
     pub fn only<S: AsRef<OsStr> + ?Sized>(path: &S) -> DynErrResult<ConfigFilePaths> {
         let path = PathBuf::from(path);
-        let mut config_files = ConfigFilePaths {
+        let config_files = ConfigFilePaths {
             index: 0,
             ended: true,
             root_reached: true,
+            single: true,
             current_dir: path.clone(),
-            cached: IndexMap::with_capacity(1),
+            cached: vec![path],
         };
-        let config_file = ConfigFile::load(path.clone())?;
-        config_files
-            .cached
-            .insert(path, Arc::new(Mutex::new(config_file)));
         Ok(config_files)
     }
 
     /// Returns the path of the global config file directory.
     #[cfg(not(test))]
-    pub(crate) fn get_global_config_file_dir(&self) -> PathBuf {
+    pub(crate) fn get_global_config_file_dir() -> PathBuf {
         let global_config_dir = shellexpand::tilde(GLOBAL_CONFIG_FILE_PATH);
         PathBuf::from(global_config_dir.as_ref())
     }
 
     /// Returns the path of the global config file directory.
     #[cfg(test)]
-    pub(crate) fn get_global_config_file_dir(&self) -> PathBuf {
+    pub(crate) fn get_global_config_file_dir() -> PathBuf {
         use assert_fs::TempDir;
         use lazy_static::lazy_static;
         lazy_static! {
@@ -244,29 +267,6 @@ impl ConfigFilePaths {
                 PathBuf::from(GLOBAL_CONFIG_DIR.path());
         }
         TEST_GLOBAL_CONFIG_PATH.clone()
-    }
-
-    /// Reads the config file from the given path.
-    ///
-    /// # Arguments
-    ///
-    /// * `path`: Path to read the config file from
-    ///
-    /// returns: Result<Arc<Mutex<ConfigFile>>, Box<dyn Error, Global>>
-    fn read_config_file(&mut self, path: PathBuf) -> DynErrResult<ConfigFileSharedPtr> {
-        let config_file = ConfigFile::load(path.clone());
-        match config_file {
-            Ok(config_file) => {
-                let arc_config_file = Arc::new(Mutex::new(config_file));
-                let result = Ok(Arc::clone(&arc_config_file));
-                self.cached.insert(path, arc_config_file);
-                result
-            }
-            Err(e) => {
-                self.ended = true;
-                Err(e)
-            }
-        }
     }
 
     /// Finds the appropriate filepath to load in the given dir.
@@ -302,39 +302,53 @@ impl ConfigFilePaths {
             Ok(found_file)
         }
     }
+}
 
-    /// Searches for a task with the given name, loading config files as needed. It returns
-    /// both the task and the config file it was found in.
+impl ConfigFilesContainer {
+    /// Initializes ConfigFilesContainer.
+    pub fn new() -> ConfigFilesContainer {
+        ConfigFilesContainer {
+            cached: IndexMap::new(),
+        }
+    }
+
+    /// Reads the config file from the given path.
     ///
     /// # Arguments
     ///
-    /// * `name`: Name of the task to search for
+    /// * `path`: Path to read the config file from
     ///
-    /// returns: Result<Option<(Arc<Mutex<ConfigFile>>, Arc<Task>)>, Box<dyn Error, Global>>
-    pub fn get_task<S: AsRef<str>>(
-        &mut self,
-        name: S,
-    ) -> DynErrResult<Option<(ConfigFileSharedPtr, Arc<Task>)>> {
+    /// returns: Result<Arc<Mutex<ConfigFile>>, Box<dyn Error, Global>>
+    pub fn read_config_file(&mut self, path: PathBuf) -> DynErrResult<ConfigFileSharedPtr> {
+        let config_file = ConfigFile::load(path.clone());
+        match config_file {
+            Ok(config_file) => {
+                let arc_config_file = Arc::new(Mutex::new(config_file));
+                let result = Ok(Arc::clone(&arc_config_file));
+                self.cached.insert(path, arc_config_file);
+                result
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    #[cfg(test)] // Used in tests only for now, but still leaving it here just in case
+    /// Returns whether the given task exists in the config files.
+    pub fn has_task<S: AsRef<str>>(&mut self, name: S) -> bool {
         for config_file in self.cached.values() {
             let config_file_ptr = config_file.as_ref();
             let handle = config_file_ptr.lock().unwrap();
-            if let Some(task) = handle.get_task(name.as_ref()) {
-                return Ok(Some((Arc::clone(config_file), task)));
+            if handle.has_task(name.as_ref()) {
+                return true;
             }
         }
-        for config_file in self {
-            match config_file {
-                Ok(config_file) => {
-                    let config_file_ptr = config_file.as_ref();
-                    let handle = config_file_ptr.lock().unwrap();
-                    if let Some(task) = handle.get_task(name.as_ref()) {
-                        return Ok(Some((Arc::clone(&config_file), task)));
-                    }
-                }
-                Err(e) => return Err(e),
-            }
-        }
-        Ok(None)
+        false
+    }
+}
+
+impl Default for ConfigFilesContainer {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -447,11 +461,7 @@ impl ConfigFile {
     pub fn working_directory(&self) -> PathBuf {
         // Some sort of cache would make it faster, but keeping it
         // simple until it is really needed
-        get_path_relative_to_base(self.filepath.parent().unwrap(), &self.wd)
-    }
-
-    pub fn dir(&self) -> &Path {
-        self.filepath.parent().unwrap()
+        get_path_relative_to_base(self.directory(), &self.wd)
     }
 
     /// Returns plain and OS specific tasks with normalized names. This consumes `self.tasks`
@@ -515,113 +525,89 @@ impl ConfigFile {
         }
         None
     }
+
+    /// Returns whether the config file has a task with the given name. This also
+    /// checks for the OS specific version of the task.
+    ///
+    /// # Arguments
+    ///
+    /// * `task_name`: Name of the task to check for
+    ///
+    /// returns: bool
+    #[cfg(test)]
+    pub fn has_task(&self, task_name: &str) -> bool {
+        let os_task_name = to_os_task_name(task_name);
+
+        self.loaded_tasks.contains_key(&os_task_name) || self.loaded_tasks.contains_key(task_name)
+    }
+
+    /// Returns the list of names of tasks in this config file
+    pub fn get_task_names(&self) -> Vec<&String> {
+        self.loaded_tasks.keys().collect()
+    }
+
+    /// Returns the list of names of tasks that are not private in this config file
+    pub fn get_non_private_task_names(&self) -> Vec<&Arc<Task>> {
+        self.loaded_tasks.values().collect()
+    }
+}
+
+impl Display for ConfigFile {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.filepath.display())
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::config_files::ConfigFilePaths;
-    use crate::types::DynErrResult;
+    use crate::config_files::{ConfigFilePaths, ConfigFilesContainer};
     use assert_fs::TempDir;
     use std::fs::File;
     use std::io::Write;
 
     #[test]
-    fn test_discovery() -> DynErrResult<()> {
+    fn test_discovery() {
         let tmp_dir = TempDir::new().unwrap();
         let project_config_path = tmp_dir.path().join("project.yamis.toml");
-        let mut project_config_file = File::create(project_config_path.as_path())?;
-        project_config_file.write_all(
-            r#"
+        let mut project_config_file = File::create(project_config_path.as_path()).unwrap();
+        project_config_file
+            .write_all(
+                r#"
     [tasks.hello_project]
     script = "echo hello project"
     "#
-            .as_bytes(),
-        )?;
+                .as_bytes(),
+            )
+            .unwrap();
 
         let config_path = tmp_dir.path().join("yamis.yaml");
-        let mut config_file = File::create(config_path.as_path())?;
-        config_file.write_all(
-            r#"
+        let mut config_file = File::create(config_path.as_path()).unwrap();
+        config_file
+            .write_all(
+                r#"
     tasks:
         hello:
             script: echo hello
     "#
-            .as_bytes(),
-        )?;
+                .as_bytes(),
+            )
+            .unwrap();
 
         let local_config_path = tmp_dir.path().join("local.yamis.yaml");
-        let mut local_file = File::create(local_config_path.as_path())?;
-        local_file.write_all(
-            r#"
+        let mut local_file = File::create(local_config_path.as_path()).unwrap();
+        local_file
+            .write_all(
+                r#"
     tasks:
         hello_local:
             script: echo hello local
     "#
-            .as_bytes(),
-        )?;
+                .as_bytes(),
+            )
+            .unwrap();
 
-        let mut config = ConfigFilePaths::new(&tmp_dir.path());
-
-        match config.get_task("non_existent")? {
-            None => {}
-            Some((_, _)) => {
-                panic!("task non_existent should not exist");
-            }
-        }
-
-        match config.get_task("hello_project")? {
-            None => {
-                panic!("task hello_project should exist");
-            }
-            Some((_, _)) => {}
-        }
-
-        match config.get_task("hello")? {
-            None => {
-                panic!("task hello should exist");
-            }
-            Some((_, _)) => {}
-        }
-
-        match config.get_task("hello_local")? {
-            None => {
-                panic!("task hello_local should exist");
-            }
-            Some((_, _)) => {}
-        }
-
-        let mut config = ConfigFilePaths::only(project_config_path.as_path()).unwrap();
-
-        match config.get_task("hello_project")? {
-            None => {
-                panic!("task hello_project should exist");
-            }
-            Some((_, _)) => {}
-        }
-        match config.get_task("hello")? {
-            None => {}
-            Some((_, _)) => {
-                panic!("task non_existent should not exist");
-            }
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn test_global_config() -> crate::types::DynErrResult<()> {
-        let tmp_dir = TempDir::new().unwrap();
-
-        let mut config = ConfigFilePaths::new(&tmp_dir.path());
-
-        let global_config_dir = config.get_global_config_file_dir();
-
-        // Global config dir should not be the same as the current dir
-        assert_ne!(tmp_dir.path(), &global_config_dir);
-
-        // Should always return the same global dir
-        assert_eq!(&config.get_global_config_file_dir(), &global_config_dir);
-
-        let global_config_path = global_config_dir.join("user.yamis.toml");
+        let global_config_path =
+            ConfigFilePaths::get_global_config_file_dir().join("user.yamis.toml");
         let mut global_config_file = File::create(global_config_path.as_path()).unwrap();
         global_config_file
             .write_all(
@@ -633,15 +619,28 @@ mod tests {
             )
             .unwrap();
 
-        match config.get_task("hello_global")? {
-            None => {
-                panic!("task hello_project should exist");
-            }
-            Some((_, _)) => {}
-        }
-        drop(tmp_dir);
-        drop(global_config_dir);
-        drop(global_config_path);
-        Ok(())
+        let mut config_files = ConfigFilesContainer::new();
+        let mut paths = ConfigFilePaths::new(&tmp_dir.path());
+        let local_path = paths.next().unwrap().unwrap();
+        let regular_path = paths.next().unwrap().unwrap();
+        let project_path = paths.next().unwrap().unwrap();
+        let global_path = paths.next().unwrap().unwrap();
+        assert!(paths.next().is_none());
+        config_files.read_config_file(local_path).unwrap();
+        config_files.read_config_file(regular_path).unwrap();
+        config_files.read_config_file(project_path).unwrap();
+        config_files.read_config_file(global_path).unwrap();
+
+        assert!(!config_files.has_task("non_existent"));
+        assert!(config_files.has_task("hello_project"));
+        assert!(config_files.has_task("hello"));
+        assert!(config_files.has_task("hello_local"));
+        assert!(config_files.has_task("hello_global"));
+
+        let mut paths = ConfigFilePaths::only(project_config_path.as_path()).unwrap();
+
+        assert!(paths.next().is_none());
+
+        assert_eq!(paths.cached[0], project_config_path.as_path());
     }
 }

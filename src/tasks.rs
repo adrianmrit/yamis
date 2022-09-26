@@ -1,5 +1,7 @@
+use colored::Colorize;
 use std::collections::HashMap;
 use std::env::temp_dir;
+use std::fmt::{Display, Formatter};
 use std::fs::File;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -7,15 +9,14 @@ use std::process::{Command, Stdio};
 use std::sync::Arc;
 use std::{error, fmt, mem};
 
-use crate::cli::TaskArgs;
 use crate::config_files::ConfigFile;
 use crate::defaults::default_false;
 use crate::parser::{parse_params, parse_script, EscapeMode};
 use serde_derive::Deserialize;
 use uuid::Uuid;
 
-use crate::types::DynErrResult;
-use crate::utils::{get_path_relative_to_base, read_env_file, sub_error_str};
+use crate::types::{DynErrResult, TaskArgs};
+use crate::utils::{get_path_relative_to_base, read_env_file};
 
 cfg_if::cfg_if! {
     if #[cfg(target_os = "windows")] {
@@ -46,20 +47,10 @@ impl fmt::Display for TaskError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
             TaskError::RuntimeError(ref name, ref reason) => {
-                write!(
-                    f,
-                    "Error running tasks.{}:\n{}",
-                    name,
-                    sub_error_str(reason)
-                )
+                write!(f, "Error running tasks.{}:\n{}", name, reason)
             }
             TaskError::ImproperlyConfigured(ref name, ref reason) => {
-                write!(
-                    f,
-                    "Improperly configured tasks.{}:\n{}",
-                    name,
-                    sub_error_str(reason)
-                )
+                write!(f, "Improperly configured tasks.{}:\n{}", name, reason)
             }
         }
     }
@@ -82,8 +73,11 @@ impl error::Error for TaskError {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Task {
+    /// Name of the task
     #[serde(skip)]
     name: String,
+    /// Help of the task
+    help: Option<String>,
     /// Whether to automatically quote argument with spaces
     quote: Option<EscapeMode>,
     /// Script to run
@@ -184,7 +178,7 @@ impl Task {
     ///
     /// returns: Result<(), Box<dyn Error, Global>>
     ///
-    pub fn setup(&mut self, name: &str, base_path: &Path) -> DynErrResult<()> {
+    pub(crate) fn setup(&mut self, name: &str, base_path: &Path) -> DynErrResult<()> {
         self.name = String::from(name);
         self.load_env_file(base_path)?;
         Ok(self.validate()?)
@@ -202,6 +196,7 @@ impl Task {
         if self.quote.is_none() && base_task.quote.is_some() {
             self.quote = Some(base_task.quote.as_ref().unwrap().clone());
         }
+        inherit_value!(self.help, base_task.help);
         inherit_value!(self.script, base_task.script);
         inherit_value!(self.interpreter, base_task.interpreter);
         inherit_value!(self.script_ext, base_task.script_ext);
@@ -226,6 +221,24 @@ impl Task {
                 self.args = mem::replace(&mut self.args, Some(Vec::<String>::new()));
             }
             self.args.as_mut().unwrap().extend(new_tasks);
+        }
+    }
+
+    /// Returns the name of the task
+    pub fn get_name(&self) -> &str {
+        &self.name
+    }
+
+    /// Returns weather the task is private or not
+    pub fn is_private(&self) -> bool {
+        self.private
+    }
+
+    /// Returns the help for the task
+    pub fn get_help(&self) -> &str {
+        match self.help {
+            Some(ref help) => help,
+            None => "",
         }
     }
 
@@ -257,7 +270,7 @@ impl Task {
     /// * `config_file`: Config file to load extra environment variables from
     ///
     /// returns: HashMap<String, String, RandomState>
-    pub fn get_env(&self, config_file: &ConfigFile) -> HashMap<String, String> {
+    fn get_env(&self, config_file: &ConfigFile) -> HashMap<String, String> {
         let mut env = self.env.clone();
         if let Some(config_file_env) = &config_file.env {
             for (key, val) in config_file_env {
@@ -515,5 +528,233 @@ impl Task {
                     .into(),
             )
         };
+    }
+}
+
+impl Display for Task {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        let help = match self.get_help() {
+            "" => "No help to display".red(),
+            help => help.green(),
+        };
+        if self.private {
+            write!(f, "{} {}\n\n{}", self.name, "private".red(), help)
+        } else {
+            write!(f, "{}\n\n{}", self.name, help)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::config_files::ConfigFile;
+    use crate::tasks::{Task, TaskError};
+    use assert_fs::TempDir;
+    use std::collections::HashMap;
+    use std::fs::File;
+    use std::io::Write;
+    use std::path::Path;
+
+    pub fn get_task(
+        name: &str,
+        definition: &str,
+        base_path: Option<&Path>,
+    ) -> Result<Task, Box<dyn std::error::Error>> {
+        let mut task: Task = toml::from_str(definition).unwrap();
+        task.setup(name, base_path.unwrap_or_else(|| Path::new("")))?;
+        Ok(task)
+    }
+
+    #[test]
+    fn test_env_inheritance() {
+        let tmp_dir = TempDir::new().unwrap();
+        let config_file_path = tmp_dir.join("project.yamis.toml");
+        let mut file = File::create(&config_file_path).unwrap();
+        file.write_all(
+            r#" 
+    [tasks.hello_base.env]
+    greeting = "hello world"
+    
+    [tasks.calc_base.env]
+    one_plus_one = "2"
+    
+    [tasks.hello]
+    bases = ["hello_base", "calc_base"]
+    script = "echo $greeting, 1+1=$one_plus_one"
+    
+    [tasks.hello.windows]
+    bases = ["hello_base", "calc_base"]
+    script = "echo %greeting%, 1+1=%one_plus_one%"
+    "#
+            .as_bytes(),
+        )
+        .unwrap();
+
+        let config_file = ConfigFile::load(config_file_path).unwrap();
+
+        let task = config_file.get_task("hello").unwrap();
+
+        let env = task.get_env(&config_file);
+        let expected = HashMap::from([
+            ("greeting".to_string(), "hello world".to_string()),
+            ("one_plus_one".to_string(), "2".to_string()),
+        ]);
+        assert_eq!(env, expected);
+    }
+
+    #[test]
+    fn test_read_env() {
+        let tmp_dir = TempDir::new().unwrap();
+        let project_config_path = tmp_dir.join("project.yamis.toml");
+        let mut project_config_file = File::create(project_config_path.as_path()).unwrap();
+        project_config_file
+            .write_all(
+                r#"
+            env_file = ".env"
+            
+            [tasks.test.windows]
+            quote = "never"
+            script = "echo %VAR1% %VAR2% %VAR3%"
+            
+            [tasks.test]
+            quote = "never"
+            script = "echo $VAR1 $VAR2 $VAR3"
+            
+            [tasks.test_2.windows]
+            quote = "never"
+            script = "echo %VAR1% %VAR2% %VAR3%"
+            env_file = ".env_2"
+            env = {"VAR1" = "TASK_VAL1"}
+            
+            [tasks.test_2]
+            quote = "never"
+            script = "echo $VAR1 $VAR2 $VAR3"
+            env_file = ".env_2"
+            
+            [tasks.test_2.env]
+            VAR1 = "TASK_VAL1"
+            "#
+                .as_bytes(),
+            )
+            .unwrap();
+
+        let mut env_file = File::create(tmp_dir.join(".env").as_path()).unwrap();
+        env_file
+            .write_all(
+                r#"
+    VAR1=VAL1
+    VAR2=VAL2
+    VAR3=VAL3
+    "#
+                .as_bytes(),
+            )
+            .unwrap();
+
+        let mut env_file_2 = File::create(tmp_dir.join(".env_2").as_path()).unwrap();
+        env_file_2
+            .write_all(
+                r#"
+    VAR1=OTHER_VAL1
+    VAR2=OTHER_VAL2
+    "#
+                .as_bytes(),
+            )
+            .unwrap();
+
+        let config_file = ConfigFile::load(project_config_path).unwrap();
+
+        let task = config_file.get_task("test").unwrap();
+        let env = task.get_env(&config_file);
+
+        let expected = HashMap::from([
+            ("VAR1".to_string(), "VAL1".to_string()),
+            ("VAR2".to_string(), "VAL2".to_string()),
+            ("VAR3".to_string(), "VAL3".to_string()),
+        ]);
+        assert_eq!(env, expected);
+
+        let task = config_file.get_task("test_2").unwrap();
+        let env = task.get_env(&config_file);
+        let expected = HashMap::from([
+            ("VAR1".to_string(), "TASK_VAL1".to_string()),
+            ("VAR2".to_string(), "OTHER_VAL2".to_string()),
+            ("VAR3".to_string(), "VAL3".to_string()),
+        ]);
+        assert_eq!(env, expected);
+    }
+
+    #[test]
+    fn test_validate() {
+        let task = get_task(
+            "sample",
+            r#"
+        script = "hello world"
+        program = "some_program"
+    "#,
+            None,
+        );
+        let expected_error = TaskError::ImproperlyConfigured(
+            String::from("sample"),
+            String::from("Cannot specify `script` and `program` at the same time."),
+        );
+        assert_eq!(task.unwrap_err().to_string(), expected_error.to_string());
+
+        let task = get_task(
+            "sample",
+            r#"
+        interpreter = []
+    "#,
+            None,
+        );
+        let expected_error = TaskError::ImproperlyConfigured(
+            String::from("sample"),
+            String::from("`interpreter` parameter cannot be an empty array."),
+        );
+        assert_eq!(task.unwrap_err().to_string(), expected_error.to_string());
+
+        let task = get_task(
+            "sample",
+            r#"
+        script = "echo hello"
+        serial = ["sample"]
+    "#,
+            None,
+        );
+
+        let expected_error = TaskError::ImproperlyConfigured(
+            String::from("sample"),
+            String::from("Cannot specify `script` and `serial` at the same time."),
+        );
+        assert_eq!(task.unwrap_err().to_string(), expected_error.to_string());
+
+        let task = get_task(
+            "sample",
+            r#"
+        program = "python"
+        serial = ["sample"]
+    "#,
+            None,
+        );
+
+        let expected_error = TaskError::ImproperlyConfigured(
+            String::from("sample"),
+            String::from("Cannot specify `program` and `serial` at the same time."),
+        );
+        assert_eq!(task.unwrap_err().to_string(), expected_error.to_string());
+
+        let task = get_task(
+            "sample",
+            r#"
+        quote = "spaces"
+        program = "python"
+    "#,
+            None,
+        );
+
+        let expected_error = TaskError::ImproperlyConfigured(
+            String::from("sample"),
+            String::from("`quote` parameter can only be set for scripts."),
+        );
+        assert_eq!(task.unwrap_err().to_string(), expected_error.to_string());
     }
 }

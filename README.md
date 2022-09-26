@@ -6,12 +6,14 @@
 
 ## Index
 * [Motivation](#motivation)
-* [Features](#features)
+* [Backward Compatibility](#backward-compatibility)
 * [Installation](#installation)
   * [Binary Release](#binary-release)
+  * [Updates](#updates)
 * [Quick Start](#quick-start)
 * [Note about YAML and TOML files](#note-about-yaml-and-toml-files)
 * [Usage](#usage)
+  * [Command Line Options](#command-line-options)
   * [Task Files](#task-files)
   * [Script](#script)
     * [Auto Quoting](#auto-quoting)
@@ -37,6 +39,7 @@
     * [fmt](#fmt-function)
   * [OS Specific Tasks](#os-specific-tasks)
   * [Working Directory](#working-directory)
+  * [Documenting Tasks](#documenting-tasks)
   * [Task Inheritance](#task-inheritance)
     * [Extending Program Arguments](#extending-program-arguments)
     * [Private Tasks](#private-tasks)
@@ -46,22 +49,23 @@
 ## Motivation
 This project started out of necessity and fun as I wanted to learn Rust, but have become.
 my everyday tool for running tasks. It aims to be simple and powerful, both for individuals and teams,
-specially those working on different platforms.
+specially those working on different platforms. To allow for future improvements in the syntax, it aims
+to be backward compatible, both between the same mayor release, and with the latest previous mayor releases.
 
-This tool was inspired on [cargo-make](https://github.com/sagiegurari/cargo-make) and
-[doskey](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/doskey)
+Inspired on different tools like [cargo-make](https://github.com/sagiegurari/cargo-make),
+[doskey](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/doskey),
+[bash](https://www.gnu.org/savannah-checkouts/gnu/bash/manual/bash.html)
+and
+[docker-compose](https://docs.docker.com/compose/).
 
-<a name="features"></a>
-## Features
-- Multiplatform (Windows, Linux and macOs)
-- OS specific tasks
-- YAML and TOML support
-- Global, per-project, per-directory and private config files
-- Powerful argument parsing
-- Support for environment variables
-- Modify arguments with functions
-- Run scripts with different interpreters (like Python, Bash, etc)
-- Task inheritance
+
+<a name="backward-compatibility"></a>
+## Backward Compatibility
+Starting from version 1.0.0, the goal is to be backward compatible with mayor versions and follow
+[Semantic Versioning](https://semver.org/).
+When a mayor version is released, the plan is to support config files from the latest versions by setting
+the mayor version in the TOML or YAML file with the `version` key, i.e. `version: "1"`.
+If the version is not set, the least mayor version supported will be used.
 
 <a name="installation"></a>
 ## Installation
@@ -78,6 +82,16 @@ Binaries are also available for Windows, Linux and macOS under
 [releases](https://github.com/adrianmrit/yamis/releases/). To install, download the zip for your system, extract,
 and copy the binary to the desired location. You will need to ensure the folder that contains the binary is available
 in the `PATH`.
+
+
+<a name="updates"></a>
+### Updates
+Automatic updates are not supported, but new releases will be notified when invoking the program. To achieve this it
+will look into the repository for new releases, so it needs to be connected to the internet. The message will be cached
+to avoid calling the server unnecessarily.
+
+You can run `cargo install --force yamis` or download the latest binaries to update to the latest version.
+
 
 <a name="quick-start"></a>
 ## Quick Start
@@ -97,6 +111,7 @@ tasks:
       DEBUG: "TRUE"  # Add env variables per task
 
   say_hi:
+    help: "Just say hi"  # help message, printend when running `yamis -i say_hi`
     script: "echo Hello {name}"  # name can be passed as --name=world, -name=world, or name="big world"
   
   say_hi.windows:
@@ -159,6 +174,31 @@ If we performed the conversion after parsing the file we would get `AGENT=7` whi
 <a name="usage"></a>
 ## Usage
 
+<a name="command-line-options"></a>
+### Command Line Options
+You can see some help about the command line options by running `yamis -h` or `yamis --help`. Essentially, the
+usage would be like this:
+
+```
+USAGE:
+    yamis [OPTIONS] [SUBCOMMAND]
+
+OPTIONS:
+    -f, --file <FILE>              Search for tasks in the given file
+    -h, --help                     Print help information
+    -i, --task-info <TASK>         Displays information about the given task
+    -l, --list                     Lists configuration files that can be reached from the current
+                                   directory
+    -t, --list-tasks               Lists tasks
+    -V, --version                  Print version information
+```
+
+You can either call a task directly by passing the name of the task and its arguments, i.e. `yamis say_hi --name=world`,
+or you can specify the configuration file to use with the -f option, i.e. `yamis -f project.yamis.yaml say_hi --name=world`.
+Note that the -f option is set before the task name, otherwise it would be interpreted as an argument for the task.
+
+The next sections talks about how task files are auto-discovered.
+
 <a name="task-files"></a>
 ### Task files
 The task files must be either a TOML or YAML file with the appropriate extension, i.e. `project.yamis.toml`, or
@@ -175,7 +215,7 @@ The configuration files (in order of precedence, with extension omitted) are nam
 - `yamis`: Should be used in sub-folders of a project for tasks specific to that folder and sub-folders.
 - `project.yamis`: Should hold tasks for the entire project.
 
-If none of those files is found, it will look at `~/.yamis/user.yamis.toml` or `~/.yamis/user.yamis.yaml` or
+If the task is still not found, it will look at `~/.yamis/user.yamis.toml` or `~/.yamis/user.yamis.yaml` or
 `~/.yamis/user.yamis.yml` for user-wide tasks. This is useful for everyday tasks not related to a specific project.
 
 
@@ -299,7 +339,8 @@ when slicing and invoking functions.
 
 <a name="index-and-slice"></a>
 ### Index and Slice
-Arguments (more on arguments below) can be sliced for more flexibility. The slices are 0 indexed, here are some examples:
+[Parameters](#parameters-type), including the output of [functions](#functions) can be sliced for more flexibility.
+The slices are 0 indexed, here are some examples:
 
 ```text
 { $@[0] }                         # same as { $1 }
@@ -308,7 +349,7 @@ Arguments (more on arguments below) can be sliced for more flexibility. The slic
 
 { map(f"hello {}", name)[0..2] }  # same as { map(f"hello {}", name[0..2]) }
 
-{ fmt(f"hello {}", $1)[0] }       # returns `h`
+{ fmt("hello {}", $1)[0] }       # returns `h`
 
 { $1[0] }                         # returns first char of first argument
 
@@ -557,6 +598,12 @@ configuration file and not the directory where the task was executed, this means
 working directory the same one as the directory for the configuration file.
 
 
+<a name="documenting-tasks"></a>
+### Documenting Tasks
+Tasks can be documented using the `help` key. Unlike comments, help will be printed when running `yamis -i <TASK>`.
+Note that help is inherited. If you wish to remove it, you can set it to `""`.
+
+
 <a name="task-inheritance"></a>
 ### Task Inheritance
 A task can inherit from multiple tasks by adding a `bases` property, which should be a list names of tasks in
@@ -565,6 +612,7 @@ inherited.
 
 The inherited values are:
 - wd
+- help
 - quote
 - script
 - interpreter
@@ -656,7 +704,8 @@ tasks:
 <a name="private-tasks"></a>
 #### Private Tasks
 
-Tasks can be marked as private by setting `private = true`. Private tasks cannot be called by the user.
+Tasks can be marked as private by setting `private = true`. Private tasks cannot be called by the user, but are useful
+for inheritance.
 
 <a name="Contributing"></a>
 ## Contributing
