@@ -1,11 +1,12 @@
 use colored::{ColoredString, Colorize};
+use serde_derive::Deserialize;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::error::Error;
+use std::ffi::OsStr;
 use std::fs::File;
-use std::io::{BufRead, BufReader};
 use std::path::Path;
-use std::{env, fmt};
+use std::{env, fmt, fs};
 
 use regex::Regex;
 
@@ -29,9 +30,21 @@ enum ConfigFileContainerVersion {
     V1(ConfigFilesContainer),
 }
 
+fn default_version() -> Version {
+    Version::V1
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ConfigFileVersionSerializer {
+    #[serde(default = "default_version")]
+    version: Version,
+}
+
 /// Enum of available config file versions
-#[derive(Hash, Eq, PartialEq)]
+#[derive(Hash, Eq, PartialEq, Debug, Deserialize)]
 enum Version {
+    #[serde(alias = "v1")]
+    #[serde(rename = "1")]
     V1,
 }
 
@@ -97,28 +110,35 @@ impl ConfigFileContainers {
     ///
     /// returns: Result<String, Box<dyn Error, Global>>
     pub(crate) fn get_file_version(path: &Path) -> DynErrResult<Version> {
-        let file = File::open(path)?;
-        let reader = BufReader::new(file);
-        let lines = reader.lines();
-        for line in lines {
-            let line = line?;
-            let line = line.trim();
-            if line.is_empty() {
-                continue;
-            }
-            return match line.strip_prefix("#!v:") {
-                None => Ok(Version::V1),
-                Some(version) => {
-                    let version = version.trim();
-                    match version {
-                        "1" => Ok(Version::V1),
-                        _ => Err(format!("Unknown version {}", version).into()),
-                    }
-                }
-            };
-        }
+        let extension = path
+            .extension()
+            .unwrap_or_else(|| OsStr::new(""))
+            .to_string_lossy()
+            .to_string();
 
-        Ok(Version::V1)
+        let is_yaml = match extension.as_str() {
+            "yaml" => true,
+            "yml" => true,
+            "toml" => false,
+            _ => {
+                panic!("Unknown file extension: {}", extension);
+            }
+        };
+
+        let file = match File::open(&path) {
+            Ok(file_contents) => file_contents,
+            Err(e) => return Err(format!("There was an error reading the file:\n{}", e).into()),
+        };
+
+        let result: ConfigFileVersionSerializer = if is_yaml {
+            serde_yaml::from_reader(file)?
+        } else {
+            // Would be nice if this could be improved to avoid reading the entire file two times.
+            // Anyways the overhead should not be of a big impact for normal usage.
+            toml::from_str(&fs::read_to_string(&path)?)?
+        };
+
+        Ok(result.version)
     }
 
     /// prints config file paths and their tasks
@@ -194,17 +214,36 @@ impl ConfigFileContainers {
     fn run_task(&mut self, paths: ConfigFilePaths, task: &str, args: TaskArgs) -> DynErrResult<()> {
         for path in paths {
             let path = path?;
-            let version = ConfigFileContainers::get_file_version(&path)?;
+            let version = match ConfigFileContainers::get_file_version(&path) {
+                Ok(version) => version,
+                Err(e) => {
+                    // So the user knows where the error occurred
+                    let e = format!("{}:\n{}", &path.to_string_lossy().red(), e);
+                    return Err(e.into());
+                }
+            };
             match version {
                 Version::V1 => {
                     let container = self.containers.get_mut(&Version::V1).unwrap();
                     let ConfigFileContainerVersion::V1(container) = container;
-                    let config_file_ptr = container.read_config_file(path.clone())?;
+                    let config_file_ptr = match container.read_config_file(path.clone()) {
+                        Ok(val) => val,
+                        Err(e) => {
+                            let e = format!("{}:\n{}", &path.to_string_lossy().red(), e);
+                            return Err(e.into());
+                        }
+                    };
                     let config_file_lock = config_file_ptr.lock().unwrap();
                     let task = config_file_lock.get_task(task);
                     match task {
                         Some(task) => {
-                            return task.run(&args, &config_file_lock);
+                            match task.run(&args, &config_file_lock) {
+                                Ok(val) => val,
+                                Err(e) => {
+                                    let e = format!("{}:\n{}", &path.to_string_lossy().red(), e);
+                                    return Err(e.into());
+                                }
+                            };
                         }
                         None => continue,
                     }

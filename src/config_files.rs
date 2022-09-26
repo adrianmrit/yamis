@@ -76,6 +76,10 @@ impl error::Error for ConfigError {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ConfigFile {
+    /// Version of the config file.
+    #[allow(dead_code)] // to avoid lint errors
+    #[serde(default, skip_serializing)]
+    version: serde::de::IgnoredAny,
     /// Path of the file.
     #[serde(skip)]
     pub(crate) filepath: PathBuf,
