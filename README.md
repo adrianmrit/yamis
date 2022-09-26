@@ -13,6 +13,7 @@
 * [Quick Start](#quick-start)
 * [Note about YAML and TOML files](#note-about-yaml-and-toml-files)
 * [Usage](#usage)
+  * [Command Line Options](#command-line-options)
   * [Task Files](#task-files)
   * [Script](#script)
     * [Auto Quoting](#auto-quoting)
@@ -60,12 +61,11 @@ and
 
 <a name="backward-compatibility"></a>
 ## Backward Compatibility
-Starting from version 1.0.0, the aim is to be backward compatible with mayor versions and follow
+Starting from version 1.0.0, the goal is to be backward compatible with mayor versions and follow
 [Semantic Versioning](https://semver.org/).
-However, if there are breaking changes, the aim is to support config files from the latest previous versions by setting
-the mayor version on the top of the file as a comment in the form `#!v:{version}`, i.e. `#!v:1`.
-If the version is not set, the least mayor version supported will be used. Note that the version has to be in the first
-line of the file to be detected.
+When a mayor version is released, the plan is to support config files from the latest versions by setting
+the mayor version in the TOML or YAML file with the `version` key, i.e. `version: "1"`.
+If the version is not set, the least mayor version supported will be used.
 
 <a name="installation"></a>
 ## Installation
@@ -174,6 +174,31 @@ If we performed the conversion after parsing the file we would get `AGENT=7` whi
 <a name="usage"></a>
 ## Usage
 
+<a name="command-line-options"></a>
+### Command Line Options
+You can see some help about the command line options by running `yamis -h` or `yamis --help`. Essentially, the
+usage would be like this:
+
+```
+USAGE:
+    yamis [OPTIONS] [SUBCOMMAND]
+
+OPTIONS:
+    -f, --file <FILE>              Search for tasks in the given file
+    -h, --help                     Print help information
+    -i, --task-info <TASK>         Displays information about the given task
+    -l, --list                     Lists configuration files that can be reached from the current
+                                   directory
+    -t, --list-tasks               Lists tasks
+    -V, --version                  Print version information
+```
+
+You can either call a task directly by passing the name of the task and its arguments, i.e. `yamis say_hi --name=world`,
+or you can specify the configuration file to use with the -f option, i.e. `yamis -f project.yamis.yaml say_hi --name=world`.
+Note that the -f option is set before the task name, otherwise it would be interpreted as an argument for the task.
+
+The next sections talks about how task files are auto-discovered.
+
 <a name="task-files"></a>
 ### Task files
 The task files must be either a TOML or YAML file with the appropriate extension, i.e. `project.yamis.toml`, or
@@ -190,7 +215,7 @@ The configuration files (in order of precedence, with extension omitted) are nam
 - `yamis`: Should be used in sub-folders of a project for tasks specific to that folder and sub-folders.
 - `project.yamis`: Should hold tasks for the entire project.
 
-If none of those files is found, it will look at `~/.yamis/user.yamis.toml` or `~/.yamis/user.yamis.yaml` or
+If the task is still not found, it will look at `~/.yamis/user.yamis.toml` or `~/.yamis/user.yamis.yaml` or
 `~/.yamis/user.yamis.yml` for user-wide tasks. This is useful for everyday tasks not related to a specific project.
 
 

@@ -1,17 +1,18 @@
 # Changelog
 
-## []
+## [1.0.0] - 2022-09-26
 ## Added
 - Get help in the command like by calling yamis with the `--help` or `-h` option
 - Get the version in the command line by calling yamis with `-V` 
 - Get the list of config files and tasks by calling yamis with `-t`
 - Get basic info about a task by calling yamis with `-i <TASK>`
 - Get list of task files by calling yamis with `-l` option
-- Support for functions inside tasks
-- Can index or slice expressions
+- Support for functions
+- Support for index or slice expressions
 - Support for global config files
 - New release available notification
 - Added a `help` field to tasks
+- Preparing for future backward compatibility across mayor versions
 
 ### Changed
 - Syntax has changed
