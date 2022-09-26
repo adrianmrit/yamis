@@ -236,11 +236,11 @@ impl ConfigFileContainers {
                     let task = config_file_lock.get_task(task);
                     match task {
                         Some(task) => {
-                            match task.run(&args, &config_file_lock) {
-                                Ok(val) => val,
+                            return match task.run(&args, &config_file_lock) {
+                                Ok(val) => Ok(val),
                                 Err(e) => {
                                     let e = format!("{}:\n{}", &path.to_string_lossy().red(), e);
-                                    return Err(e.into());
+                                    Err(e.into())
                                 }
                             };
                         }
