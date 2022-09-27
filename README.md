@@ -589,6 +589,21 @@ tasks:
     script: "dir {$@?}"
 ```
 
+Note that os-specific tasks do not inherit from the non-os specific task implicitly, if you want to do so, you will have
+to define bases explicitly, i.e.
+
+```yaml
+tasks:
+  ls:
+    env:
+      DIR: "."
+    script: "ls {$DIR}"
+
+  ls.windows:
+    bases: [ls]
+    script: "dir {$DIR}"
+```
+
 
 <a name="working-directory"></a>
 ### Working Directory
@@ -661,7 +676,9 @@ tasks:
    script: "echo hello windows"
 ```
 
-This way base tasks can be defined for each OS, and have only one version for its children.
+This way base tasks can be defined for each OS, and have only one version for its children. However, note that
+os-specific tasks do not inherit implicitly from the non os-specif task. As in the above example, `sample.windows`
+will not implicitly inherit from `sample`.
 
 
 <a name="extending-program-arguments"></a>
