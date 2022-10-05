@@ -107,23 +107,20 @@ fn map(args: &Vec<FunVal>) -> DynErrResult<FunResult> {
     };
 }
 
-/// Similar to map, but the result is always a string
+/// Like calling map and then joining the values with the empty string
 ///
 /// # Arguments
 ///
 /// * `args`: Function values
 ///
 /// returns: Result<FunResult, Box<dyn Error, Global>>
-///
-/// # Examples
-///
-fn flat(args: &Vec<FunVal>) -> DynErrResult<FunResult> {
+fn jmap(args: &Vec<FunVal>) -> DynErrResult<FunResult> {
     if args.len() != 2 {
-        return Err("flat takes exactly two arguments".into());
+        return Err("jmap takes exactly two arguments".into());
     }
     let fmt_string = match args.index(0) {
         FunVal::String(s) => s,
-        FunVal::Vec(_) => return Err("The first argument of flat should be a string".into()),
+        FunVal::Vec(_) => return Err("The first argument of jmap should be a string".into()),
     };
     return match args.index(1) {
         FunVal::String(s) => {
@@ -229,7 +226,7 @@ fn fmt(args: &Vec<FunVal>) -> DynErrResult<FunResult> {
 fn load_default_functions() -> FunctionRegistry {
     let mut functions: HashMap<String, Function> = HashMap::new();
     functions.insert(String::from("map"), map);
-    functions.insert(String::from("flat"), flat);
+    functions.insert(String::from("flat"), jmap);
     functions.insert(String::from("join"), join);
     functions.insert(String::from("fmt"), fmt);
     FunctionRegistry { functions }
@@ -273,18 +270,18 @@ fn test_map() {
 }
 
 #[test]
-fn test_flat() {
+fn test_jmap() {
     let vars = vec![
         FunVal::String("Hello {} ! ? {{ }}"),
         FunVal::String("world"),
     ];
-    let result = flat(&vars).unwrap();
+    let result = jmap(&vars).unwrap();
     let expected = FunResult::String(String::from("Hello world ! ? { }"));
     assert_eq!(result, expected);
 
     let values = vec!["world".to_string(), "people".to_string()];
     let vars = vec![FunVal::String("Hello {}, "), FunVal::Vec(&values)];
-    let result = flat(&vars).unwrap();
+    let result = jmap(&vars).unwrap();
     let expected = FunResult::String(String::from("Hello world, Hello people, "));
     assert_eq!(result, expected);
 

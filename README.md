@@ -34,8 +34,8 @@
   * [Setting Environment Variables](#setting-environment-variables)
   * [Functions](#functions)
     * [map](#map-function)
-    * [flat](#flat-function)
     * [join](#join-function)
+    * [jmap](#jmap-function)
     * [fmt](#fmt-function)
   * [OS Specific Tasks](#os-specific-tasks)
   * [Working Directory](#working-directory)
@@ -498,18 +498,6 @@ sample2:
 
 `yamis sample2 file1 file2` will result in calling `merge_txt_files` with arguments `["file1.txt", "file2.txt"]`
 
-
-<a name="flat-function"></a>
-#### flat Function
-**Signature:** `flat(fmt_string: str, values: str[]) -> str`
-
-`flat` is similar to map, but in scripts extra spaces won't be added, and in arguments it will not be unpacked. This is
-because calling `flat` is like calling `map` and joining the resulting array values into a single string.
-
-**Parameters:**
-- `fmt_string`: String to format, i.e. `"-o {}.txt"`
-- `values`: Values to map
-
 Example:
 ```yaml
 sample:
@@ -548,6 +536,17 @@ sample:
 ```
 
 `yamis sample person1 person2` will result in `echo hi person1 and person2'`
+
+
+<a name="jmap-function"></a>
+#### jmap Function
+**Signature:** `jmap(fmt_string: str, values: str[]) -> str`
+
+Shortcut for `join("", map(fmt_string, values))`
+
+**Parameters:**
+- `fmt_string`: String to format, i.e. `"-o {}.txt"`
+- `values`: Values to map
 
 
 <a name="fmt-function"></a>
