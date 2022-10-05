@@ -462,6 +462,13 @@ nested.
 
 Functions can take string or array values, and also return either a single string or an array.
 
+At the moment it is not possible to define custom functions as this would require either using an external language such as python,
+an embedded language such as lua, or implementing a new programming language. One of the goals of this program is to have a simple
+and clear syntax, so adding support for defining functions breaks this. In most cases where
+complex operations need to be performed, it would be better and cleaner to have a separate script (i.e. bash or python) that performs
+the desired operation and then call it from a task with the appropriate arguments. Still, new functions might be added in the future
+to support flexible argument parsing operations. Feel free to request a new function by submitting a new issue in the repo.
+
 
 <a name="map-function"></a>
 #### map Function
