@@ -22,21 +22,24 @@
   * [Running Tasks Serially](#running-tasks-serially)
   * [Script vs Program](#script-vs-program)
   * [Tags](#tags)
-  * [Index and Slice](#index-and-slice)
-  * [Parameter's Type](#parameters-type)
+  * [Expressions](#expressions)
     * [Positional Parameters](#positional-parameters)
     * [Named Parameters](#named-parameters)
     * [All Parameters](#all-parameters)
     * [Environment Variables](#environment-variables)
     * [String Parameters](#string-parameters)
+    * [Functions](#functions)
   * [Optional Expressions](#optional-expressions)
+  * [Index and Slice](#index-and-slice)
   * [Unpacking](#unpacking)
   * [Setting Environment Variables](#setting-environment-variables)
-  * [Functions](#functions)
+  * [List of Functions](#list-of-functions)
     * [map](#map-function)
     * [join](#join-function)
     * [jmap](#jmap-function)
     * [fmt](#fmt-function)
+    * [trim](#trim-function)
+    * [split](#split-function)
   * [OS Specific Tasks](#os-specific-tasks)
   * [Working Directory](#working-directory)
   * [Documenting Tasks](#documenting-tasks)
@@ -332,37 +335,26 @@ Tags are used to insert dynamic values into the scripts and arguments of program
 used to insert positional and named arguments, environment variables (with a cross-platform syntax) and invoke
 functions.
 
-The expressions inside tasks can return values either as a string, or as a list of strings. If no values are passed,
-the value will be an empty list, or an empty string in the case of positional arguments. This is specially relevant
-when slicing and invoking functions.
+The expressions inside tags (including functions) can return either a string, or a list of strings.
+These are in fact the only two data types that can be used directly in tags. Note that empty lists and lists
+with a single string will not be coerced into a string to avoid ambiguity, check the [Expressions](#expressions)
+section for more info.
 
+The integer is only allowed when slicing, i.e. `{values[0]}` is valid, but `{1}` is not.
 
-<a name="index-and-slice"></a>
-### Index and Slice
-[Parameters](#parameters-type), including the output of [functions](#functions) can be sliced for more flexibility.
-The slices are 0 indexed, here are some examples:
+In the case of optional expressions, there is no null value, they will simply return an empty string/list. For example
+`{$1?}` will return an empty string if `$1` is not passed.
 
-```text
-{ $@[0] }                         # same as { $1 }
+Why aren't more data types supported, like integers? Because parsing makes sense only for returning the body of a script
+or the arguments for a program, and both are always strings or list of strings. Furthermore, it would make more sense to call
+an external script for more complex operations.
 
-{ $@[0..2] }                      # first two arguments
-
-{ map(f"hello {}", name)[0..2] }  # same as { map(f"hello {}", name[0..2]) }
-
-{ fmt("hello {}", $1)[0] }       # returns `h`
-
-{ $1[0] }                         # returns first char of first argument
-
-{ $@[0][0] }                      # also returns first char of first argument
-```
-
-
-<a name="parameters-type"></a>
-### Parameter's Type
+<a name="expressions"></a>
+### Expressions
 
 <a name="positional-parameters"></a>
 #### Positional Parameters
-1-indexed, start with `$` and followed by a number, i.e. `{$1}`, `{$2}`. Represent a single string, so slices of them
+1-indexed, start with `$` and followed by a number, i.e. `{$1}`, `{$2}`. These return a single string, so slices of them
 will return a substring.
 
 <a name="named-parameters"></a>
@@ -375,14 +367,16 @@ this is to prevent ambiguities as the parsing of arguments can change from appli
 Named argument must start with an ascii alpha character or underscore, and should be followed by any number
 of letters, digits, `-` or `_`.
 
-These are represented by arrays of strings, so an index slice will return a string, while a range slice will return
+These will always return a list of strings, so an index slice will return a string, while a range slice will return
 a subarray. I.e. `{ file[0][0] }` returns the first character of the first passed `file` argument, while `file[0]`
 will return the first file argument.
 
 <a name="all-parameters"></a>
 #### All Parameters
-With `{ $@ }`, all arguments will be passed as they are. They can be accessed by index and sliced, i.e. `{ $@[0] }` and
-`{ $@[0..2] }` are valid. Can also be optional, i.e. `{ $@? }`.
+With `{ $@ }` a list of all arguments will be passed as they are. I.e. if calling a tasks with arguments
+`hello -o=file.txt -o=file2.txt`, it will return a list with `["hello", "-o=file.txt", "-o=file2.txt"]`.
+They can be accessed by index and sliced, i.e. `{ $@[0] }` and `{ $@[0..2] }` are valid. Can also be optional,
+i.e. `{ $@? }`.
 
 
 <a name="environment-variables"></a>
@@ -403,10 +397,48 @@ function's context. Strings are defined by single or double quotes, cannot conta
 I.e. `{ "\"hello\" \n 'world'" }` is a valid string. Strings can also be sliced, but this is side effect of trying
 to keep the parser simple rather than a useful feature.
 
+
+<a name="functions"></a>
+#### Functions
+For a list of available functions, check the [Functions](#functions) section.
+
+Predefined functions can be used to transform arguments in different ways. They can take values and can be
+nested. I.e. `{ join(" ", split(",", $1)) }` will split the first argument by `","`, and join them back with a space.
+
+At the moment it is not possible to define custom functions as this would require either using an external language such as python,
+an embedded language such as lua, or implementing a new programming language. One of the goals of this program is to have a simple
+and clear syntax, so adding support for defining functions breaks this. In most cases where
+complex operations need to be performed, it would be better and cleaner to have a separate script (i.e. bash or python) that performs
+the desired operation and then call it from a task with the appropriate arguments. Still, new functions might be added in the future
+to support flexible argument parsing operations. Feel free to request a new function by submitting a new issue in the repo.
+
 <a name="optional-expressions"></a>
 ### Optional Expressions
 By default, expressions must return a non-empty string or non-empty array of strings, otherwise an error will be raised.
 Expressions can be made optional by adding `?`, i.e. `{ $1? }`, `{ map("hello {}", person?)? }`, `{ $@? }`, `{ output? }`.
+
+
+<a name="index-and-slice"></a>
+### Index and Slice
+[Expressions](#expressions), including the output of [functions](#list-of-functions) can be sliced for more flexibility.
+The slices are 0 indexed, and accept positive and negative indexes. The whole expression can be either mandatory
+or optional, i.e. `exp[1][0]?` does not fail and returns nothing if `exp` is not set or `exp[1]` is out of bounds, note that something like
+`exp?[1]?[0]?` is invalid.
+
+Here are some examples for parameters `hello world --p=1 --p=2 --p=3`:
+
+| Expression                 | Result                               |
+|----------------------------|--------------------------------------|
+| `echo { $@[0] }`           | `echo hello`                         |
+| `echo { $@[0][0] }`        | `echo h`                             |
+| `echo { p[0] }`            | `echo 1`                             |
+| `echo { p[:2] }`           | `echo 1 2`                           |
+| `echo { p[1:] }`           | `echo 2 3`                           |
+| `echo { $@[0:999] }`       | `echo hello world --p=1 --p=2 --p=3` |
+| `echo { $@[:-1] }`         | `echo --p=3`                         |
+| `echo { $@[-3:-1] }`       | `echo --p=1 --p=2`                   |
+| `echo { $@[990:999][0]? }` | `echo `                              |
+| `echo { $@[-999]? }`       | `echo `                              |
 
 <a name="unpacking"></a>
 ### Unpacking
@@ -455,31 +487,20 @@ take precedence. Similarly, the global env variables and env file will be loaded
 are also set there, with the env variables defined on the task taking precedence over the global ones.
 
 
-<a name="functions"></a>
-### Functions
-Predefined functions can be used to transform arguments in different ways. They can take values and can be
-nested.
-
-Functions can take string or array values, and also return either a single string or an array.
-
-At the moment it is not possible to define custom functions as this would require either using an external language such as python,
-an embedded language such as lua, or implementing a new programming language. One of the goals of this program is to have a simple
-and clear syntax, so adding support for defining functions breaks this. In most cases where
-complex operations need to be performed, it would be better and cleaner to have a separate script (i.e. bash or python) that performs
-the desired operation and then call it from a task with the appropriate arguments. Still, new functions might be added in the future
-to support flexible argument parsing operations. Feel free to request a new function by submitting a new issue in the repo.
-
+<a name="list-of-functions"></a>
+### List of Functions
+List of predefined functions.
 
 <a name="map-function"></a>
 #### map Function
-**Signature:** `map(fmt_string: str, values: str[]) -> str[]`
+**Signature:** `map<S: str | str[]>(fmt_string: str, values: S) -> S`
 
 Maps each value to `fmt(fmt_string, val)`, where `fmt` replaces `{}` with value. Note that brackets
 can be escaped by duplicating them, i.e. `{{` will be replaced with `{`
 
 **Parameters:**
 - `fmt_string`: String to format, i.e. `"-o {}.txt"`
-- `values`: Values to map
+- `values`: Value or values to map
 
 Example:
 ```yaml
@@ -498,34 +519,17 @@ sample2:
 
 `yamis sample2 file1 file2` will result in calling `merge_txt_files` with arguments `["file1.txt", "file2.txt"]`
 
-Example:
-```yaml
-sample:
-  quote: never
-  script: |
-    echo hi{flat(" '{}'", $@)}
-
-
-sample2:
-  program: some_program
-  args: ["{flat('{},', $@)}"]
-```
-
-`yamis sample person1 person2` will result in `echo hi 'person1' 'person2' `
-
-`yamis sample2 arg1 arg2` will result in calling `some_program` with arguments `["arg1,arg2,"]`
-
 
 <a name="join-function"></a>
 #### join Function
-**Signature**: `join(join_str: str, values: str[]) -> str`
+**Signature**: `join<S: str | str[]>(join_str: str, values: S) -> str`
 
 The first parameter of `join` is a string that will be inserted between all values given in the second parameter
-returning a single string.
+returning a single string. If the second parameter is a single string, it will be returned as is.
 
 **Parameters:**
 - `join_str`: String to insert between the values
-- `values`: Values to join
+- `values`: Value or values to join
 
 Example:
 ```yaml
@@ -540,18 +544,35 @@ sample:
 
 <a name="jmap-function"></a>
 #### jmap Function
-**Signature:** `jmap(fmt_string: str, values: str[]) -> str`
+**Signature:** `jmap<S: str | str[]>(fmt_string: str, values: S) -> S`
 
 Shortcut for `join("", map(fmt_string, values))`
 
 **Parameters:**
 - `fmt_string`: String to format, i.e. `"-o {}.txt"`
-- `values`: Values to map
+- `values`: Value or values to map
+
+Example:
+```yaml
+sample:
+  quote: never
+  script: |
+    echo hi{jmap(" '{}'", $@)}
+
+
+sample2:
+  program: some_program
+  args: ["{jmap('{},', $@)}"]
+```
+
+`yamis sample person1 person2` will result in `echo hi 'person1' 'person2' `
+
+`yamis sample2 arg1 arg2` will result in calling `some_program` with arguments `["arg1,arg2,"]`
 
 
 <a name="fmt-function"></a>
 #### fmt Function
-**Signature**: `fmt(fmt_string: str, ...args: str[]) -> str`
+**Signature**: `fmt(fmt_string: str, *args: str) -> str`
 
 The first parameter of `fmt` is a format string, and the rest of the values are parameters to format the string with.
 Note that those extra parameters must be i individual values, not arrays, i.e. cannot use `$@`.
@@ -569,6 +590,48 @@ sample:
 ```
 
 `yamis sample person1 person2` will result in `echo Hi person1 and person2`
+
+
+<a name="trim-function"></a>
+#### trim Function
+**Signature**: `trim<S: str | str[]>(value: S) -> S`
+
+Removes leading and trailing whitespaces (including newlines) from the string or each string in list of strings.
+
+**Parameters:**
+- `value`: String or list of strings to trim
+
+Example:
+```yaml
+sample:
+  quote: never
+  script: |
+    echo {trim("  \n  hello world  \n")}
+```
+
+`yamis sample` will result in `echo hello world`
+
+
+
+<a name="split-function"></a>
+#### split Function
+**Signature**: `split(split_val: str, split_string: str) -> str`
+
+Splits the string with the given value
+
+**Parameters:**
+- `split_val`: Value to split by
+- `split_string`: String to split
+
+Example:
+```yaml
+sample:
+  quote: never
+  script: |
+    echo {split(",", "a,b,c")}
+```
+
+`yamis sample` will result in `echo a b c`
 
 
 <a name="os-specific-tasks"></a>

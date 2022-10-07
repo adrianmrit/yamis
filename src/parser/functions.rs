@@ -185,7 +185,7 @@ fn map(args: &Vec<FunVal>) -> DynErrResult<FunResult> {
         FunVal::String(s) => {
             let result = map_format_string(fmt_string, s)?;
             Ok(FunResult::String(result))
-        } // TODO: format and return only this one
+        }
         FunVal::Vec(l) => {
             let mut result = Vec::with_capacity(l.capacity());
             for s in *l {

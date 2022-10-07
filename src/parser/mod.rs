@@ -1,12 +1,15 @@
 use crate::parser::functions::{FunResult, DEFAULT_FUNCTIONS};
 use crate::types::{DynErrResult, TaskArgs};
+use pest::error::{Error as PestError, ErrorVariant};
 use pest::iterators::Pair;
 use pest::Parser;
 use pest_derive::Parser;
 use serde_derive::Deserialize;
-use std::cmp::min;
+use std::cmp::{max, min};
 use std::collections::HashMap;
+use std::fmt::{Display, Formatter};
 use std::str::FromStr;
+use std::{error, fmt};
 
 mod functions;
 
@@ -22,15 +25,45 @@ pub enum EscapeMode {
     Never,
 }
 
-struct Range {
-    from: Option<usize>,
-    to: Option<usize>,
+/// Represents the slice from the user, either by index or range
+enum Slice {
+    Index(isize),
+    Range(Option<isize>, Option<isize>),
 }
 
-enum Slice {
+/// Represents the actual slice after the indexes are resolved correctly
+enum RealSlice {
     Index(usize),
-    Range(Range),
+    Range(usize, usize),
 }
+
+/// Error raised when there is an error parsing an integer
+#[derive(Debug)]
+struct IntParsingError(String);
+
+impl Display for IntParsingError {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        write!(f, "Error parsing `{}` as an integer", self.0)
+    }
+}
+
+impl error::Error for IntParsingError {
+    fn description(&self) -> &str {
+        "bad config file"
+    }
+
+    fn cause(&self) -> Option<&dyn error::Error> {
+        None
+    }
+}
+
+fn custom_span_error(span: pest::Span, msg: String) -> PestError<Rule> {
+    PestError::new_from_span(ErrorVariant::CustomError { message: msg }, span)
+}
+
+// fn custom_pos_error(pos: pest::Position, msg: String) -> PestError<Rule> {
+//     PestError::new_from_pos(ErrorVariant::CustomError { message: msg }, pos)
+// }
 
 /// Pest parser for script
 #[derive(Parser)]
@@ -78,53 +111,61 @@ fn rename_rules(rule: &Rule) -> String {
     }
 }
 
+/// Parses a string into an integer
+fn parse_int(s: &str) -> Result<isize, IntParsingError> {
+    s.parse::<isize>()
+        .map_err(|_| IntParsingError(s.to_string()))
+}
+
 /// Returns a `Slice` enum from the pair
-fn get_slice_repr(slice: Pair<Rule>) -> Slice {
+fn get_slice_repr(slice: Pair<Rule>) -> DynErrResult<Slice> {
     let mut slice_inner = slice.into_inner();
     let val = slice_inner.next().unwrap();
     match val.as_rule() {
-        Rule::index => Slice::Index(usize::from_str(val.as_str()).unwrap()),
-        Rule::slice => {
-            let mut range = Range {
-                from: None,
-                to: None,
-            };
+        Rule::index => Ok(Slice::Index(parse_int(val.as_str())?)),
+        Rule::range => {
+            let mut from = None;
+            let mut to = None;
             let val_inner = val.into_inner();
             for val in val_inner {
                 match val.as_rule() {
-                    Rule::range_from => range.from = Some(usize::from_str(val.as_str()).unwrap()),
-                    Rule::range_to => range.to = Some(usize::from_str(val.as_str()).unwrap()),
+                    Rule::range_from => from = Some(parse_int(val.as_str())?),
+                    Rule::range_to => to = Some(parse_int(val.as_str())?),
                     v => panic!("Unexpected rule {:?}", v),
                 }
             }
-            Slice::Range(range)
+            Ok(Slice::Range(from, to))
         }
         v => panic!("Unexpected rule {:?}", v),
     }
 }
 
 /// Slices a string
-fn slice_string(val: String, slice: Slice) -> FunResult {
+fn slice_string(val: String, slice: RealSlice) -> FunResult {
     match slice {
-        Slice::Index(i) => FunResult::String(String::from(&val[i..i + 1])),
-        Slice::Range(range) => {
-            let from = range.from.unwrap_or(0);
-            let to = min(range.to.unwrap_or(val.len()), val.len());
+        RealSlice::Index(i) => {
+            if i >= val.len() {
+                return FunResult::String("".to_string());
+            }
+            FunResult::String(val.chars().nth(i).unwrap().to_string())
+        }
+        RealSlice::Range(from, to) => {
+            if from >= val.len() || from >= to {
+                return FunResult::String("".to_string());
+            }
             FunResult::String(String::from(val.get(from..to).unwrap_or("")))
         }
     }
 }
 
 /// Slices a vector
-fn slice_vec(mut val: Vec<String>, slice: Slice) -> FunResult {
+fn slice_vec(mut val: Vec<String>, slice: RealSlice) -> FunResult {
     match slice {
-        Slice::Index(i) => FunResult::String(String::from(&val[i])),
-        Slice::Range(range) => {
-            let from = range.from.unwrap_or(0);
-            if from >= val.len() {
+        RealSlice::Index(i) => FunResult::String(String::from(&val[i])),
+        RealSlice::Range(from, to) => {
+            if from >= val.len() || from >= to {
                 FunResult::Vec(vec![])
             } else {
-                let to = min(range.to.unwrap_or(val.len()), val.len());
                 let result = val.drain(from..to).collect();
                 FunResult::Vec(result)
             }
@@ -133,7 +174,7 @@ fn slice_vec(mut val: Vec<String>, slice: Slice) -> FunResult {
 }
 
 /// Slices a value
-fn slice_val(val: FunResult, slice: Slice) -> FunResult {
+fn slice_val(val: FunResult, slice: RealSlice) -> FunResult {
     match val {
         FunResult::String(v) => slice_string(v, slice),
         FunResult::Vec(v) => slice_vec(v, slice),
@@ -159,6 +200,59 @@ fn parse_expression_inner(
     }
 }
 
+fn parse_slice(expression: Pair<Rule>, val: FunResult, optional: bool) -> DynErrResult<FunResult> {
+    let val_len = match val {
+        FunResult::String(ref v) => v.len(),
+        FunResult::Vec(ref v) => v.len(),
+    } as isize;
+    // usize is 2^32 in 32 bit systems, or 2^64 in 64 bit systems
+    // i32 is between -2^31 and 2^31-1, which are much smaller than usize.
+    // So we can safely cast to i32
+    // There are still edge cases if the slice is larger than 2^31, but that's very unlikely
+    let span = expression.as_span();
+    let slice = get_slice_repr(expression)?;
+    match slice {
+        Slice::Index(i) => {
+            let real_index = if i < 0 { val_len + i } else { i };
+            if real_index >= val_len || real_index < 0 {
+                if !optional {
+                    Err(custom_span_error(
+                        span,
+                        String::from("Index out of bounds for mandatory expression"),
+                    )
+                    .into())
+                } else {
+                    Ok(FunResult::String("".to_string()))
+                }
+            } else {
+                Ok(slice_val(val, RealSlice::Index(real_index as usize)))
+            }
+        }
+        Slice::Range(from, to) => {
+            let from = from.unwrap_or(0);
+            let to = min(to.unwrap_or(val_len), val_len);
+            let real_from = if from < 0 { val_len + from } else { from };
+            let real_to = if to < 0 { val_len + to } else { to };
+            if real_from >= val_len || real_from < 0 || real_from > real_to {
+                if !optional {
+                    Err(custom_span_error(
+                        span,
+                        String::from("Range out of bounds for mandatory expression"),
+                    )
+                    .into())
+                } else {
+                    Ok(FunResult::Vec(vec![]))
+                }
+            } else {
+                Ok(slice_val(
+                    val,
+                    RealSlice::Range(real_from as usize, max(real_to, 0) as usize),
+                ))
+            }
+        }
+    }
+}
+
 /// Parses an expression
 fn parse_expression(
     expression: Pair<Rule>,
@@ -171,27 +265,29 @@ fn parse_expression(
     let expression_copy = expression.clone();
     let mut expression_inner_values = expression.into_inner();
     let expression_inner = expression_inner_values.next().unwrap();
+    let span = expression_inner.as_span();
     let mut val = match expression_inner.as_rule() {
         Rule::expression_inner => parse_expression_inner(expression_inner, cli_args, env)?,
         v => panic!("Unexpected rule {:?}", v),
     };
-    let mut mandatory = true;
+    // We check if it is optional first so that we can return the appropriate error message
+    let optional = match expression_copy.into_inner().last() {
+        Some(v) => v.as_rule() == Rule::optional,
+        None => false,
+    };
     for slice_or_modifier in expression_inner_values {
         match slice_or_modifier.as_rule() {
-            Rule::optional => {
-                mandatory = false;
-            }
             Rule::slice => {
-                let slice = get_slice_repr(slice_or_modifier);
-                val = slice_val(val, slice)
+                val = parse_slice(slice_or_modifier, val, optional)?;
             }
+            Rule::optional => (), // we already checked if it is optional
             v => panic!("Unexpected rule {:?}", v),
         }
     }
-    if mandatory && val.is_empty() {
-        Err(format!(
-            "Expression `{}` should return a value",
-            expression_copy.as_span().as_str()
+    if !optional && val.is_empty() {
+        Err(custom_span_error(
+            span,
+            String::from("Mandatory expression did not return a value"),
         )
         .into())
     } else {
@@ -553,6 +649,48 @@ print("values are:", a)"#;
 
     let result = parse_script(script, &vars, &env, &EscapeMode::Never).unwrap();
     assert_eq!(result, expected);
+
+    let script = "echo {$@[0]} {$@[-1]} {$@[-3:]} {key[:5]}{key[5]?}{key[5:]?}";
+    let result = parse_script(script, &vars, &env, &EscapeMode::Never).unwrap();
+    assert_eq!(
+        result,
+        "echo positional --key=val2 positional --key=val1 --key=val2 val1 val2"
+    );
+
+    let script =
+        "echo {key[0][0]} {key[:5][0][1]} {key[0][2:3]} {key[0][3:]} {key[0][4]?} {key[:5][10:][1]?} end";
+    let result = parse_script(script, &vars, &env, &EscapeMode::Never).unwrap();
+    assert_eq!(result, "echo v a l 1   end");
+
+    let script = "echo {key[3][0]}";
+    let result = parse_script(script, &vars, &env, &EscapeMode::Never).unwrap_err();
+    assert!(result
+        .to_string()
+        .ends_with("Index out of bounds for mandatory expression"));
+
+    let script = "echo {key[0][10]}";
+    let result = parse_script(script, &vars, &env, &EscapeMode::Never).unwrap_err();
+    assert!(result
+        .to_string()
+        .ends_with("Index out of bounds for mandatory expression"));
+
+    let script = "echo {key[0][-5]}";
+    let result = parse_script(script, &vars, &env, &EscapeMode::Never).unwrap_err();
+    assert!(result
+        .to_string()
+        .ends_with("Index out of bounds for mandatory expression"));
+
+    let script = "echo {key[5:0]}";
+    let result = parse_script(script, &vars, &env, &EscapeMode::Never).unwrap_err();
+    assert!(result
+        .to_string()
+        .ends_with("Range out of bounds for mandatory expression"));
+
+    let script = "echo {key[-10:5]}";
+    let result = parse_script(script, &vars, &env, &EscapeMode::Never).unwrap_err();
+    assert!(result
+        .to_string()
+        .ends_with("Range out of bounds for mandatory expression"));
 }
 
 #[test]
