@@ -1,4 +1,5 @@
 use colored::{ColoredString, Colorize};
+use lazy_static::lazy_static;
 use serde_derive::Deserialize;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
@@ -256,10 +257,6 @@ impl ConfigFileContainers {
 impl TaskSubcommand {
     /// Returns a new TaskSubcommand
     pub(crate) fn new(args: &clap::ArgMatches) -> Result<TaskSubcommand, ArgsError> {
-        let arg_regex: Regex =
-            // TODO: Check best way to implement
-            Regex::new(r"-*(?P<key>[a-zA-Z]+\w*)=(?P<val>[\s\S]*)")
-                .unwrap();
         let mut kwargs = TaskArgs::new();
 
         let (task_name, task_args) = match args.subcommand() {
@@ -268,13 +265,39 @@ impl TaskSubcommand {
         };
 
         if let Some(args) = task_args.values_of("") {
-            let mut all_args = Vec::with_capacity(10);
+            // All args are pushed into a vector as they are
+            let all_args = args.clone().map(|s| s.to_string()).collect::<Vec<String>>();
+            kwargs.insert(String::from("*"), all_args);
+
+            // kwarg found that could be a key
+            let mut possible_kwarg_key = None;
+
+            // looping over the args to find kwargs
             for arg in args {
-                all_args.push(arg.to_string());
-                let arg_match = arg_regex.captures(arg);
-                if let Some(arg_match) = arg_match {
-                    let key = String::from(arg_match.name("key").unwrap().as_str());
-                    let val = String::from(arg_match.name("val").unwrap().as_str());
+                // if a kwarg key was previously found, assume this is the value, even if
+                // it starts with - or --
+                if let Some(possible_kwarg) = possible_kwarg_key {
+                    match kwargs.entry(possible_kwarg) {
+                        Entry::Occupied(mut e) => {
+                            e.get_mut().push(arg.to_string());
+                        }
+                        Entry::Vacant(e) => {
+                            let args_vec: Vec<String> = vec![arg.to_string()];
+                            e.insert(args_vec);
+                        }
+                    }
+                    possible_kwarg_key = None;
+                    continue;
+                }
+
+                // Quick check to see if the arg is a kwarg key or key-value pair
+                // if it is a positional value, we just continue
+                if !arg.starts_with('-') {
+                    continue;
+                }
+
+                // Check if this is a kwarg key-value pair
+                if let Some((key, val)) = Self::get_kwarg(arg) {
                     match kwargs.entry(key) {
                         Entry::Occupied(mut e) => {
                             e.get_mut().push(val);
@@ -284,9 +307,18 @@ impl TaskSubcommand {
                             e.insert(args_vec);
                         }
                     }
+                    continue;
                 }
+
+                // Otherwise it could be a kwarg key, for which we need to check the next arg
+                if let Some(key) = Self::get_kwarg_key(arg) {
+                    possible_kwarg_key = Some(key);
+                    continue;
+                }
+
+                // Finally if it is not a kwarg key or key-value pair, it is a positional arg,
+                // i.e. -0
             }
-            kwargs.insert(String::from("*"), all_args);
         } else {
             kwargs.insert(String::from("*"), vec![]);
         }
@@ -295,6 +327,36 @@ impl TaskSubcommand {
             task: String::from(task_name),
             args: kwargs,
         })
+    }
+
+    /// Returns the key if the arg represents a kwarg key, otherwise None
+    fn get_kwarg_key(arg: &str) -> Option<String> {
+        lazy_static! {
+            static ref KWARG_KEY_REGEX: Regex = Regex::new(r"-{1,2}(?P<key>[a-zA-Z]+\w*)").unwrap();
+        }
+        let kwarg_match = KWARG_KEY_REGEX.captures(arg);
+        if let Some(arg_match) = kwarg_match {
+            let key = String::from(arg_match.name("key").unwrap().as_str());
+            Some(key)
+        } else {
+            None
+        }
+    }
+
+    /// Returns the key and value if the arg represents a kwarg key-value pair, otherwise None
+    fn get_kwarg(arg: &str) -> Option<(String, String)> {
+        lazy_static! {
+            static ref KWARG_REGEX: Regex =
+                Regex::new(r"-{1,2}(?P<key>[a-zA-Z]+\w*)=(?P<val>[\s\S]*)").unwrap();
+        }
+        let kwarg_match = KWARG_REGEX.captures(arg);
+        if let Some(arg_match) = kwarg_match {
+            let key = String::from(arg_match.name("key").unwrap().as_str());
+            let val = String::from(arg_match.name("val").unwrap().as_str());
+            Some((key, val))
+        } else {
+            None
+        }
     }
 }
 
@@ -413,11 +475,11 @@ mod tests {
         let mut file = File::create(tmp_dir.join("project.yamis.toml"))?;
         file.write_all(
             r#"
-    
+
     [tasks.hello.windows]
     script = "echo %greeting%, one plus one is %one_plus_one%"
     private=true
-    
+
     [tasks.hello]
     script = "echo $greeting, one plus one is $one_plus_one"
     "#
