@@ -57,6 +57,7 @@ impl error::Error for IntParsingError {
     }
 }
 
+/// Returns a custom error for the given span and message
 fn custom_span_error(span: pest::Span, msg: String) -> PestError<Rule> {
     PestError::new_from_span(ErrorVariant::CustomError { message: msg }, span)
 }
@@ -297,15 +298,23 @@ fn parse_expression(
 
 /// Parses a function
 fn parse_fun(
-    tag: Pair<Rule>,
+    function_pair: Pair<Rule>,
     cli_args: &TaskArgs,
     env: &HashMap<String, String>,
 ) -> DynErrResult<FunResult> {
-    let mut tag_inner = tag.into_inner();
-    let fun_name = tag_inner.next().unwrap().as_str();
-    let arguments = tag_inner.next();
+    let function_span = function_pair.as_span();
+    let mut function_inner = function_pair.into_inner();
+    let fun_name_pair = function_inner.next().unwrap();
+    let fun_name = fun_name_pair.as_str();
+    let arguments = function_inner.next();
     let fun = match DEFAULT_FUNCTIONS.functions.get(fun_name) {
-        None => return Err(format!("There is no function named {}", fun_name).into()),
+        None => {
+            return Err(custom_span_error(
+                fun_name_pair.as_span(),
+                format!("Undefined function `{}`", fun_name_pair.as_str()),
+            )
+            .into())
+        }
         Some(fun) => fun,
     };
 
@@ -322,7 +331,14 @@ fn parse_fun(
             arguments_list
         }
     };
-    fun(&arguments.iter().map(|v| v.as_val()).collect())
+    match fun(&arguments.iter().map(|v| v.as_val()).collect()) {
+        Ok(v) => Ok(v),
+        Err(e) => Err(custom_span_error(
+            function_span,
+            format!("Error running function `{}`: {}", fun_name, e),
+        )
+        .into()),
+    }
 }
 
 /// Parses a string
