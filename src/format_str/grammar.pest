@@ -1,11 +1,10 @@
 // Escape open and close brackets in literal
-esc_ob = { "{{" }
-esc_cb = { "}}" }
+escaped_val = { "%%" }
 
 // values outside tag
-literal_content = { (!("{" | "}") ~ ANY)+ }
-literal = ${ literal_content | ( esc_ob | esc_cb )}
+literal_content = { (!"%" ~ ANY)+ }
+literal = ${ literal_content | ( escaped_val )}
 
 
-tag = { "{}" }
-all = ${ SOI ~ (tag | literal)* ~ EOI }
+format_param = { "%s" }
+all = ${ SOI ~ (format_param | literal)* ~ EOI }

@@ -354,7 +354,7 @@ fn trim(args: &Vec<FunVal>) -> DynErrResult<FunResult> {
 fn load_default_functions() -> FunctionRegistry {
     let mut functions: HashMap<String, Function> = HashMap::new();
     functions.insert(String::from("map"), map);
-    functions.insert(String::from("flat"), jmap);
+    functions.insert(String::from("jmap"), jmap);
     functions.insert(String::from("join"), join);
     functions.insert(String::from("fmt"), fmt);
     functions.insert(String::from("split"), split);
@@ -369,62 +369,58 @@ lazy_static! {
 
 #[test]
 fn test_map() {
-    let vars = vec![
-        FunVal::String("Hello {} ! ? {{ }}"),
-        FunVal::String("world"),
-    ];
+    let vars = vec![FunVal::String("Hello %s ! ? %%s"), FunVal::String("world")];
     let result = map(&vars).unwrap();
-    let expected = FunResult::String(String::from("Hello world ! ? { }"));
+    let expected = FunResult::String(String::from("Hello world ! ? %s"));
     assert_eq!(result, expected);
 
     let values = vec!["world".to_string(), "people".to_string()];
-    let vars = vec![FunVal::String("Hello {} ! ? {{ }}"), FunVal::Vec(&values)];
+    let vars = vec![FunVal::String("Hello %s ! ? %%s"), FunVal::Vec(&values)];
     let result = map(&vars).unwrap();
     let expected = FunResult::Vec(vec![
-        "Hello world ! ? { }".to_string(),
-        "Hello people ! ? { }".to_string(),
+        "Hello world ! ? %s".to_string(),
+        "Hello people ! ? %s".to_string(),
     ]);
     assert_eq!(result, expected);
 
     let values = vec!["world".to_string(), "people".to_string()];
-    let vars = vec![FunVal::String("Hello { ! ? {{ }}"), FunVal::Vec(&values)];
+    let vars = vec![FunVal::String("Hello % ! ? %s"), FunVal::Vec(&values)];
     let result = map(&vars).unwrap_err().to_string();
     let expected_result = r#"Error formatting the string:
+Invalid format string:
  --> 1:7
   |
-1 | Hello { ! ? {{ }}
+1 | Hello % ! ? %s
   |       ^---
   |
-  = expected EOI, literal, or tag"#;
+  = expected EOI, literal, or %s"#;
     assert_eq!(result, expected_result);
 }
 
 #[test]
 fn test_jmap() {
-    let vars = vec![
-        FunVal::String("Hello {} ! ? {{ }}"),
-        FunVal::String("world"),
-    ];
+    let vars = vec![FunVal::String("Hello %s ! ? %%s"), FunVal::String("world")];
     let result = jmap(&vars).unwrap();
-    let expected = FunResult::String(String::from("Hello world ! ? { }"));
+    let expected = FunResult::String(String::from("Hello world ! ? %s"));
     assert_eq!(result, expected);
 
     let values = vec!["world".to_string(), "people".to_string()];
-    let vars = vec![FunVal::String("Hello {}, "), FunVal::Vec(&values)];
+    let vars = vec![FunVal::String("Hello %s, "), FunVal::Vec(&values)];
     let result = jmap(&vars).unwrap();
     let expected = FunResult::String(String::from("Hello world, Hello people, "));
     assert_eq!(result, expected);
 
     let values = vec!["world".to_string(), "people".to_string()];
-    let vars = vec![FunVal::String("Hello { ! ? {{ }}"), FunVal::Vec(&values)];
+    let vars = vec![FunVal::String("Hello % ! ? %%"), FunVal::Vec(&values)];
     let result = map(&vars).unwrap_err().to_string();
     let expected_result = r#"Error formatting the string:
+Invalid format string:
  --> 1:7
   |
-1 | Hello { ! ? {{ }}
+1 | Hello % ! ? %%
   |       ^---
   |
-  = expected EOI, literal, or tag"#;
+  = expected EOI, literal, or %s"#;
     assert_eq!(result, expected_result);
 }
 
@@ -445,7 +441,7 @@ fn test_join() {
 #[test]
 fn test_fmt() {
     let vars = vec![
-        FunVal::String("Hello {} and {}"),
+        FunVal::String("Hello %s and %s"),
         FunVal::String("world"),
         FunVal::String("people"),
     ];

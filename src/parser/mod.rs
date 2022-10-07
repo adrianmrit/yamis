@@ -641,7 +641,7 @@ fn test_parse_script() {
         "Echo {Hello} positional --key=val1 --key=val2 val1 val2 positional --key=val1  sample_val "
     );
 
-    let script = r#"Echo {{map(Hello)}} {map("--f=\"{}.txt\"",key)}"#;
+    let script = r#"Echo {{map(Hello)}} {map("--f=\"%s.txt\"",key)}"#;
 
     let result = parse_script(script, &vars, &env, &EscapeMode::Never).unwrap();
     assert_eq!(
@@ -651,7 +651,7 @@ fn test_parse_script() {
 
     let script = r#"
 print("hello world")
-a = [{map("{}\n",flat("\n      '\\{}\\',",$@))}]
+a = [{map("%s\n",jmap("\n      '\\%s\\',",$@))}]
 print("values are:", a)"#;
 
     let expected = r#"
@@ -778,7 +778,7 @@ fn test_parse_params() {
     let params = vec![
         "Echo",
         "{{map(Hello)}}",
-        r#"{ map("--f=\"{}.txt\"", key) }"#,
+        r#"{ map("--f=\"%s.txt\"", key) }"#,
     ];
 
     let result =
@@ -795,8 +795,8 @@ fn test_parse_params() {
 
     let params = vec![
         "Echo",
-        "{{flat(Hello)}}",
-        r#"{ flat("--f=\"{}.txt\" ", key) }"#,
+        "{{jmap(Hello)}}",
+        r#"{ jmap("--f=\"%s.txt\" ", key) }"#,
     ];
 
     let result =
@@ -805,7 +805,7 @@ fn test_parse_params() {
         result,
         vec![
             "Echo",
-            "{flat(Hello)}",
+            "{jmap(Hello)}",
             "--f=\"val1.txt\" --f=\"val2.txt\" "
         ]
     );

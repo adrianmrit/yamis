@@ -412,10 +412,20 @@ complex operations need to be performed, it would be better and cleaner to have 
 the desired operation and then call it from a task with the appropriate arguments. Still, new functions might be added in the future
 to support flexible argument parsing operations. Feel free to request a new function by submitting a new issue in the repo.
 
+
+<a name="format-starings"></a>
+#### Format Strings
+This are just regular strings that are treated specially in some functions. I.e. [fmt](#fmt-function) takes a format string
+and multiple arguments. Each `%s` occurrence in the string will be replaced with an argument of the same index. Note that in
+format strings `%` needs to be escaped with another `%`, i.e. `%%s` will be replaced with `%s`.
+
+For example ```{ fmt("hello %s", $1) }``` will return `hello <first argument>`.
+
+
 <a name="optional-expressions"></a>
 ### Optional Expressions
 By default, expressions must return a non-empty string or non-empty array of strings, otherwise an error will be raised.
-Expressions can be made optional by adding `?`, i.e. `{ $1? }`, `{ map("hello {}", person?)? }`, `{ $@? }`, `{ output? }`.
+Expressions can be made optional by adding `?`, i.e. `{ $1? }`, `{ map("hello %s", person?)? }`, `{ $@? }`, `{ output? }`.
 
 
 <a name="index-and-slice"></a>
@@ -450,7 +460,7 @@ script = "echo hello {person}"
 
 [tasks.something]
 program = "imaginary-program"
-args = ["{ map('-o {}', f) }"]  # map returns an array of strings
+args = ["{ map('-o %s', f) }"]  # map returns an array of strings
 ```
 
 If we call `yamis hello person=John1 person=John2`, it will run `echo hello "John1" "John2"`.
@@ -495,11 +505,10 @@ List of predefined functions.
 #### map Function
 **Signature:** `map<S: str | str[]>(fmt_string: str, values: S) -> S`
 
-Maps each value to `fmt(fmt_string, val)`, where `fmt` replaces `{}` with value. Note that brackets
-can be escaped by duplicating them, i.e. `{{` will be replaced with `{`
+Maps each value to `fmt(fmt_string, val)`.
 
 **Parameters:**
-- `fmt_string`: String to format, i.e. `"-o {}.txt"`
+- `fmt_string`: [format string](#format-strings)
 - `values`: Value or values to map
 
 Example:
@@ -507,12 +516,12 @@ Example:
 sample:
   quote: never
   script: |
-    echo {map("'{}'", $@)}
+    echo {map("'%s'", $@)}
 
 
 sample2:
   program: merge_txt_files
-  args: ["{map('{}.txt', $@)}"]
+  args: ["{map('%s.txt', $@)}"]
 ```
 
 `yamis sample person1 person2` will result in `echo hi 'person1' 'person2'`
@@ -536,7 +545,7 @@ Example:
 sample:
   quote: never
   script: |
-    echo hello {flat(" and ", $@)}
+    echo hello {join(" and ", $@)}
 ```
 
 `yamis sample person1 person2` will result in `echo hi person1 and person2'`
@@ -549,7 +558,7 @@ sample:
 Shortcut for `join("", map(fmt_string, values))`
 
 **Parameters:**
-- `fmt_string`: String to format, i.e. `"-o {}.txt"`
+- `fmt_string`: [format string](#format-strings)
 - `values`: Value or values to map
 
 Example:
@@ -557,12 +566,12 @@ Example:
 sample:
   quote: never
   script: |
-    echo hi{jmap(" '{}'", $@)}
+    echo hi{jmap(" '%s'", $@)}
 
 
 sample2:
   program: some_program
-  args: ["{jmap('{},', $@)}"]
+  args: ["{jmap('%s,', $@)}"]
 ```
 
 `yamis sample person1 person2` will result in `echo hi 'person1' 'person2' `
@@ -574,19 +583,20 @@ sample2:
 #### fmt Function
 **Signature**: `fmt(fmt_string: str, *args: str) -> str`
 
-The first parameter of `fmt` is a format string, and the rest of the values are parameters to format the string with.
-Note that those extra parameters must be i individual values, not arrays, i.e. cannot use `$@`.
+The first parameter of `fmt` is a [format string](#format-strings), and the rest of the values are parameters to format
+the string with. Note that those extra parameters must be string values, not list of strings, i.e. cannot pass directly
+`$@`.
 
 **Parameters:**
-- `fmt_string`: String to format, i.e. `"-o {}.txt"`
-- `args`: Arguments that will replace the `{}` occurrence of the same index
+- `fmt_string`: [format string](#format-strings)
+- `args`: Arguments that will replace the `%s` occurrence of the same index
 
 Example:
 ```yaml
 sample:
   quote: never
   script: |
-    echo {fmt("Hi {} and {}", $1, $2)}
+    echo {fmt("Hi %s and %s", $1, $2)}
 ```
 
 `yamis sample person1 person2` will result in `echo Hi person1 and person2`
