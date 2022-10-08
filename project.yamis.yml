@@ -20,6 +20,7 @@ tasks:
     serial: ["build-releases", "package-releases", "cleanup"]
 
   test:
+    # Currently not working because of an indirect dependency (ring 0.16.20) from update-informer
     script: |
       cross test --target x86_64-apple-darwin
       cross test --target x86_64-pc-windows-gnu
