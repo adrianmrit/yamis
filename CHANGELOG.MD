@@ -1,6 +1,6 @@
 # Changelog
 
-## [1.0.0] - 2022-10-07
+## [1.0.0] - 2022-10-08
 ## Added
 - Get help in the command like by calling yamis with the `--help` or `-h` option
 - Get the version in the command line by calling yamis with `-V`
