@@ -34,11 +34,7 @@ pub fn format_string<S: AsRef<str>>(fmt_string: S, vars: &[&str]) -> DynErrResul
     let tokens = match tokens {
         Ok(mut tokens) => tokens.next().unwrap().into_inner(),
         Err(e) => {
-            return Err(format!(
-                "Invalid format string:\n{}",
-                e.renamed_rules(rename_rules).to_string()
-            )
-            .into())
+            return Err(format!("Invalid format string:\n{}", e.renamed_rules(rename_rules)).into())
         }
     };
 
