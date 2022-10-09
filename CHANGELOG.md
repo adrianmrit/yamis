@@ -16,6 +16,8 @@
 
 ### Changed
 - Syntax changes
+- Renamed `interpreter` argument to `script_runner`
+- Add `script_extension` alias for `script_ext`
 - Use clap
 - Use pest to parse scripts and arguments
 - A program argument can contain either a task or a literal, not both at the same time

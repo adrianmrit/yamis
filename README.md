@@ -17,7 +17,7 @@
   * [Task files](#task-files)
   * [Script](#script)
     * [Auto quoting](#auto-quoting)
-    * [Replacing the interpreter](#replacing-interpreter)
+    * [Replacing the runner](#replacing-the-runner)
   * [Program](#program)
   * [Running tasks serially](#running-tasks-serially)
   * [Script vs Program](#script-vs-program)
@@ -249,21 +249,21 @@ This can be changed at the task or file level by specifying the
 Although quoting prevents common errors like things breaking because an argument with a space was passed,
 it might fail in certain edge cases.
 
-<a name="replacing-interpreter"></a>
-#### Replacing interpreter
-By default, the interpreter in windows is CMD, and bash in unix systems. To use another interpreter you can
-set the `interpreter` option in a task, which should be a list, where the first value is the interpreter
-program, and the rest are extra parameters to pass before the script file parameter.
+<a name="replacing-the-runner"></a>
+#### Replacing the runner
+By default, the script runner in windows is CMD, and bash in unix systems. To use another program you can
+set the `script_runner` option in a task, which should be a list, where the first value is the name of the program,
+and the rest are extra parameters to pass before the script file parameter.
 
-You might also want to override the `script_ext` option, which is a string containing the extension for the
-script file, and can be prepended with a dot or not. For some interpreter the extension does not matter, but
-for others it does. In windows the extension defaults to `cmd`, and `sh` in unix.
+You might also want to override the `script_ext` (or `script_extension`) option, which is a string containing the
+extension for the script file, and can be prepended with a dot or not. For some interpreter the extension does not
+matter, but for others it does. In windows the extension defaults to `cmd`, and `sh` in unix.
 
 Example:
 ```toml
 # Python script that prints the date and time
 [tasks.hello_world]
-interpreter = ["python"]
+script_runner = ["python"]
 script_ext = "py"  # or .py
 script = """
 from datetime import datetime
@@ -275,7 +275,7 @@ print(datetime.now())
 If using this feature frequently it would be useful to use inheritance to shorten the task. The above can become:
 ```toml
 [tasks._py_script]
-interpreter = ["python"]
+script_runner = ["python"]
 script_ext = "py"  # or .py
 private = true
 
@@ -579,21 +579,21 @@ the same file. This works like class inheritance in common languages like Python
 inherited.
 
 The inherited values are:
-- wd
-- help
-- quote
-- script
-- interpreter
-- script_ext
-- program
-- args
-- serial
-- env (the values are merged instead of overwriting)
-- env_file (the values are merged instead of overwriting)
+- `wd`
+- `help`
+- `quote`
+- `script`
+- `script_runner`
+- `script_ext`
+- `script_extension` (alias for `script_ext`)
+- `program`
+- `args`
+- `serial`
+- `env` (the values are merged instead of overwriting)
+- `env_file` (the values are merged instead of overwriting)
 
 Values not inherited are:
-- `args_extend` (added to `args` when parsing the child task,
- so the parent task would actually inherit `args`)
+- `args_extend` (added to the inherited `args` and destroyed afterwards)
 - `args+` (alias for `args_extend`)
 - `private`
 

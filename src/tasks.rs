@@ -83,8 +83,9 @@ pub struct Task {
     /// Script to run
     script: Option<String>,
     /// Interpreter program to use
-    interpreter: Option<Vec<String>>,
-    /// Interpreter
+    script_runner: Option<Vec<String>>,
+    /// Script extension
+    #[serde(alias = "script_extension")]
     script_ext: Option<String>,
     /// A program to run
     program: Option<String>,
@@ -198,7 +199,7 @@ impl Task {
         }
         inherit_value!(self.help, base_task.help);
         inherit_value!(self.script, base_task.script);
-        inherit_value!(self.interpreter, base_task.interpreter);
+        inherit_value!(self.script_runner, base_task.script_runner);
         inherit_value!(self.script_ext, base_task.script_ext);
         inherit_value!(self.program, base_task.program);
         inherit_value!(self.args, base_task.args);
@@ -283,7 +284,7 @@ impl Task {
     /// Validates the task configuration.
     ///
     /// # Arguments
-    ///  
+    ///
     /// * `name` - Name of the task
     fn validate(&self) -> Result<(), TaskError> {
         if self.script.is_some() && self.program.is_some() {
@@ -293,10 +294,10 @@ impl Task {
             ));
         }
 
-        if self.interpreter.is_some() && self.interpreter.as_ref().unwrap().is_empty() {
+        if self.script_runner.is_some() && self.script_runner.as_ref().unwrap().is_empty() {
             return Err(TaskError::ImproperlyConfigured(
                 self.name.clone(),
-                String::from("`interpreter` parameter cannot be an empty array."),
+                String::from("`script_runner` parameter cannot be an empty array."),
             ));
         }
 
@@ -334,7 +335,7 @@ impl Task {
     /// environment variables.
     ///
     /// # Arguments
-    ///  
+    ///
     /// * `command` - Command to set the parameters for
     /// * `config_file` - Configuration file
     fn set_command_basics(
@@ -361,7 +362,7 @@ impl Task {
     /// Spawns a command and waits for its execution.
     ///
     /// # Arguments
-    ///  
+    ///
     /// * `command` - Command to spawn
     fn spawn_command(&self, command: &mut Command) -> DynErrResult<()> {
         let mut child = match command.spawn() {
@@ -436,7 +437,7 @@ impl Task {
 
         // Interpreter is a list, because sometimes there is need to pass extra arguments to the
         // interpreter, such as the /C option in the batch case
-        let mut interpreter_and_args = if let Some(interpreter) = &self.interpreter {
+        let mut interpreter_and_args = if let Some(interpreter) = &self.script_runner {
             interpreter.clone()
         } else {
             vec![String::from(DEFAULT_INTERPRETER)]
@@ -571,17 +572,17 @@ mod tests {
         let config_file_path = tmp_dir.join("project.yamis.toml");
         let mut file = File::create(&config_file_path).unwrap();
         file.write_all(
-            r#" 
+            r#"
     [tasks.hello_base.env]
     greeting = "hello world"
-    
+
     [tasks.calc_base.env]
     one_plus_one = "2"
-    
+
     [tasks.hello]
     bases = ["hello_base", "calc_base"]
     script = "echo $greeting, 1+1=$one_plus_one"
-    
+
     [tasks.hello.windows]
     bases = ["hello_base", "calc_base"]
     script = "echo %greeting%, 1+1=%one_plus_one%"
@@ -611,26 +612,26 @@ mod tests {
             .write_all(
                 r#"
             env_file = ".env"
-            
+
             [tasks.test.windows]
             quote = "never"
             script = "echo %VAR1% %VAR2% %VAR3%"
-            
+
             [tasks.test]
             quote = "never"
             script = "echo $VAR1 $VAR2 $VAR3"
-            
+
             [tasks.test_2.windows]
             quote = "never"
             script = "echo %VAR1% %VAR2% %VAR3%"
             env_file = ".env_2"
             env = {"VAR1" = "TASK_VAL1"}
-            
+
             [tasks.test_2]
             quote = "never"
             script = "echo $VAR1 $VAR2 $VAR3"
             env_file = ".env_2"
-            
+
             [tasks.test_2.env]
             VAR1 = "TASK_VAL1"
             "#
@@ -702,13 +703,13 @@ mod tests {
         let task = get_task(
             "sample",
             r#"
-        interpreter = []
+        script_runner = []
     "#,
             None,
         );
         let expected_error = TaskError::ImproperlyConfigured(
             String::from("sample"),
-            String::from("`interpreter` parameter cannot be an empty array."),
+            String::from("`script_runner` parameter cannot be an empty array."),
         );
         assert_eq!(task.unwrap_err().to_string(), expected_error.to_string());
 
