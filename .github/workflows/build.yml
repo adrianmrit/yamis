@@ -1,12 +1,10 @@
 on:
-  # TEMPORAL FOR TESTING
-  pull_request:
-    branches:
-      - 'dev'
   push:
-    branches:
-      - 'main'
+    tags:
+      - '*'
   workflow_dispatch:
+
+name: Build
 
 jobs:
   build:
