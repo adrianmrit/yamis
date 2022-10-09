@@ -1,7 +1,6 @@
 [package]
 name = "yamis"
 version = "1.0.0"
-rust-version = "1.63"
 edition = "2021"
 license = "GPL-3.0-only"
 authors = ["Adrian Martinez <adrianmrit@gmail.com>"]
