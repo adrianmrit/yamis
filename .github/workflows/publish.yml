@@ -9,8 +9,8 @@ on:
   workflow_dispatch:
 
 jobs:
-  release:
-    name: release ${{ matrix.target }}
+  build:
+    name: Build
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -19,9 +19,8 @@ jobs:
     steps:
       - uses: actions/checkout@v2
       - name: Compile
+        id: compile
         uses: rust-build/rust-build.action@v1.3.2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           RUSTTARGET: ${{ matrix.target }}
           EXTRA_FILES: "README.md LICENSE CHANGELOG.md"
@@ -31,6 +30,7 @@ jobs:
         uses: actions/upload-artifact@v3
         with:
           name: Binary
+          if-no-files-found: error
           path: |
             ${{ steps.compile.outputs.BUILT_ARCHIVE }}
             ${{ steps.compile.outputs.BUILT_CHECKSUM }}
