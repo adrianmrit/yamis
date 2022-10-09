@@ -1,6 +1,12 @@
 on:
-  release:
-    types: [created]
+  # TEMPORAL FOR TESTING
+  pull_request:
+    branches:
+      - 'dev'
+  push:
+    branches:
+      - 'main'
+  workflow_dispatch:
 
 jobs:
   release:
@@ -11,7 +17,7 @@ jobs:
       matrix:
         target: [x86_64-pc-windows-gnu, x86_64-unknown-linux-musl, x86_64-apple-darwin]
     steps:
-      - uses: actions/checkout@master
+      - uses: actions/checkout@v2
       - name: Compile and release
         uses: rust-build/rust-build.action@v1.3.2
         env:
@@ -20,3 +26,11 @@ jobs:
           RUSTTARGET: ${{ matrix.target }}
           EXTRA_FILES: "README.md LICENSE CHANGELOG.md"
           TOOLCHAIN_VERSION: "stable"
+          UPLOAD_MODE: none
+      - name: Upload artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: Binary
+          path: |
+            ${{ steps.compile.outputs.BUILT_ARCHIVE }}
+            ${{ steps.compile.outputs.BUILT_CHECKSUM }}
