@@ -6,7 +6,7 @@ import typing
 COV_OUT_DIR = "target_cov/cov"
 TEST_DIR = "target_cov"
 
-subprocess.run(f"rm -R {TEST_DIR}", shell=True)
+subprocess.run(f"rm -rf {TEST_DIR}", shell=True)
 
 print("Generating test binaries, this might take a while...")
 
