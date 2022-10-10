@@ -1,0 +1,7 @@
+wd: ""
+
+tasks:
+  cov:
+    help: "Run coverage and merge it into target_cov/cov"
+    program: "python"
+    args: ["generate_cov.py"]
