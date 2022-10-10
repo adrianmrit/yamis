@@ -18,8 +18,7 @@ name: Code coverage
 jobs:
   check:
     name: Check
-    os: [ ubuntu-latest ]
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
         uses: actions/checkout@v2
