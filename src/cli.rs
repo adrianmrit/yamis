@@ -153,12 +153,12 @@ impl ConfigFileContainers {
                     let ConfigFileContainerVersion::V1(container) = container;
                     let config_file_ptr = container.read_config_file(path.clone())?;
                     let config_file_lock = config_file_ptr.lock().unwrap();
-                    let tasks = config_file_lock.get_non_private_task_names();
-                    if tasks.is_empty() {
+                    let task_names = config_file_lock.get_public_task_names();
+                    if task_names.is_empty() {
                         println!("  {}", "No tasks found.".red());
                     } else {
-                        for task in tasks {
-                            println!(" - {}", colorize_task_name(task.get_name()));
+                        for task in task_names {
+                            println!(" - {}", colorize_task_name(task));
                         }
                     }
                 }
@@ -234,7 +234,7 @@ impl ConfigFileContainers {
                         }
                     };
                     let config_file_lock = config_file_ptr.lock().unwrap();
-                    let task = config_file_lock.get_task(task);
+                    let task = config_file_lock.get_public_task(task);
                     match task {
                         Some(task) => {
                             return match task.run(&args, &config_file_lock) {

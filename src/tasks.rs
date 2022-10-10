@@ -1,7 +1,5 @@
-use colored::Colorize;
 use std::collections::HashMap;
 use std::env::temp_dir;
-use std::fmt::{Display, Formatter};
 use std::fs::File;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -56,18 +54,7 @@ impl fmt::Display for TaskError {
     }
 }
 
-impl error::Error for TaskError {
-    fn description(&self) -> &str {
-        match *self {
-            TaskError::RuntimeError(_, _) => "error running task",
-            TaskError::ImproperlyConfigured(_, _) => "improperly configured task",
-        }
-    }
-
-    fn cause(&self) -> Option<&dyn error::Error> {
-        None
-    }
-}
+impl error::Error for TaskError {}
 
 /// Represents a Task
 #[derive(Debug, Deserialize)]
@@ -217,11 +204,15 @@ impl Task {
         }
 
         if self.args_extend.is_some() {
-            let new_tasks = mem::replace(&mut self.args_extend, None).unwrap();
+            let new_args = mem::replace(&mut self.args_extend, None).unwrap();
             if self.args.is_none() {
                 self.args = mem::replace(&mut self.args, Some(Vec::<String>::new()));
             }
-            self.args.as_mut().unwrap().extend(new_tasks);
+            if let Some(args) = &mut self.args {
+                args.extend(new_args);
+            } else {
+                self.args = Some(new_args);
+            }
         }
     }
 
@@ -238,7 +229,7 @@ impl Task {
     /// Returns the help for the task
     pub fn get_help(&self) -> &str {
         match self.help {
-            Some(ref help) => help,
+            Some(ref help) => help.trim(),
             None => "",
         }
     }
@@ -512,12 +503,7 @@ impl Task {
     /// * `config_file` - Configuration file of the task
     /// * `config_files` - global ConfigurationFiles instance
     pub fn run(&self, args: &TaskArgs, config_file: &ConfigFile) -> DynErrResult<()> {
-        return if self.private {
-            Err(
-                TaskError::RuntimeError(self.name.clone(), String::from("Cannot run private task"))
-                    .into(),
-            )
-        } else if self.script.is_some() {
+        return if self.script.is_some() {
             self.run_script(args, config_file)
         } else if self.program.is_some() {
             self.run_program(args, config_file)
@@ -532,26 +518,13 @@ impl Task {
     }
 }
 
-impl Display for Task {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        let help = match self.get_help() {
-            "" => "No help to display".red(),
-            help => help.green(),
-        };
-        if self.private {
-            write!(f, "{} {}\n\n{}", self.name, "private".red(), help)
-        } else {
-            write!(f, "{}\n\n{}", self.name, help)
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
+    use super::*;
     use crate::config_files::ConfigFile;
-    use crate::tasks::{Task, TaskError};
     use assert_fs::TempDir;
     use std::collections::HashMap;
+    use std::fs;
     use std::fs::File;
     use std::io::Write;
     use std::path::Path;
@@ -601,6 +574,112 @@ mod tests {
             ("one_plus_one".to_string(), "2".to_string()),
         ]);
         assert_eq!(env, expected);
+    }
+
+    #[test]
+    fn test_quotes_inheritance() {
+        let tmp_dir = TempDir::new().unwrap();
+        let config_file_path = tmp_dir.join("project.yamis.toml");
+        let mut file = File::create(&config_file_path).unwrap();
+        file.write_all(
+            r#"
+    [tasks.hello_base]
+    quote = "spaces"
+
+    [tasks.calc_base]
+    quote = "never"
+
+    [tasks.hello]
+    bases = ["hello_base", "calc_base"]
+    script = "echo hello_1"
+
+    [tasks.hello_2]
+    bases = ["calc_base", "hello_base"]
+    script = "echo hello_2"
+    "#
+            .as_bytes(),
+        )
+        .unwrap();
+
+        let config_file = ConfigFile::load(config_file_path).unwrap();
+
+        let task = config_file.get_task("hello").unwrap();
+        let task_ref = task.as_ref();
+        assert_eq!(task_ref.quote.as_ref().unwrap(), &EscapeMode::Spaces);
+
+        let task = config_file.get_task("hello_2").unwrap();
+        let task_ref = task.as_ref();
+        assert_eq!(task_ref.quote.as_ref().unwrap(), &EscapeMode::Never);
+    }
+
+    #[test]
+    fn test_args_inheritance() {
+        let tmp_dir = TempDir::new().unwrap();
+        let config_file_path = tmp_dir.join("project.yamis.toml");
+        let mut file = File::create(&config_file_path).unwrap();
+        file.write_all(
+            r#"
+    [tasks.bash]
+    program = "bash"
+
+    [tasks.bash_inline]
+    bases = ["bash"]
+    args_extend = ["-c"]
+
+    [tasks.hello]
+    bases = ["bash_inline"]
+    args_extend = ["echo", "hello"]
+
+    [tasks.hello_2]
+    bases = ["hello"]
+    args = ["-c", "echo", "hello"]
+    "#
+            .as_bytes(),
+        )
+        .unwrap();
+
+        let config_file = ConfigFile::load(config_file_path).unwrap();
+
+        let task = config_file.get_task("hello").unwrap();
+        let task_ref = task.as_ref();
+        assert_eq!(
+            task_ref.args.as_ref().unwrap(),
+            &vec!["-c".to_string(), "echo".to_string(), "hello".to_string()]
+        );
+
+        let task = config_file.get_task("hello_2").unwrap();
+        let task_ref = task.as_ref();
+        assert_eq!(
+            task_ref.args.as_ref().unwrap(),
+            &vec!["-c".to_string(), "echo".to_string(), "hello".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_get_task_help() {
+        let tmp_dir = TempDir::new().unwrap();
+        let config_file_path = tmp_dir.join("project.yamis.toml");
+        let mut file = File::create(&config_file_path).unwrap();
+        file.write_all(
+            r#"
+    [tasks.bash]
+    help = """
+    Some multiline help that should be coerced to one line
+    """
+    program = "bash"
+    "#
+            .as_bytes(),
+        )
+        .unwrap();
+
+        let config_file = ConfigFile::load(config_file_path).unwrap();
+
+        let task = config_file.get_task("bash").unwrap();
+        let task_ref = task.as_ref();
+        assert_eq!(
+            task_ref.get_help(),
+            "Some multiline help that should be coerced to one line"
+        );
     }
 
     #[test]
@@ -757,5 +836,45 @@ mod tests {
             String::from("`quote` parameter can only be set for scripts."),
         );
         assert_eq!(task.unwrap_err().to_string(), expected_error.to_string());
+
+        let task = get_task(
+            "sample",
+            r#"
+        script = "sample script"
+        args = ["some", "args"]
+    "#,
+            None,
+        );
+
+        let expected_error = TaskError::ImproperlyConfigured(
+            String::from("sample"),
+            String::from("Cannot specify `args` on scripts."),
+        );
+        assert_eq!(task.unwrap_err().to_string(), expected_error.to_string());
+    }
+
+    #[test]
+    fn test_create_temp_script() {
+        let script = "echo hello world";
+        let extension = "sh";
+        let script_path = get_temp_script(script, extension).unwrap();
+        assert!(script_path.exists());
+        assert_eq!(script_path.extension().unwrap(), extension);
+        let script_content = fs::read_to_string(script_path).unwrap();
+        assert_eq!(script_content, script);
+
+        let extension = "";
+        let script_path = get_temp_script(script, extension).unwrap();
+        assert!(script_path.exists());
+        assert!(script_path.extension().is_none());
+        let script_content = fs::read_to_string(script_path).unwrap();
+        assert_eq!(script_content, script);
+
+        let extension = ".sh";
+        let script_path = get_temp_script(script, extension).unwrap();
+        assert!(script_path.exists());
+        assert_eq!(script_path.extension().unwrap(), "sh");
+        let script_content = fs::read_to_string(script_path).unwrap();
+        assert_eq!(script_content, script);
     }
 }

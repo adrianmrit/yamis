@@ -116,18 +116,79 @@ pub fn get_path_relative_to_base<B: AsRef<OsStr> + ?Sized, P: AsRef<OsStr> + ?Si
 /// returns: DynErrResult<BTreeMap<String, String>>
 pub fn read_env_file<S: AsRef<OsStr> + ?Sized>(path: &S) -> DynErrResult<BTreeMap<String, String>> {
     let path = Path::new(path);
-    Ok(match fs::read_to_string(path) {
-        Ok(file_contents) => match parse_dotenv(&file_contents) {
-            Ok(result) => result,
-            Err(e) => return Err(e),
-        },
-        Err(e) => {
-            return Err(format!(
-                "There was an error reading the env file at {}:\n{}",
-                path.display(),
-                e
-            )
-            .into())
+    let result = match fs::read_to_string(path) {
+        Ok(content) => parse_dotenv(&content),
+        Err(err) => {
+            return Err(format!("Failed to read env file at {}: {}", path.display(), err).into())
         }
-    })
+    };
+
+    match result {
+        Ok(envs) => Ok(envs),
+        Err(err) => Err(format!("Failed to parse env file at {}: {}", path.display(), err).into()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use assert_fs::TempDir;
+    use std::env;
+    use std::fs::File;
+    use std::io::Write;
+
+    #[test]
+    fn test_read_env_file_not_found() {
+        let env_file_path = env::current_dir().unwrap().join("non_existent.env");
+        let env_map = read_env_file(&env_file_path).unwrap_err();
+        assert_eq!(
+            env_map.to_string(),
+            format!(
+                "Failed to read env file at {}: {}",
+                env_file_path.display(),
+                "No such file or directory (os error 2)"
+            )
+        );
+    }
+
+    #[test]
+    fn test_read_env_file_invalid() {
+        let tmp_dir = TempDir::new().unwrap();
+        let env_file_path = tmp_dir.join(".env");
+        let mut file = File::create(&env_file_path).unwrap();
+        file.write_all(r#"INVALID_ENV_FILE"#.as_bytes()).unwrap();
+        let env_map = read_env_file(&env_file_path).unwrap_err();
+        dbg!(env_map.to_string());
+        let expected_err = format!("Failed to parse env file at {}: ", env_file_path.display());
+        assert!(env_map.to_string().contains(&expected_err),);
+    }
+
+    #[test]
+    fn test_read_env_file() {
+        let tmp_dir = TempDir::new().unwrap();
+        let env_file_path = tmp_dir.join(".env");
+        let mut file = File::create(&env_file_path).unwrap();
+        file.write_all(
+            r#"
+    TEST_VAR=test_value
+    "#
+            .as_bytes(),
+        )
+        .unwrap();
+        let env_map = read_env_file(&env_file_path).unwrap();
+        assert_eq!(env_map.get("TEST_VAR"), Some(&"test_value".to_string()));
+    }
+
+    #[test]
+    fn test_get_path_relative_to_base() {
+        let base = "/home/user";
+        let path = "test";
+        let path = get_path_relative_to_base(base, path);
+        assert_eq!(path, PathBuf::from("/home/user/test"));
+
+        let base = "/home/user";
+        let path = "/test";
+        let path = get_path_relative_to_base(base, path);
+        assert_eq!(path, PathBuf::from("/test"));
+    }
 }
