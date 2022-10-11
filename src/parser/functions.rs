@@ -8,7 +8,6 @@ use crate::types::DynErrResult;
 
 /// Wraps a value passed to a function, which can be either a str pointer or pointer to a
 /// Vec of Strings
-#[derive(PartialEq, Eq, Debug)]
 pub enum FunVal<'a> {
     String(&'a str),
     Vec(&'a Vec<String>),
@@ -37,6 +36,98 @@ impl FunResult {
         }
     }
 }
+
+/// Validates the number of arguments for a function, but not their type
+///
+/// # Arguments
+///
+/// * `fn_name`: Name of the function to display in the error
+/// * `args`: list of arguments
+/// * `min`: min number of arguments
+/// * `max`: max number of arguments
+///
+/// returns: Result<(), Box<dyn Error, Global>>
+fn validate_arguments_length(
+    fn_name: &str,
+    args: &Vec<FunVal>,
+    min: usize,
+    max: usize,
+) -> DynErrResult<()> {
+    let len = args.len();
+    if len < min {
+        return if min == max {
+            Err(format!(
+                "{} requires {} arguments, but {} were given",
+                fn_name, min, len
+            )
+            .into())
+        } else {
+            Err(format!(
+                "{} requires at least {} arguments, but {} were given",
+                fn_name, min, len
+            )
+            .into())
+        };
+    } else if len > max {
+        return if max == min {
+            Err(format!(
+                "{} requires {} arguments, but {} were given",
+                fn_name, max, len
+            )
+            .into())
+        } else {
+            Err(format!(
+                "{} requires at most {} arguments, but {} were given",
+                fn_name, max, len
+            )
+            .into())
+        };
+    }
+    Ok(())
+}
+
+/// Validates that the argument at the given index is a string
+///
+/// # Arguments
+///
+/// * `args`: list of function arguments
+/// * `index`: index of the argument
+///
+/// returns: Result<&str, Box<dyn Error, Global>>
+fn validate_string<'a>(fn_name: &str, args: &'a [FunVal], index: usize) -> DynErrResult<&'a str> {
+    match args[index] {
+        FunVal::String(s) => Ok(s),
+        FunVal::Vec(_) => Err(format!(
+            "{} requires a string argument at index {}, but a list was given",
+            fn_name, index
+        )
+        .into()),
+    }
+}
+
+// Currently unused so raises a warning
+// /// Validates that the argument at the given index is a list of strings
+// ///
+// /// # Arguments
+// ///
+// /// * `args`: list of function arguments
+// /// * `index`: index of the argument
+// ///
+// /// returns: Result<&str, Box<dyn Error, Global>>
+// fn validate_vec<'a>(
+//     fn_name: &str,
+//     args: &'a [FunVal],
+//     index: usize,
+// ) -> DynErrResult<&'a Vec<String>> {
+//     match args[index] {
+//         FunVal::String(_) => Err(format!(
+//             "{} requires a list argument at index {}, but a string was given",
+//             fn_name, index
+//         )
+//         .into()),
+//         FunVal::Vec(l) => Ok(l),
+//     }
+// }
 
 /// Signature that functions must follow
 type Function = fn(&Vec<FunVal>) -> DynErrResult<FunResult>;
@@ -85,18 +176,15 @@ fn map_format_string(fmt_string: &str, val: &str) -> DynErrResult<String> {
 /// assert_eq!(result, expected);
 /// ```
 fn map(args: &Vec<FunVal>) -> DynErrResult<FunResult> {
-    if args.len() != 2 {
-        return Err("map takes exactly two arguments".into());
-    }
-    let fmt_string = match args.index(0) {
-        FunVal::String(s) => s,
-        FunVal::Vec(_) => return Err("The first argument of map should be a string".into()),
-    };
+    let fn_name = "map";
+    validate_arguments_length(fn_name, args, 2, 2)?;
+    let fmt_string = validate_string(fn_name, args, 0)?;
+
     return match args.index(1) {
         FunVal::String(s) => {
             let result = map_format_string(fmt_string, s)?;
             Ok(FunResult::String(result))
-        } // TODO: format and return only this one
+        }
         FunVal::Vec(l) => {
             let mut result = Vec::with_capacity(l.capacity());
             for s in *l {
@@ -107,32 +195,26 @@ fn map(args: &Vec<FunVal>) -> DynErrResult<FunResult> {
     };
 }
 
-/// Similar to map, but the result is always a string
+/// Like calling map and then joining the values with the empty string
 ///
 /// # Arguments
 ///
 /// * `args`: Function values
 ///
 /// returns: Result<FunResult, Box<dyn Error, Global>>
-///
-/// # Examples
-///
-fn flat(args: &Vec<FunVal>) -> DynErrResult<FunResult> {
-    if args.len() != 2 {
-        return Err("flat takes exactly two arguments".into());
-    }
-    let fmt_string = match args.index(0) {
-        FunVal::String(s) => s,
-        FunVal::Vec(_) => return Err("The first argument of flat should be a string".into()),
-    };
+fn jmap(args: &Vec<FunVal>) -> DynErrResult<FunResult> {
+    let fn_name = "jmap";
+    validate_arguments_length(fn_name, args, 2, 2)?;
+    let fmt_string = validate_string(fn_name, args, 0)?;
+
     return match args.index(1) {
         FunVal::String(s) => {
             let result = map_format_string(fmt_string, s)?;
             Ok(FunResult::String(result))
-        } // TODO: format and return only this one
-        FunVal::Vec(l) => {
-            let mut result = String::with_capacity(l.capacity() * 5);
-            for s in *l {
+        }
+        FunVal::Vec(values) => {
+            let mut result = String::with_capacity(values.capacity() * 5);
+            for s in *values {
                 result.push_str(&map_format_string(fmt_string, s)?);
             }
             Ok(FunResult::String(result))
@@ -158,13 +240,10 @@ fn flat(args: &Vec<FunVal>) -> DynErrResult<FunResult> {
 /// assert_eq!(result, expected);
 /// ```
 fn join(args: &Vec<FunVal>) -> DynErrResult<FunResult> {
-    if args.len() != 2 {
-        return Err("join takes exactly two arguments".into());
-    }
-    let join_val = match args.index(0) {
-        FunVal::String(s) => s,
-        FunVal::Vec(_) => return Err("The first argument of join should be a string".into()),
-    };
+    let fn_name = "join";
+    validate_arguments_length(fn_name, args, 2, 2)?;
+    let join_val = validate_string(fn_name, args, 0)?;
+
     match args.index(1) {
         FunVal::String(s) => Ok(FunResult::String(s.to_string())),
         FunVal::Vec(values) => {
@@ -205,33 +284,80 @@ fn join(args: &Vec<FunVal>) -> DynErrResult<FunResult> {
 /// assert_eq!(result, expected);
 /// ```
 fn fmt(args: &Vec<FunVal>) -> DynErrResult<FunResult> {
-    if args.len() < 2 {
-        return Err("fmt takes at least two arguments".into());
-    }
-    let mut args_iter = args.iter();
-    let fmt_string = match args_iter.next().unwrap() {
-        FunVal::String(s) => s,
-        FunVal::Vec(_) => return Err("The first argument of fmt should be a string".into()),
-    };
+    let fn_name = "fmt";
+    validate_arguments_length(fn_name, args, 2, usize::MAX)?;
+    let fmt_string = validate_string(fn_name, args, 0)?;
     let mut values: Vec<&str> = Vec::with_capacity(args.len() - 1);
-    for (i, arg) in args_iter.enumerate() {
-        match arg {
-            FunVal::String(s) => values.push(*s),
-            FunVal::Vec(_) => {
-                return Err(format!("fmt got multiple values at argument at position {i}").into())
-            }
-        }
+    let mut i = 1;
+    while i < args.len() {
+        let arg = validate_string(fn_name, args, i)?;
+        values.push(arg);
+        i += 1;
     }
     Ok(FunResult::String(format_string(fmt_string, &values)?))
+}
+
+/// Split the string into multiple values. The first argument is the string to split by, and the
+/// second is the string to split. If you want to split multiple passed values, then will need
+/// to join them first and then split.
+///
+/// # Arguments
+///
+/// * `args`: Function values
+///
+/// returns: Result<FunResult, Box<dyn Error, Global>>
+///
+/// # Examples
+///
+/// ```ignore
+///
+/// let vars = vec![FunVal::String(" and "), FunVal::Vec(&values)];
+/// ```
+fn split(args: &Vec<FunVal>) -> DynErrResult<FunResult> {
+    let fn_name = "split";
+    validate_arguments_length(fn_name, args, 2, 2)?;
+    let split_val = validate_string(fn_name, args, 0)?;
+    let split_string = validate_string(fn_name, args, 1)?;
+    Ok(FunResult::Vec(
+        split_string
+            .split(split_val)
+            .map(|s| s.to_string())
+            .collect(),
+    ))
+}
+
+/// Removes leading and trailing whitespaces (including newlines) from the string or each string
+/// in list of strings.
+///
+/// # Arguments
+///
+/// * `args`: Function values
+///
+/// returns: Result<FunResult, Box<dyn Error, Global>>
+fn trim(args: &Vec<FunVal>) -> DynErrResult<FunResult> {
+    let fn_name = "trim";
+    validate_arguments_length(fn_name, args, 1, 1)?;
+    match args.index(0) {
+        FunVal::String(s) => Ok(FunResult::String(s.trim().to_string())),
+        FunVal::Vec(values) => {
+            let mut result = Vec::with_capacity(values.capacity());
+            for s in *values {
+                result.push(s.trim().to_string());
+            }
+            Ok(FunResult::Vec(result))
+        }
+    }
 }
 
 /// Returns a FunctionRegistry with the default functions
 fn load_default_functions() -> FunctionRegistry {
     let mut functions: HashMap<String, Function> = HashMap::new();
     functions.insert(String::from("map"), map);
-    functions.insert(String::from("flat"), flat);
+    functions.insert(String::from("jmap"), jmap);
     functions.insert(String::from("join"), join);
     functions.insert(String::from("fmt"), fmt);
+    functions.insert(String::from("split"), split);
+    functions.insert(String::from("trim"), trim);
     FunctionRegistry { functions }
 }
 
@@ -240,89 +366,167 @@ lazy_static! {
     pub static ref DEFAULT_FUNCTIONS: FunctionRegistry = load_default_functions();
 }
 
-#[test]
-fn test_map() {
-    let vars = vec![
-        FunVal::String("Hello {} ! ? {{ }}"),
-        FunVal::String("world"),
-    ];
-    let result = map(&vars).unwrap();
-    let expected = FunResult::String(String::from("Hello world ! ? { }"));
-    assert_eq!(result, expected);
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    let values = vec!["world".to_string(), "people".to_string()];
-    let vars = vec![FunVal::String("Hello {} ! ? {{ }}"), FunVal::Vec(&values)];
-    let result = map(&vars).unwrap();
-    let expected = FunResult::Vec(vec![
-        "Hello world ! ? { }".to_string(),
-        "Hello people ! ? { }".to_string(),
-    ]);
-    assert_eq!(result, expected);
+    #[test]
+    fn test_validate_arguments_length() {
+        let fn_name = "test";
+        let args = vec![FunVal::String("test")];
+        let result = validate_arguments_length(fn_name, &args, 1, 1);
+        assert!(result.is_ok());
 
-    let values = vec!["world".to_string(), "people".to_string()];
-    let vars = vec![FunVal::String("Hello { ! ? {{ }}"), FunVal::Vec(&values)];
-    let result = map(&vars).unwrap_err().to_string();
-    let expected_result = r#"Error formatting the string:
+        let result = validate_arguments_length(fn_name, &args, 2, 2);
+        assert!(result.is_err());
+
+        let result = validate_arguments_length(fn_name, &args, 1, 2);
+        assert!(result.is_ok());
+
+        let result = validate_arguments_length(fn_name, &args, 0, 0);
+        assert!(result.is_err());
+
+        let result = validate_arguments_length(fn_name, &args, 2, 2);
+        assert!(result.is_err());
+
+        let result = validate_arguments_length(fn_name, &args, 2, 3);
+        assert!(result.is_err());
+
+        let args = vec![FunVal::String("test"), FunVal::String("test")];
+        let result = validate_arguments_length(fn_name, &args, 0, 1);
+        assert!(result.is_err());
+
+        let result = validate_arguments_length(fn_name, &args, 1, 1);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_string() {
+        let fn_name = "test";
+        let vec = vec!["test".to_string(), "test".to_string()];
+        let args = vec![FunVal::String("test"), FunVal::Vec(&vec)];
+        let result = validate_string(fn_name, &args, 0);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "test");
+
+        let result = validate_string(fn_name, &args, 1);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_map() {
+        let vars = vec![FunVal::String("Hello %s ! ? %%s"), FunVal::String("world")];
+        let result = map(&vars).unwrap();
+        let expected = FunResult::String(String::from("Hello world ! ? %s"));
+        assert_eq!(result, expected);
+
+        let values = vec!["world".to_string(), "people".to_string()];
+        let vars = vec![FunVal::String("Hello %s ! ? %%s"), FunVal::Vec(&values)];
+        let result = map(&vars).unwrap();
+        let expected = FunResult::Vec(vec![
+            "Hello world ! ? %s".to_string(),
+            "Hello people ! ? %s".to_string(),
+        ]);
+        assert_eq!(result, expected);
+
+        let values = vec!["world".to_string(), "people".to_string()];
+        let vars = vec![FunVal::String("Hello % ! ? %s"), FunVal::Vec(&values)];
+        let result = map(&vars).unwrap_err().to_string();
+        let expected_result = r#"Error formatting the string:
+Invalid format string:
  --> 1:7
   |
-1 | Hello { ! ? {{ }}
+1 | Hello % ! ? %s
   |       ^---
   |
-  = expected EOI, literal, or tag"#;
-    assert_eq!(result, expected_result);
-}
+  = expected EOI, literal, or %s"#;
+        assert_eq!(result, expected_result);
+    }
 
-#[test]
-fn test_flat() {
-    let vars = vec![
-        FunVal::String("Hello {} ! ? {{ }}"),
-        FunVal::String("world"),
-    ];
-    let result = flat(&vars).unwrap();
-    let expected = FunResult::String(String::from("Hello world ! ? { }"));
-    assert_eq!(result, expected);
+    #[test]
+    fn test_jmap() {
+        let vars = vec![FunVal::String("Hello %s ! ? %%s"), FunVal::String("world")];
+        let result = jmap(&vars).unwrap();
+        let expected = FunResult::String(String::from("Hello world ! ? %s"));
+        assert_eq!(result, expected);
 
-    let values = vec!["world".to_string(), "people".to_string()];
-    let vars = vec![FunVal::String("Hello {}, "), FunVal::Vec(&values)];
-    let result = flat(&vars).unwrap();
-    let expected = FunResult::String(String::from("Hello world, Hello people, "));
-    assert_eq!(result, expected);
+        let values = vec!["world".to_string(), "people".to_string()];
+        let vars = vec![FunVal::String("Hello %s, "), FunVal::Vec(&values)];
+        let result = jmap(&vars).unwrap();
+        let expected = FunResult::String(String::from("Hello world, Hello people, "));
+        assert_eq!(result, expected);
 
-    let values = vec!["world".to_string(), "people".to_string()];
-    let vars = vec![FunVal::String("Hello { ! ? {{ }}"), FunVal::Vec(&values)];
-    let result = map(&vars).unwrap_err().to_string();
-    let expected_result = r#"Error formatting the string:
+        let values = vec!["world".to_string(), "people".to_string()];
+        let vars = vec![FunVal::String("Hello % ! ? %%"), FunVal::Vec(&values)];
+        let result = map(&vars).unwrap_err().to_string();
+        let expected_result = r#"Error formatting the string:
+Invalid format string:
  --> 1:7
   |
-1 | Hello { ! ? {{ }}
+1 | Hello % ! ? %%
   |       ^---
   |
-  = expected EOI, literal, or tag"#;
-    assert_eq!(result, expected_result);
-}
+  = expected EOI, literal, or %s"#;
+        assert_eq!(result, expected_result);
+    }
 
-#[test]
-fn test_join() {
-    let values = vec!["world".to_string(), "people".to_string()];
-    let vars = vec![FunVal::String(", "), FunVal::Vec(&values)];
-    let result = join(&vars).unwrap();
-    let expected = FunResult::String(String::from("world, people"));
-    assert_eq!(result, expected);
+    #[test]
+    fn test_join() {
+        let values = vec!["world".to_string(), "people".to_string()];
+        let vars = vec![FunVal::String(", "), FunVal::Vec(&values)];
+        let result = join(&vars).unwrap();
+        let expected = FunResult::String(String::from("world, people"));
+        assert_eq!(result, expected);
 
-    let vars = vec![FunVal::String(","), FunVal::String("world")];
-    let result = join(&vars).unwrap();
-    let expected = FunResult::String(String::from("world"));
-    assert_eq!(result, expected);
-}
+        let vars = vec![FunVal::String(","), FunVal::String("world")];
+        let result = join(&vars).unwrap();
+        let expected = FunResult::String(String::from("world"));
+        assert_eq!(result, expected);
 
-#[test]
-fn test_fmt() {
-    let vars = vec![
-        FunVal::String("Hello {} and {}"),
-        FunVal::String("world"),
-        FunVal::String("people"),
-    ];
-    let result = fmt(&vars).unwrap();
-    let expected = FunResult::String(String::from("Hello world and people"));
-    assert_eq!(result, expected);
+        let values: Vec<String> = vec![];
+        let vars = vec![FunVal::String(","), FunVal::Vec(&values)];
+        let result = join(&vars).unwrap();
+        let expected = FunResult::String(String::from(""));
+        assert_eq!(result, expected);
+
+        let values: Vec<String> = vec![String::from("world")];
+        let vars = vec![FunVal::String(","), FunVal::Vec(&values)];
+        let result = join(&vars).unwrap();
+        let expected = FunResult::String(String::from("world"));
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_fmt() {
+        let vars = vec![
+            FunVal::String("Hello %s and %s"),
+            FunVal::String("world"),
+            FunVal::String("people"),
+        ];
+        let result = fmt(&vars).unwrap();
+        let expected = FunResult::String(String::from("Hello world and people"));
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_split() {
+        let vars = vec![FunVal::String(","), FunVal::String("world,people")];
+        let result = split(&vars).unwrap();
+        let expected = FunResult::Vec(vec!["world".to_string(), "people".to_string()]);
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_trim() {
+        let vars = vec![FunVal::String(" world ")];
+        let result = trim(&vars).unwrap();
+        let expected = FunResult::String(String::from("world"));
+        assert_eq!(result, expected);
+
+        let values = vec![" world ".to_string(), " people ".to_string()];
+        let vars = vec![FunVal::Vec(&values)];
+        let result = trim(&vars).unwrap();
+        let expected = FunResult::Vec(vec!["world".to_string(), "people".to_string()]);
+        assert_eq!(result, expected);
+    }
 }

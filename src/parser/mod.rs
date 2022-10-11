@@ -1,12 +1,15 @@
 use crate::parser::functions::{FunResult, DEFAULT_FUNCTIONS};
 use crate::types::{DynErrResult, TaskArgs};
+use pest::error::{Error as PestError, ErrorVariant};
 use pest::iterators::Pair;
 use pest::Parser;
 use pest_derive::Parser;
 use serde_derive::Deserialize;
-use std::cmp::min;
+use std::cmp::{max, min};
 use std::collections::HashMap;
+use std::fmt::{Display, Formatter};
 use std::str::FromStr;
+use std::{error, fmt};
 
 mod functions;
 
@@ -22,15 +25,38 @@ pub enum EscapeMode {
     Never,
 }
 
-struct Range {
-    from: Option<usize>,
-    to: Option<usize>,
+/// Represents the slice from the user, either by index or range
+enum Slice {
+    Index(isize),
+    Range(Option<isize>, Option<isize>),
 }
 
-enum Slice {
+/// Represents the actual slice after the indexes are resolved correctly
+enum RealSlice {
     Index(usize),
-    Range(Range),
+    Range(usize, usize),
 }
+
+/// Error raised when there is an error parsing an integer
+#[derive(Debug)]
+struct IntParsingError(String);
+
+impl Display for IntParsingError {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        write!(f, "Error parsing `{}` as an integer", self.0)
+    }
+}
+
+impl error::Error for IntParsingError {}
+
+/// Returns a custom error for the given span and message
+fn custom_span_error(span: pest::Span, msg: String) -> PestError<Rule> {
+    PestError::new_from_span(ErrorVariant::CustomError { message: msg }, span)
+}
+
+// fn custom_pos_error(pos: pest::Position, msg: String) -> PestError<Rule> {
+//     PestError::new_from_pos(ErrorVariant::CustomError { message: msg }, pos)
+// }
 
 /// Pest parser for script
 #[derive(Parser)]
@@ -78,53 +104,61 @@ fn rename_rules(rule: &Rule) -> String {
     }
 }
 
+/// Parses a string into an integer
+fn parse_int(s: &str) -> Result<isize, IntParsingError> {
+    s.parse::<isize>()
+        .map_err(|_| IntParsingError(s.to_string()))
+}
+
 /// Returns a `Slice` enum from the pair
-fn get_slice_repr(slice: Pair<Rule>) -> Slice {
+fn get_slice_repr(slice: Pair<Rule>) -> DynErrResult<Slice> {
     let mut slice_inner = slice.into_inner();
     let val = slice_inner.next().unwrap();
     match val.as_rule() {
-        Rule::index => Slice::Index(usize::from_str(val.as_str()).unwrap()),
-        Rule::slice => {
-            let mut range = Range {
-                from: None,
-                to: None,
-            };
+        Rule::index => Ok(Slice::Index(parse_int(val.as_str())?)),
+        Rule::range => {
+            let mut from = None;
+            let mut to = None;
             let val_inner = val.into_inner();
             for val in val_inner {
                 match val.as_rule() {
-                    Rule::range_from => range.from = Some(usize::from_str(val.as_str()).unwrap()),
-                    Rule::range_to => range.to = Some(usize::from_str(val.as_str()).unwrap()),
-                    v => panic!("Unexpected rule {:?}", v),
+                    Rule::range_from => from = Some(parse_int(val.as_str())?),
+                    Rule::range_to => to = Some(parse_int(val.as_str())?),
+                    v => unreachable!("Unexpected rule {:?}", v),
                 }
             }
-            Slice::Range(range)
+            Ok(Slice::Range(from, to))
         }
-        v => panic!("Unexpected rule {:?}", v),
+        v => unreachable!("Unexpected rule {:?}", v),
     }
 }
 
 /// Slices a string
-fn slice_string(val: String, slice: Slice) -> FunResult {
+fn slice_string(val: String, slice: RealSlice) -> FunResult {
     match slice {
-        Slice::Index(i) => FunResult::String(String::from(&val[i..i + 1])),
-        Slice::Range(range) => {
-            let from = range.from.unwrap_or(0);
-            let to = min(range.to.unwrap_or(val.len()), val.len());
+        RealSlice::Index(i) => {
+            if i >= val.len() {
+                return FunResult::String("".to_string());
+            }
+            FunResult::String(val.chars().nth(i).unwrap().to_string())
+        }
+        RealSlice::Range(from, to) => {
+            if from >= val.len() || from >= to {
+                return FunResult::String("".to_string());
+            }
             FunResult::String(String::from(val.get(from..to).unwrap_or("")))
         }
     }
 }
 
 /// Slices a vector
-fn slice_vec(mut val: Vec<String>, slice: Slice) -> FunResult {
+fn slice_vec(mut val: Vec<String>, slice: RealSlice) -> FunResult {
     match slice {
-        Slice::Index(i) => FunResult::String(String::from(&val[i])),
-        Slice::Range(range) => {
-            let from = range.from.unwrap_or(0);
-            if from >= val.len() {
+        RealSlice::Index(i) => FunResult::String(String::from(&val[i])),
+        RealSlice::Range(from, to) => {
+            if from >= val.len() || from >= to {
                 FunResult::Vec(vec![])
             } else {
-                let to = min(range.to.unwrap_or(val.len()), val.len());
                 let result = val.drain(from..to).collect();
                 FunResult::Vec(result)
             }
@@ -133,7 +167,7 @@ fn slice_vec(mut val: Vec<String>, slice: Slice) -> FunResult {
 }
 
 /// Slices a value
-fn slice_val(val: FunResult, slice: Slice) -> FunResult {
+fn slice_val(val: FunResult, slice: RealSlice) -> FunResult {
     match val {
         FunResult::String(v) => slice_string(v, slice),
         FunResult::Vec(v) => slice_vec(v, slice),
@@ -155,7 +189,60 @@ fn parse_expression_inner(
         Rule::all_args => parse_all(cli_args),
         Rule::env_var => parse_env_var(param, env),
         Rule::string => parse_string(param),
-        v => panic!("Unexpected rule {:?}", v),
+        v => unreachable!("Unexpected rule {:?}", v),
+    }
+}
+
+fn parse_slice(expression: Pair<Rule>, val: FunResult, optional: bool) -> DynErrResult<FunResult> {
+    let val_len = match val {
+        FunResult::String(ref v) => v.len(),
+        FunResult::Vec(ref v) => v.len(),
+    } as isize;
+    // usize is 2^32 in 32 bit systems, or 2^64 in 64 bit systems
+    // i32 is between -2^31 and 2^31-1, which are much smaller than usize.
+    // So we can safely cast to i32
+    // There are still edge cases if the slice is larger than 2^31, but that's very unlikely
+    let span = expression.as_span();
+    let slice = get_slice_repr(expression)?;
+    match slice {
+        Slice::Index(i) => {
+            let real_index = if i < 0 { val_len + i } else { i };
+            if real_index >= val_len || real_index < 0 {
+                if !optional {
+                    Err(custom_span_error(
+                        span,
+                        String::from("Index out of bounds for mandatory expression"),
+                    )
+                    .into())
+                } else {
+                    Ok(FunResult::String("".to_string()))
+                }
+            } else {
+                Ok(slice_val(val, RealSlice::Index(real_index as usize)))
+            }
+        }
+        Slice::Range(from, to) => {
+            let from = from.unwrap_or(0);
+            let to = min(to.unwrap_or(val_len), val_len);
+            let real_from = if from < 0 { val_len + from } else { from };
+            let real_to = if to < 0 { val_len + to } else { to };
+            if real_from >= val_len || real_from < 0 || real_from > real_to {
+                if !optional {
+                    Err(custom_span_error(
+                        span,
+                        String::from("Range out of bounds for mandatory expression"),
+                    )
+                    .into())
+                } else {
+                    Ok(FunResult::Vec(vec![]))
+                }
+            } else {
+                Ok(slice_val(
+                    val,
+                    RealSlice::Range(real_from as usize, max(real_to, 0) as usize),
+                ))
+            }
+        }
     }
 }
 
@@ -171,27 +258,29 @@ fn parse_expression(
     let expression_copy = expression.clone();
     let mut expression_inner_values = expression.into_inner();
     let expression_inner = expression_inner_values.next().unwrap();
+    let span = expression_inner.as_span();
     let mut val = match expression_inner.as_rule() {
         Rule::expression_inner => parse_expression_inner(expression_inner, cli_args, env)?,
-        v => panic!("Unexpected rule {:?}", v),
+        v => unreachable!("Unexpected rule {:?}", v),
     };
-    let mut mandatory = true;
+    // We check if it is optional first so that we can return the appropriate error message
+    let optional = match expression_copy.into_inner().last() {
+        Some(v) => v.as_rule() == Rule::optional,
+        None => false,
+    };
     for slice_or_modifier in expression_inner_values {
         match slice_or_modifier.as_rule() {
-            Rule::optional => {
-                mandatory = false;
-            }
             Rule::slice => {
-                let slice = get_slice_repr(slice_or_modifier);
-                val = slice_val(val, slice)
+                val = parse_slice(slice_or_modifier, val, optional)?;
             }
-            v => panic!("Unexpected rule {:?}", v),
+            Rule::optional => (), // we already checked if it is optional
+            v => unreachable!("Unexpected rule {:?}", v),
         }
     }
-    if mandatory && val.is_empty() {
-        Err(format!(
-            "Expression `{}` should return a value",
-            expression_copy.as_span().as_str()
+    if !optional && val.is_empty() {
+        Err(custom_span_error(
+            span,
+            String::from("Mandatory expression did not return a value"),
         )
         .into())
     } else {
@@ -201,15 +290,23 @@ fn parse_expression(
 
 /// Parses a function
 fn parse_fun(
-    tag: Pair<Rule>,
+    function_pair: Pair<Rule>,
     cli_args: &TaskArgs,
     env: &HashMap<String, String>,
 ) -> DynErrResult<FunResult> {
-    let mut tag_inner = tag.into_inner();
-    let fun_name = tag_inner.next().unwrap().as_str();
-    let arguments = tag_inner.next();
+    let function_span = function_pair.as_span();
+    let mut function_inner = function_pair.into_inner();
+    let fun_name_pair = function_inner.next().unwrap();
+    let fun_name = fun_name_pair.as_str();
+    let arguments = function_inner.next();
     let fun = match DEFAULT_FUNCTIONS.functions.get(fun_name) {
-        None => return Err(format!("There is no function named {}", fun_name).into()),
+        None => {
+            return Err(custom_span_error(
+                fun_name_pair.as_span(),
+                format!("Undefined function `{}`", fun_name_pair.as_str()),
+            )
+            .into())
+        }
         Some(fun) => fun,
     };
 
@@ -226,7 +323,14 @@ fn parse_fun(
             arguments_list
         }
     };
-    fun(&arguments.iter().map(|v| v.as_val()).collect())
+    match fun(&arguments.iter().map(|v| v.as_val()).collect()) {
+        Ok(v) => Ok(v),
+        Err(e) => Err(custom_span_error(
+            function_span,
+            format!("Error running function `{}`: {}", fun_name, e),
+        )
+        .into()),
+    }
 }
 
 /// Parses a string
@@ -248,14 +352,14 @@ fn parse_string(tag: Pair<Rule>) -> DynErrResult<FunResult> {
                     "\"" => result.push('"'),
                     "'" => result.push('\''),
                     v => {
-                        panic!("Unexpected escaped value {}", v)
+                        unreachable!("Unexpected escaped value {}", v)
                     }
                 }
                 if let Some(other) = inner.next() {
-                    panic!("Unexpected pair {:?}", other)
+                    unreachable!("Unexpected pair {:?}", other)
                 }
             }
-            v => panic!("Unexpected rule {:?}", v),
+            v => unreachable!("Unexpected rule {:?}", v),
         }
     }
     Ok(FunResult::String(result))
@@ -268,7 +372,7 @@ fn parse_arg(tag: Pair<Rule>, cli_args: &TaskArgs) -> DynErrResult<FunResult> {
     let real_index: usize = usize::from_str(arg_index).unwrap() - 1;
     let val: Option<&String> = cli_args.get("*").unwrap().get(real_index);
     match val {
-        None => Ok(FunResult::Vec(vec![])),
+        None => Ok(FunResult::String(String::from(""))),
         Some(val) => Ok(FunResult::String(String::from(val))),
     }
 }
@@ -290,7 +394,7 @@ fn parse_env_var(tag: Pair<Rule>, env: &HashMap<String, String>) -> DynErrResult
     let env_var_name = tag_inner.next().unwrap();
     let env_var = env.get(env_var_name.as_str());
     match env_var {
-        None => Ok(FunResult::Vec(vec![])),
+        None => Ok(FunResult::String(String::from(""))),
         Some(val) => Ok(FunResult::String(val.clone())),
     }
 }
@@ -313,7 +417,7 @@ fn parse_tag(
     if let Some(tag) = tag.into_inner().next() {
         return parse_expression(tag, cli_args, env);
     }
-    panic!("tag should have inner values");
+    unreachable!("tag should have inner values");
 }
 
 /// Parses the script, returning a String
@@ -351,7 +455,7 @@ pub fn parse_script<S: AsRef<str>>(
                         Rule::esc_cb => result.push('}'),
                         Rule::literal_content => result.push_str(literal.as_str()),
                         v => {
-                            panic!("Unexpected rule {:?}", v);
+                            unreachable!("Unexpected rule {:?}", v);
                         }
                     }
                 }
@@ -360,17 +464,19 @@ pub fn parse_script<S: AsRef<str>>(
                 let tag_val = parse_tag(token, args, env)?;
                 match tag_val {
                     FunResult::String(val) => {
-                        let escape = match escape_mode {
-                            EscapeMode::Always => true,
-                            EscapeMode::Spaces => val.contains(' '),
-                            EscapeMode::Never => false,
-                        };
-                        if escape {
-                            result.push('"');
-                        }
-                        result.push_str(&val);
-                        if escape {
-                            result.push('"');
+                        if !val.is_empty() {
+                            let escape = match escape_mode {
+                                EscapeMode::Always => true,
+                                EscapeMode::Spaces => val.contains(' '),
+                                EscapeMode::Never => false,
+                            };
+                            if escape {
+                                result.push('"');
+                            }
+                            result.push_str(&val);
+                            if escape {
+                                result.push('"');
+                            }
                         }
                     }
                     FunResult::Vec(values) => {
@@ -402,7 +508,7 @@ pub fn parse_script<S: AsRef<str>>(
                 break;
             }
             v => {
-                panic!("Unexpected rule {:?}", v);
+                unreachable!("Unexpected rule {:?}", v);
             }
         }
     }
@@ -438,7 +544,7 @@ fn parse_param(
             match next.as_rule() {
                 Rule::EOI => (), // expected
                 v => {
-                    panic!("Unexpected rule {:?}", v);
+                    unreachable!("Unexpected rule {:?}", v);
                 }
             }
             parse_tag(tag, args, env)
@@ -454,17 +560,17 @@ fn parse_param(
                                 Rule::esc_ob => buffer.push('{'),
                                 Rule::esc_cb => buffer.push('}'),
                                 Rule::literal_content => buffer.push_str(pair.as_str()),
-                                v => panic!("Unexpected rule {:?}", v),
+                                v => unreachable!("Unexpected rule {:?}", v),
                             }
                         }
                     }
-                    v => panic!("Unexpected rule {:?}", v),
+                    v => unreachable!("Unexpected rule {:?}", v),
                 }
             }
             Ok(FunResult::String(buffer))
         }
         Rule::EOI => Ok(FunResult::String(String::new())),
-        v => panic!("Unexpected rule {:?}", v),
+        v => unreachable!("Unexpected rule {:?}", v),
     }
 }
 
@@ -486,173 +592,329 @@ pub fn parse_params(
     let mut result = Vec::with_capacity(params.capacity());
     for param in params {
         match parse_param(param, args, env)? {
-            FunResult::String(val) => result.push(val),
+            FunResult::String(val) => {
+                if !val.is_empty() {
+                    result.push(val)
+                }
+            }
             FunResult::Vec(values) => result.extend(values),
         }
     }
     Ok(result)
 }
 
-#[test]
-fn test_parse_script() {
-    let mut vars = HashMap::<String, Vec<String>>::new();
-    let mut env = HashMap::new();
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    let script = "hello {$@?}";
-    let result = parse_script(script, &vars, &env, &EscapeMode::Never).unwrap();
-    assert_eq!(result, "hello ");
+    #[test]
+    fn test_parse_script() {
+        // TODO: Separate into individual tests
+        let mut vars = HashMap::<String, Vec<String>>::new();
+        let mut env = HashMap::new();
 
-    env.insert(
-        String::from("TEST_ENV_VARIABLE"),
-        String::from("sample_val"),
-    );
+        let script = "hello {$@?}";
+        let result = parse_script(script, &vars, &env, &EscapeMode::Never).unwrap();
+        assert_eq!(result, "hello ");
 
-    vars.insert(
-        String::from("*"),
-        vec![
-            String::from("positional"),
-            String::from("--key=val1"),
-            String::from("--key=val2"),
-        ],
-    );
+        env.insert(
+            String::from("TEST_ENV_VARIABLE"),
+            String::from("sample_val"),
+        );
 
-    vars.insert(
-        String::from("key"),
-        vec![String::from("val1"), String::from("val2")],
-    );
+        vars.insert(
+            String::from("*"),
+            vec![
+                String::from("positional"),
+                String::from("--key=val1"),
+                String::from("--key=val2"),
+                String::from("spaced value"),
+            ],
+        );
 
-    let script =
-        "Echo {{Hello}} {$@}{hello?} {key} {$1} {$2} {$5?} {$TEST_ENV_VARIABLE} {$TEST_ENV_VARIABLE2?}";
-    let result = parse_script(script, &vars, &env, &EscapeMode::Never).unwrap();
-    assert_eq!(
-        result,
-        "Echo {Hello} positional --key=val1 --key=val2 val1 val2 positional --key=val1  sample_val "
-    );
+        vars.insert(
+            String::from("key"),
+            vec![String::from("val1"), String::from("val2")],
+        );
 
-    let script = r#"Echo {{map(Hello)}} {map("--f=\"{}.txt\"",key)}"#;
+        let script =
+            "Echo {{Hello}} {$@}{hello?} {key} {$1} {$2} {$5?} {$TEST_ENV_VARIABLE} {$TEST_ENV_VARIABLE2?}";
+        let result = parse_script(script, &vars, &env, &EscapeMode::Always).unwrap();
+        assert_eq!(
+            result,
+            "Echo {Hello} \"positional\" \"--key=val1\" \"--key=val2\" \"spaced value\" \"val1\" \"val2\" \"positional\" \"--key=val1\"  \"sample_val\" "
+        );
 
-    let result = parse_script(script, &vars, &env, &EscapeMode::Never).unwrap();
-    assert_eq!(
-        result,
-        "Echo {map(Hello)} --f=\"val1.txt\" --f=\"val2.txt\""
-    );
+        let script = "Echo {{Hello}} {$@}";
+        let result = parse_script(script, &vars, &env, &EscapeMode::Spaces).unwrap();
+        assert_eq!(
+            result,
+            "Echo {Hello} positional --key=val1 --key=val2 \"spaced value\""
+        );
 
-    let script = r#"
+        let script = r#"Echo {{map(Hello)}} {map("--f=\"%s.txt\"",key)}"#;
+
+        let result = parse_script(script, &vars, &env, &EscapeMode::Never).unwrap();
+        assert_eq!(
+            result,
+            "Echo {map(Hello)} --f=\"val1.txt\" --f=\"val2.txt\""
+        );
+
+        let script = r#"
 print("hello world")
-a = [{map("{}\n",flat("\n      '\\{}\\',",$@))}]
+a = [{map("%s\n",jmap("\n      '\\%s\\',",$@))}]
 print("values are:", a)"#;
 
-    let expected = r#"
+        let expected = r#"
 print("hello world")
 a = [
       '\positional\',
       '\--key=val1\',
       '\--key=val2\',
+      '\spaced value\',
 ]
 print("values are:", a)"#;
 
-    let result = parse_script(script, &vars, &env, &EscapeMode::Never).unwrap();
-    assert_eq!(result, expected);
-}
+        let result = parse_script(script, &vars, &env, &EscapeMode::Never).unwrap();
+        assert_eq!(result, expected);
 
-#[test]
-fn test_parse_script_errors() {
-    let vars = HashMap::<String, Vec<String>>::new();
-    let env = HashMap::new();
+        let script = "echo {$@[0]} {$@[-2]} {$@[-4:]} {key[:5]}{key[5]?}{key[5:]?}{key[5]?}{$1[15]?}{$1[10:]?}{key[2:0]?}";
+        let result = parse_script(script, &vars, &env, &EscapeMode::Never).unwrap();
+        assert_eq!(
+            result,
+            "echo positional --key=val2 positional --key=val1 --key=val2 spaced value val1 val2"
+        );
 
-    let script = "hello {$";
-    let result = parse_script(script, &vars, &env, &EscapeMode::Never).unwrap_err();
-    assert_eq!(result.to_string(), " --> 1:9\n  |\n1 | hello {$\n  |         ^---\n  |\n  = expected integer or environment variable name");
+        let script =
+            "echo {key[0][0]} {key[:5][0][1]} {key[0][2:3]} {key[0][3:]} {key[0][4]?} {key[:5][10:][1]?} {key[5:0]?} end";
+        let result = parse_script(script, &vars, &env, &EscapeMode::Never).unwrap();
+        assert_eq!(result, "echo v a l 1    end");
 
-    // TODO: Test more parsing errors
-}
+        let script = "echo {key[3][0]}";
+        let result = parse_script(script, &vars, &env, &EscapeMode::Never).unwrap_err();
+        assert!(result
+            .to_string()
+            .ends_with("Index out of bounds for mandatory expression"));
 
-#[test]
-fn test_parse_params() {
-    let mut vars = HashMap::<String, Vec<String>>::new();
-    let mut env = HashMap::new();
+        let script = "echo {key[0][10]}";
+        let result = parse_script(script, &vars, &env, &EscapeMode::Never).unwrap_err();
+        assert!(result
+            .to_string()
+            .ends_with("Index out of bounds for mandatory expression"));
 
-    env.insert(
-        String::from("TEST_ENV_VARIABLE"),
-        String::from("sample_val"),
-    );
+        let script = "echo {key[0][-5]}";
+        let result = parse_script(script, &vars, &env, &EscapeMode::Never).unwrap_err();
+        assert!(result
+            .to_string()
+            .ends_with("Index out of bounds for mandatory expression"));
 
-    vars.insert(
-        String::from("*"),
-        vec![
-            String::from("positional"),
-            String::from("--key=val1"),
-            String::from("--key=val2"),
-        ],
-    );
+        let script = "echo {key[5:0]}";
+        let result = parse_script(script, &vars, &env, &EscapeMode::Never).unwrap_err();
+        assert!(result
+            .to_string()
+            .ends_with("Range out of bounds for mandatory expression"));
 
-    vars.insert(
-        String::from("key"),
-        vec![String::from("val1"), String::from("val2")],
-    );
+        let script = "echo {key[-10:5]}";
+        let result = parse_script(script, &vars, &env, &EscapeMode::Never).unwrap_err();
+        assert!(result
+            .to_string()
+            .ends_with("Range out of bounds for mandatory expression"));
+    }
 
-    let params = vec![
-        "Echo",
-        "{{Hello}}",
-        "{$@}",
-        "{key}",
-        "{$1}",
-        "{$2}",
-        "{$5?}",
-        "{$TEST_ENV_VARIABLE}",
-        "{$TEST_ENV_VARIABLE2?}",
-    ];
+    #[test]
+    fn test_parse_script_errors() {
+        let vars = HashMap::<String, Vec<String>>::new();
+        let env = HashMap::new();
 
-    let result =
-        parse_params(&params.iter().map(|v| v.to_string()).collect(), &vars, &env).unwrap();
-    assert_eq!(
-        result,
-        vec![
+        let script = "hello {$";
+        let result = parse_script(script, &vars, &env, &EscapeMode::Never).unwrap_err();
+        assert_eq!(result.to_string(), " --> 1:9\n  |\n1 | hello {$\n  |         ^---\n  |\n  = expected integer or environment variable name");
+
+        // TODO: Test more parsing errors
+    }
+
+    #[test]
+    fn test_parse_escape_spaces() {
+        // TODO: Separate into individual tests
+        let mut vars = HashMap::<String, Vec<String>>::new();
+        let env = HashMap::new();
+
+        vars.insert(
+            String::from("*"),
+            vec![String::from("with spaces"), String::from("nospaces")],
+        );
+
+        let script = "{$@} {key?}end";
+        let result = parse_script(script, &vars, &env, &EscapeMode::Spaces).unwrap();
+        assert_eq!(result, "\"with spaces\" nospaces end");
+    }
+
+    #[test]
+    fn test_parse_escape_always() {
+        // TODO: Separate into individual tests
+        let mut vars = HashMap::<String, Vec<String>>::new();
+        let env = HashMap::new();
+
+        vars.insert(
+            String::from("*"),
+            vec![String::from("with spaces"), String::from("nospaces")],
+        );
+
+        let script = "{$@} {key?}end";
+        let result = parse_script(script, &vars, &env, &EscapeMode::Always).unwrap();
+        assert_eq!(result, "\"with spaces\" \"nospaces\" end");
+    }
+
+    #[test]
+    fn test_parse_escape_never() {
+        // TODO: Separate into individual tests
+        let mut vars = HashMap::<String, Vec<String>>::new();
+        let env = HashMap::new();
+
+        vars.insert(
+            String::from("*"),
+            vec![String::from("with spaces"), String::from("nospaces")],
+        );
+
+        let script = "{$@} {key?}end";
+        let result = parse_script(script, &vars, &env, &EscapeMode::Never).unwrap();
+        assert_eq!(result, "with spaces nospaces end");
+    }
+
+    #[test]
+    fn test_parse_params() {
+        let mut vars = HashMap::<String, Vec<String>>::new();
+        let mut env = HashMap::new();
+
+        env.insert(
+            String::from("TEST_ENV_VARIABLE"),
+            String::from("sample_val"),
+        );
+
+        vars.insert(
+            String::from("*"),
+            vec![
+                String::from("positional"),
+                String::from("--key=val1"),
+                String::from("--key=val2"),
+            ],
+        );
+
+        vars.insert(
+            String::from("key"),
+            vec![String::from("val1"), String::from("val2")],
+        );
+
+        let params = vec![
             "Echo",
-            "{Hello}",
-            "positional",
-            "--key=val1",
-            "--key=val2",
-            "val1",
-            "val2",
-            "positional",
-            "--key=val1",
-            "sample_val"
-        ]
-    );
+            "{{Hello}}\'",
+            "{$@}",
+            "{key}",
+            "{$1}",
+            "{$2}",
+            "{$5?}",
+            "{$TEST_ENV_VARIABLE}",
+            "{$TEST_ENV_VARIABLE2?}",
+        ];
 
-    let params = vec![
-        "Echo",
-        "{{map(Hello)}}",
-        r#"{ map("--f=\"{}.txt\"", key) }"#,
-    ];
+        let result =
+            parse_params(&params.iter().map(|v| v.to_string()).collect(), &vars, &env).unwrap();
+        assert_eq!(
+            result,
+            vec![
+                "Echo",
+                "{Hello}'",
+                "positional",
+                "--key=val1",
+                "--key=val2",
+                "val1",
+                "val2",
+                "positional",
+                "--key=val1",
+                "sample_val"
+            ]
+        );
 
-    let result =
-        parse_params(&params.iter().map(|v| v.to_string()).collect(), &vars, &env).unwrap();
-    assert_eq!(
-        result,
-        vec![
+        let params = vec![
             "Echo",
-            "{map(Hello)}",
-            "--f=\"val1.txt\"",
-            "--f=\"val2.txt\""
-        ]
-    );
+            "{{map(Hello)}}",
+            r#"{ map("--f=\"%s.txt\"", key) }"#,
+        ];
 
-    let params = vec![
-        "Echo",
-        "{{flat(Hello)}}",
-        r#"{ flat("--f=\"{}.txt\" ", key) }"#,
-    ];
+        let result =
+            parse_params(&params.iter().map(|v| v.to_string()).collect(), &vars, &env).unwrap();
+        assert_eq!(
+            result,
+            vec![
+                "Echo",
+                "{map(Hello)}",
+                "--f=\"val1.txt\"",
+                "--f=\"val2.txt\""
+            ]
+        );
 
-    let result =
-        parse_params(&params.iter().map(|v| v.to_string()).collect(), &vars, &env).unwrap();
-    assert_eq!(
-        result,
-        vec![
+        let params = vec![
             "Echo",
-            "{flat(Hello)}",
-            "--f=\"val1.txt\" --f=\"val2.txt\" "
-        ]
-    );
+            "{{jmap(Hello)}}",
+            r#"{ jmap("--f=\"%s.txt\" ", key) }"#,
+        ];
+
+        let result =
+            parse_params(&params.iter().map(|v| v.to_string()).collect(), &vars, &env).unwrap();
+        assert_eq!(
+            result,
+            vec![
+                "Echo",
+                "{jmap(Hello)}",
+                "--f=\"val1.txt\" --f=\"val2.txt\" "
+            ]
+        );
+    }
+
+    #[test]
+    fn test_parse_undef_function() {
+        let vars = HashMap::<String, Vec<String>>::new();
+        let env = HashMap::new();
+        let script = "echo {undef_function('hello')}";
+        let result = parse_script(script, &vars, &env, &EscapeMode::Never).unwrap_err();
+        assert!(result
+            .to_string()
+            .ends_with("Undefined function `undef_function`"));
+    }
+
+    #[test]
+    fn test_parse_function_error() {
+        let vars = HashMap::<String, Vec<String>>::new();
+        let env = HashMap::new();
+        let script = "echo {fmt('hello %', 'world')}";
+        let result = parse_script(script, &vars, &env, &EscapeMode::Never).unwrap_err();
+        assert!(result
+            .to_string()
+            .contains("Error running function `fmt`: Invalid format string:"));
+    }
+
+    #[test]
+    fn test_parse_function_out_required() {
+        let mut vars = HashMap::<String, Vec<String>>::new();
+        vars.insert(String::from("*"), vec![]);
+        let env = HashMap::new();
+        let script = "echo {fmt('%s', $1?)}";
+        let result = parse_script(script, &vars, &env, &EscapeMode::Never).unwrap_err();
+        assert!(result
+            .to_string()
+            .contains("Mandatory expression did not return a value"));
+    }
+
+    #[test]
+    fn test_parse_int_error() {
+        let mut vars = HashMap::<String, Vec<String>>::new();
+        vars.insert(String::from("*"), vec![]);
+        let env = HashMap::new();
+        // int too big
+        let script = "echo {hello[999999999999999999999]}";
+        let result = parse_script(script, &vars, &env, &EscapeMode::Never).unwrap_err();
+        assert!(result
+            .to_string()
+            .contains("Error parsing `999999999999999999999` as an integer"));
+    }
 }

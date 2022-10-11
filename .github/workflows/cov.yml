@@ -1,0 +1,51 @@
+# Based on https://github.com/codecov/example-rust
+#
+# While our "example" application has the platform-specific code,
+# for simplicity we are compiling and testing everything on the Ubuntu environment only.
+# For multi-OS testing see the `cross.yml` workflow.
+
+on:
+  push:
+    branches:
+      - 'main'
+  workflow_dispatch:
+
+name: Code coverage
+
+jobs:
+  check:
+    name: Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v2
+
+      - name: Install stable toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+
+      - name: Install kcov
+        run: |
+          sudo apt-get install -y libcurl4-openssl-dev libelf-dev libdw-dev cmake gcc binutils-dev libiberty-dev zlib1g-dev
+          wget https://github.com/SimonKagstrom/kcov/archive/master.tar.gz &&
+          tar xzf master.tar.gz &&
+          cd kcov-master &&
+          mkdir build &&
+          cd build &&
+          cmake .. &&
+          make &&
+          sudo make install
+
+      - name: Generate Coverage
+        run: |
+          python3 generate_cov.py
+
+      - name: Upload to Codecov
+        uses: codecov/codecov-action@v3.1.1
+        with:
+          verbose: true
+          fail_ci_if_error: true
+          directory: ./target_cov/cov/

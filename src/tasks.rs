@@ -1,7 +1,5 @@
-use colored::Colorize;
 use std::collections::HashMap;
 use std::env::temp_dir;
-use std::fmt::{Display, Formatter};
 use std::fs::File;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -56,18 +54,7 @@ impl fmt::Display for TaskError {
     }
 }
 
-impl error::Error for TaskError {
-    fn description(&self) -> &str {
-        match *self {
-            TaskError::RuntimeError(_, _) => "error running task",
-            TaskError::ImproperlyConfigured(_, _) => "improperly configured task",
-        }
-    }
-
-    fn cause(&self) -> Option<&dyn error::Error> {
-        None
-    }
-}
+impl error::Error for TaskError {}
 
 /// Represents a Task
 #[derive(Debug, Deserialize)]
@@ -83,8 +70,11 @@ pub struct Task {
     /// Script to run
     script: Option<String>,
     /// Interpreter program to use
-    interpreter: Option<Vec<String>>,
-    /// Interpreter
+    script_runner: Option<String>,
+    /// Extra arguments to pass to the script runner
+    script_runner_args: Option<Vec<String>>,
+    /// Script extension
+    #[serde(alias = "script_extension")]
     script_ext: Option<String>,
     /// A program to run
     program: Option<String>,
@@ -198,7 +188,8 @@ impl Task {
         }
         inherit_value!(self.help, base_task.help);
         inherit_value!(self.script, base_task.script);
-        inherit_value!(self.interpreter, base_task.interpreter);
+        inherit_value!(self.script_runner, base_task.script_runner);
+        inherit_value!(self.script_runner_args, base_task.script_runner_args);
         inherit_value!(self.script_ext, base_task.script_ext);
         inherit_value!(self.program, base_task.program);
         inherit_value!(self.args, base_task.args);
@@ -216,11 +207,15 @@ impl Task {
         }
 
         if self.args_extend.is_some() {
-            let new_tasks = mem::replace(&mut self.args_extend, None).unwrap();
+            let new_args = mem::replace(&mut self.args_extend, None).unwrap();
             if self.args.is_none() {
                 self.args = mem::replace(&mut self.args, Some(Vec::<String>::new()));
             }
-            self.args.as_mut().unwrap().extend(new_tasks);
+            if let Some(args) = &mut self.args {
+                args.extend(new_args);
+            } else {
+                self.args = Some(new_args);
+            }
         }
     }
 
@@ -237,7 +232,7 @@ impl Task {
     /// Returns the help for the task
     pub fn get_help(&self) -> &str {
         match self.help {
-            Some(ref help) => help,
+            Some(ref help) => help.trim(),
             None => "",
         }
     }
@@ -283,7 +278,7 @@ impl Task {
     /// Validates the task configuration.
     ///
     /// # Arguments
-    ///  
+    ///
     /// * `name` - Name of the task
     fn validate(&self) -> Result<(), TaskError> {
         if self.script.is_some() && self.program.is_some() {
@@ -293,10 +288,10 @@ impl Task {
             ));
         }
 
-        if self.interpreter.is_some() && self.interpreter.as_ref().unwrap().is_empty() {
+        if self.script_runner.is_some() && self.script_runner.as_ref().unwrap().is_empty() {
             return Err(TaskError::ImproperlyConfigured(
                 self.name.clone(),
-                String::from("`interpreter` parameter cannot be an empty array."),
+                String::from("`script_runner` parameter cannot be an empty string."),
             ));
         }
 
@@ -334,7 +329,7 @@ impl Task {
     /// environment variables.
     ///
     /// # Arguments
-    ///  
+    ///
     /// * `command` - Command to set the parameters for
     /// * `config_file` - Configuration file
     fn set_command_basics(
@@ -361,7 +356,7 @@ impl Task {
     /// Spawns a command and waits for its execution.
     ///
     /// # Arguments
-    ///  
+    ///
     /// * `command` - Command to spawn
     fn spawn_command(&self, command: &mut Command) -> DynErrResult<()> {
         let mut child = match command.spawn() {
@@ -436,10 +431,10 @@ impl Task {
 
         // Interpreter is a list, because sometimes there is need to pass extra arguments to the
         // interpreter, such as the /C option in the batch case
-        let mut interpreter_and_args = if let Some(interpreter) = &self.interpreter {
-            interpreter.clone()
+        let script_runner = if let Some(script_runner) = &self.script_runner {
+            script_runner
         } else {
-            vec![String::from(DEFAULT_INTERPRETER)]
+            DEFAULT_INTERPRETER
         };
 
         let default_script_extension = String::from(DEFAULT_SCRIPT_EXTENSION);
@@ -448,8 +443,11 @@ impl Task {
             .as_ref()
             .unwrap_or(&default_script_extension);
 
-        let mut command = Command::new(&interpreter_and_args.remove(0));
-        command.args(interpreter_and_args);
+        let mut command = Command::new(script_runner);
+
+        if let Some(script_runner_args) = &self.script_runner_args {
+            command.args(script_runner_args);
+        }
 
         let env = self.get_env(config_file);
         command.envs(&env);
@@ -511,12 +509,7 @@ impl Task {
     /// * `config_file` - Configuration file of the task
     /// * `config_files` - global ConfigurationFiles instance
     pub fn run(&self, args: &TaskArgs, config_file: &ConfigFile) -> DynErrResult<()> {
-        return if self.private {
-            Err(
-                TaskError::RuntimeError(self.name.clone(), String::from("Cannot run private task"))
-                    .into(),
-            )
-        } else if self.script.is_some() {
+        return if self.script.is_some() {
             self.run_script(args, config_file)
         } else if self.program.is_some() {
             self.run_program(args, config_file)
@@ -531,26 +524,13 @@ impl Task {
     }
 }
 
-impl Display for Task {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        let help = match self.get_help() {
-            "" => "No help to display".red(),
-            help => help.green(),
-        };
-        if self.private {
-            write!(f, "{} {}\n\n{}", self.name, "private".red(), help)
-        } else {
-            write!(f, "{}\n\n{}", self.name, help)
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
+    use super::*;
     use crate::config_files::ConfigFile;
-    use crate::tasks::{Task, TaskError};
     use assert_fs::TempDir;
     use std::collections::HashMap;
+    use std::fs;
     use std::fs::File;
     use std::io::Write;
     use std::path::Path;
@@ -571,17 +551,17 @@ mod tests {
         let config_file_path = tmp_dir.join("project.yamis.toml");
         let mut file = File::create(&config_file_path).unwrap();
         file.write_all(
-            r#" 
+            r#"
     [tasks.hello_base.env]
     greeting = "hello world"
-    
+
     [tasks.calc_base.env]
     one_plus_one = "2"
-    
+
     [tasks.hello]
     bases = ["hello_base", "calc_base"]
     script = "echo $greeting, 1+1=$one_plus_one"
-    
+
     [tasks.hello.windows]
     bases = ["hello_base", "calc_base"]
     script = "echo %greeting%, 1+1=%one_plus_one%"
@@ -603,6 +583,112 @@ mod tests {
     }
 
     #[test]
+    fn test_quotes_inheritance() {
+        let tmp_dir = TempDir::new().unwrap();
+        let config_file_path = tmp_dir.join("project.yamis.toml");
+        let mut file = File::create(&config_file_path).unwrap();
+        file.write_all(
+            r#"
+    [tasks.hello_base]
+    quote = "spaces"
+
+    [tasks.calc_base]
+    quote = "never"
+
+    [tasks.hello]
+    bases = ["hello_base", "calc_base"]
+    script = "echo hello_1"
+
+    [tasks.hello_2]
+    bases = ["calc_base", "hello_base"]
+    script = "echo hello_2"
+    "#
+            .as_bytes(),
+        )
+        .unwrap();
+
+        let config_file = ConfigFile::load(config_file_path).unwrap();
+
+        let task = config_file.get_task("hello").unwrap();
+        let task_ref = task.as_ref();
+        assert_eq!(task_ref.quote.as_ref().unwrap(), &EscapeMode::Spaces);
+
+        let task = config_file.get_task("hello_2").unwrap();
+        let task_ref = task.as_ref();
+        assert_eq!(task_ref.quote.as_ref().unwrap(), &EscapeMode::Never);
+    }
+
+    #[test]
+    fn test_args_inheritance() {
+        let tmp_dir = TempDir::new().unwrap();
+        let config_file_path = tmp_dir.join("project.yamis.toml");
+        let mut file = File::create(&config_file_path).unwrap();
+        file.write_all(
+            r#"
+    [tasks.bash]
+    program = "bash"
+
+    [tasks.bash_inline]
+    bases = ["bash"]
+    args_extend = ["-c"]
+
+    [tasks.hello]
+    bases = ["bash_inline"]
+    args_extend = ["echo", "hello"]
+
+    [tasks.hello_2]
+    bases = ["hello"]
+    args = ["-c", "echo", "hello"]
+    "#
+            .as_bytes(),
+        )
+        .unwrap();
+
+        let config_file = ConfigFile::load(config_file_path).unwrap();
+
+        let task = config_file.get_task("hello").unwrap();
+        let task_ref = task.as_ref();
+        assert_eq!(
+            task_ref.args.as_ref().unwrap(),
+            &vec!["-c".to_string(), "echo".to_string(), "hello".to_string()]
+        );
+
+        let task = config_file.get_task("hello_2").unwrap();
+        let task_ref = task.as_ref();
+        assert_eq!(
+            task_ref.args.as_ref().unwrap(),
+            &vec!["-c".to_string(), "echo".to_string(), "hello".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_get_task_help() {
+        let tmp_dir = TempDir::new().unwrap();
+        let config_file_path = tmp_dir.join("project.yamis.toml");
+        let mut file = File::create(&config_file_path).unwrap();
+        file.write_all(
+            r#"
+    [tasks.bash]
+    help = """
+    Some multiline help that should be coerced to one line
+    """
+    program = "bash"
+    "#
+            .as_bytes(),
+        )
+        .unwrap();
+
+        let config_file = ConfigFile::load(config_file_path).unwrap();
+
+        let task = config_file.get_task("bash").unwrap();
+        let task_ref = task.as_ref();
+        assert_eq!(
+            task_ref.get_help(),
+            "Some multiline help that should be coerced to one line"
+        );
+    }
+
+    #[test]
     fn test_read_env() {
         let tmp_dir = TempDir::new().unwrap();
         let project_config_path = tmp_dir.join("project.yamis.toml");
@@ -611,26 +697,26 @@ mod tests {
             .write_all(
                 r#"
             env_file = ".env"
-            
+
             [tasks.test.windows]
             quote = "never"
             script = "echo %VAR1% %VAR2% %VAR3%"
-            
+
             [tasks.test]
             quote = "never"
             script = "echo $VAR1 $VAR2 $VAR3"
-            
+
             [tasks.test_2.windows]
             quote = "never"
             script = "echo %VAR1% %VAR2% %VAR3%"
             env_file = ".env_2"
             env = {"VAR1" = "TASK_VAL1"}
-            
+
             [tasks.test_2]
             quote = "never"
             script = "echo $VAR1 $VAR2 $VAR3"
             env_file = ".env_2"
-            
+
             [tasks.test_2.env]
             VAR1 = "TASK_VAL1"
             "#
@@ -702,13 +788,13 @@ mod tests {
         let task = get_task(
             "sample",
             r#"
-        interpreter = []
+        script_runner = ""
     "#,
             None,
         );
         let expected_error = TaskError::ImproperlyConfigured(
             String::from("sample"),
-            String::from("`interpreter` parameter cannot be an empty array."),
+            String::from("`script_runner` parameter cannot be an empty string."),
         );
         assert_eq!(task.unwrap_err().to_string(), expected_error.to_string());
 
@@ -756,5 +842,45 @@ mod tests {
             String::from("`quote` parameter can only be set for scripts."),
         );
         assert_eq!(task.unwrap_err().to_string(), expected_error.to_string());
+
+        let task = get_task(
+            "sample",
+            r#"
+        script = "sample script"
+        args = ["some", "args"]
+    "#,
+            None,
+        );
+
+        let expected_error = TaskError::ImproperlyConfigured(
+            String::from("sample"),
+            String::from("Cannot specify `args` on scripts."),
+        );
+        assert_eq!(task.unwrap_err().to_string(), expected_error.to_string());
+    }
+
+    #[test]
+    fn test_create_temp_script() {
+        let script = "echo hello world";
+        let extension = "sh";
+        let script_path = get_temp_script(script, extension).unwrap();
+        assert!(script_path.exists());
+        assert_eq!(script_path.extension().unwrap(), extension);
+        let script_content = fs::read_to_string(script_path).unwrap();
+        assert_eq!(script_content, script);
+
+        let extension = "";
+        let script_path = get_temp_script(script, extension).unwrap();
+        assert!(script_path.exists());
+        assert!(script_path.extension().is_none());
+        let script_content = fs::read_to_string(script_path).unwrap();
+        assert_eq!(script_content, script);
+
+        let extension = ".sh";
+        let script_path = get_temp_script(script, extension).unwrap();
+        assert!(script_path.exists());
+        assert_eq!(script_path.extension().unwrap(), "sh");
+        let script_content = fs::read_to_string(script_path).unwrap();
+        assert_eq!(script_content, script);
     }
 }

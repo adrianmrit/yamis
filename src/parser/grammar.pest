@@ -1,16 +1,17 @@
 WHITESPACE = _{ " " }
-RANGE_SEPARATOR = _{ ".." }
+RANGE_SEPARATOR = _{ ":" }
 
 // Parses positional arg inside tag and functions
 digits = @{ ASCII_DIGIT+}
+integer = @{ ("+" | "-")? ~ digits }
 
 // Modifiers that can be applied to args, kwargs and env_var
 optional = { "?" }
 
-index = { digits }
-range_from = { digits? }
-range_to = { digits? }
-range = { range_from ~ RANGE_SEPARATOR ~ range_to }
+index = { integer }
+range_from = { integer }
+range_to = { integer }
+range = { range_from? ~ RANGE_SEPARATOR ~ range_to? }
 
 slice = { "[" ~ (range | index) ~ "]"}
 

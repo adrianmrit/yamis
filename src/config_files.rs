@@ -33,7 +33,7 @@ const GLOBAL_CONFIG_FILE_PATH: &str = "~/.yamis";
 const ALLOWED_EXTENSIONS: &[&str] = &["yml", "yaml", "toml"];
 
 /// Errors related to config files and tasks
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug)]
 pub(crate) enum ConfigError {
     // /// Raised when a config file is not found for a given path
     // FileNotFound(String), // Given config file not found
@@ -57,20 +57,7 @@ impl Display for ConfigError {
     }
 }
 
-impl error::Error for ConfigError {
-    fn description(&self) -> &str {
-        match *self {
-            // ConfigError::FileNotFound(_) => "file not found",
-            // ConfigError::NoConfigFile => "no config discovered",
-            ConfigError::BadConfigFile(_, _) => "bad config file",
-            ConfigError::DuplicateConfigFile(_) => "duplicate config file",
-        }
-    }
-
-    fn cause(&self) -> Option<&dyn error::Error> {
-        None
-    }
-}
+impl error::Error for ConfigError {}
 
 /// Represents a config file.
 #[derive(Debug, Deserialize)]
@@ -100,7 +87,6 @@ pub struct ConfigFile {
     pub(crate) loaded_tasks: HashMap<String, Arc<Task>>,
 }
 
-#[derive(Debug)]
 /// Iterates over existing config file paths, in order of priority.
 pub struct ConfigFilePaths {
     /// Index of value to use from `CONFIG_FILES_PRIO`
@@ -526,6 +512,30 @@ impl ConfigFile {
         None
     }
 
+    /// Finds an public task by name on this config file and returns it if it exists.
+    /// It searches fist for the current OS version of the task, if None is found,
+    /// it tries with the plain name.
+    ///
+    /// # Arguments
+    ///
+    /// * task_name - Name of the task to search for
+    pub fn get_public_task(&self, task_name: &str) -> Option<Arc<Task>> {
+        let os_task_name = to_os_task_name(task_name);
+
+        if let Some(task) = self.loaded_tasks.get(&os_task_name) {
+            if task.is_private() {
+                return None;
+            }
+            return Some(Arc::clone(task));
+        } else if let Some(task) = self.loaded_tasks.get(task_name) {
+            if task.is_private() {
+                return None;
+            }
+            return Some(Arc::clone(task));
+        }
+        None
+    }
+
     /// Returns whether the config file has a task with the given name. This also
     /// checks for the OS specific version of the task.
     ///
@@ -547,20 +557,18 @@ impl ConfigFile {
     }
 
     /// Returns the list of names of tasks that are not private in this config file
-    pub fn get_non_private_task_names(&self) -> Vec<&Arc<Task>> {
-        self.loaded_tasks.values().collect()
-    }
-}
-
-impl Display for ConfigFile {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.filepath.display())
+    pub fn get_public_task_names(&self) -> Vec<&str> {
+        self.loaded_tasks
+            .values()
+            .filter(|t| !t.is_private())
+            .map(|t| t.get_name())
+            .collect()
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::config_files::{ConfigFilePaths, ConfigFilesContainer};
+    use super::*;
     use assert_fs::TempDir;
     use std::fs::File;
     use std::io::Write;
@@ -642,5 +650,242 @@ mod tests {
         assert!(paths.next().is_none());
 
         assert_eq!(paths.cached[0], project_config_path.as_path());
+    }
+
+    #[test]
+    fn test_dup_config_error() {
+        let tmp_dir = TempDir::new().unwrap();
+
+        let project_config_path = tmp_dir.path().join("project.yamis.toml");
+        File::create(project_config_path.as_path()).unwrap();
+
+        let config_path = tmp_dir.path().join("project.yamis.yaml");
+        File::create(config_path.as_path()).unwrap();
+
+        let mut paths = ConfigFilePaths::new(&tmp_dir.path());
+        let val = paths.next().unwrap();
+        assert!(val.is_err());
+        assert_eq!(
+            val.unwrap_err().to_string(),
+            "Config file `project.yamis` defined multiple times with different extensions in the same directory."
+        );
+    }
+
+    #[test]
+    fn test_config_file_only_iter() {
+        let path = PathBuf::from("sample_path.yml");
+        let mut config_files = ConfigFilePaths {
+            index: 0,
+            ended: false,
+            root_reached: true,
+            single: true,
+            current_dir: path.clone(),
+            cached: vec![],
+        };
+        // cache is empty, nothing to return
+        assert!(config_files.next().is_none());
+
+        let mut config_files = ConfigFilePaths {
+            index: 0,
+            ended: false,
+            root_reached: true,
+            single: true,
+            current_dir: path.clone(),
+            cached: vec![path.clone()],
+        };
+        assert_eq!(config_files.next().unwrap().unwrap(), path);
+    }
+
+    #[test]
+    fn test_config_file_invalid_path() {
+        let cnfg = ConfigFile::extract(Path::new("non_existent"));
+        assert!(cnfg.is_err());
+
+        let cnfg = ConfigFile::extract(Path::new("non_existent.ext"));
+        assert!(cnfg.is_err());
+
+        let cnfg = ConfigFile::extract(Path::new("non_existent.yml"));
+        assert!(cnfg.is_err());
+    }
+
+    #[test]
+    fn test_container_read_config_error() {
+        let tmp_dir = TempDir::new().unwrap();
+        let project_config_path = tmp_dir.path().join("project.yamis.toml");
+        let mut project_config_file = File::create(project_config_path.as_path()).unwrap();
+        project_config_file
+            .write_all(
+                r#"
+    some invalid condig
+    "#
+                .as_bytes(),
+            )
+            .unwrap();
+
+        let mut config_files = ConfigFilesContainer::default();
+        let result = config_files.read_config_file(project_config_path);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_config_file_read() {
+        let tmp_dir = TempDir::new().unwrap();
+
+        let dot_env_path = tmp_dir.path().join(".env");
+        let mut dot_env_file = File::create(dot_env_path.as_path()).unwrap();
+        dot_env_file
+            .write_all(
+                r#"VALUE_OVERRIDE=OLD_VALUE
+OTHER_VALUE=HELLO
+"#
+                .as_bytes(),
+            )
+            .unwrap();
+
+        let project_config_path = tmp_dir.path().join("project.yamis.yaml");
+        let mut project_config_file = File::create(project_config_path.as_path()).unwrap();
+        project_config_file
+            .write_all(
+                r#"
+env_file: ".env"
+env:
+  VALUE_OVERRIDE: NEW_VALUE
+tasks:
+  hello_local:
+    script: echo hello local
+        "#
+                .as_bytes(),
+            )
+            .unwrap();
+        let config_file = ConfigFile::load(project_config_path).unwrap();
+        assert!(config_file.has_task("hello_local"));
+        let env = config_file.env.unwrap();
+        assert_eq!(env.get("VALUE_OVERRIDE").unwrap(), "NEW_VALUE");
+        assert_eq!(env.get("OTHER_VALUE").unwrap(), "HELLO");
+    }
+
+    #[test]
+    fn test_config_file_get_task_names() {
+        let tmp_dir = TempDir::new().unwrap();
+
+        let project_config_path = tmp_dir.path().join("project.yamis.yaml");
+        let mut project_config_file = File::create(project_config_path.as_path()).unwrap();
+        project_config_file
+            .write_all(
+                r#"
+tasks:
+  task_1:
+    script: echo hello
+
+  task_2:
+    script: echo hello again
+
+  task_3:
+    script: echo hello again
+    private: true
+
+        "#
+                .as_bytes(),
+            )
+            .unwrap();
+        let config_file = ConfigFile::load(project_config_path).unwrap();
+        let mut task_names = config_file.get_task_names();
+        task_names.sort();
+        assert_eq!(task_names, vec!["task_1", "task_2", "task_3"]);
+        let mut task_names = config_file.get_public_task_names();
+        task_names.sort();
+        assert_eq!(task_names, vec!["task_1", "task_2"]);
+    }
+
+    #[test]
+    fn test_config_file_get_task() {
+        let tmp_dir = TempDir::new().unwrap();
+
+        let project_config_path = tmp_dir.path().join("project.yamis.yaml");
+        let mut project_config_file = File::create(project_config_path.as_path()).unwrap();
+        project_config_file
+            .write_all(
+                r#"
+tasks:
+  task_1:
+    script: echo hello
+
+  task_2:
+    script: echo hello again
+
+  task_3:
+    script: echo hello again
+    private: true
+
+        "#
+                .as_bytes(),
+            )
+            .unwrap();
+        let config_file = ConfigFile::load(project_config_path).unwrap();
+
+        let task_nam = config_file.get_task("task_1");
+        assert!(task_nam.is_some());
+        assert_eq!(task_nam.unwrap().get_name(), "task_1");
+
+        let task_nam = config_file.get_task("task_2");
+        assert!(task_nam.is_some());
+        assert_eq!(task_nam.unwrap().get_name(), "task_2");
+
+        let task_nam = config_file.get_task("task_3");
+        assert!(task_nam.is_some());
+        assert_eq!(task_nam.unwrap().get_name(), "task_3");
+    }
+
+    #[test]
+    fn test_config_file_get_non_private_task() {
+        let tmp_dir = TempDir::new().unwrap();
+
+        let project_config_path = tmp_dir.path().join("project.yamis.yaml");
+        let mut project_config_file = File::create(project_config_path.as_path()).unwrap();
+        project_config_file
+            .write_all(
+                r#"
+tasks:
+  task_1:
+    script: echo hello
+
+  task_2:
+    script: echo hello again
+
+  task_3:
+    script: echo hello again
+    private: true
+
+        "#
+                .as_bytes(),
+            )
+            .unwrap();
+        let config_file = ConfigFile::load(project_config_path).unwrap();
+
+        let task_nam = config_file.get_public_task("task_1");
+        assert!(task_nam.is_some());
+        assert_eq!(task_nam.unwrap().get_name(), "task_1");
+
+        let task_nam = config_file.get_public_task("task_2");
+        assert!(task_nam.is_some());
+        assert_eq!(task_nam.unwrap().get_name(), "task_2");
+
+        let task_nam = config_file.get_public_task("task_3");
+        assert!(task_nam.is_none());
+    }
+
+    #[test]
+    fn test_wrong_config_file_extension() {
+        let tmp_dir = TempDir::new().unwrap();
+
+        let project_config_path = tmp_dir.path().join("project.yamis.wrong");
+        File::create(project_config_path.as_path()).unwrap();
+        let config_file = ConfigFile::load(project_config_path);
+        assert!(config_file.is_err());
+        assert!(config_file
+            .unwrap_err()
+            .to_string()
+            .contains("Bad config file"));
     }
 }

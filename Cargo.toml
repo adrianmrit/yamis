@@ -1,7 +1,6 @@
 [package]
 name = "yamis"
 version = "1.0.0"
-rust-version = "1.63"
 edition = "2021"
 license = "GPL-3.0-only"
 authors = ["Adrian Martinez <adrianmrit@gmail.com>"]
@@ -50,12 +49,7 @@ assert_fs = "1.0"
 name = "yamis"
 path = "src/main.rs"
 
-# fixes linker `cc` not found issue
-[package.metadata.cross.target.x86_64-apple-darwin]
-zig = true
-
 [features]
 default = ["runtime"]
 # Only add other versions as dependencies if the runtime feature is enabled
-#runtime = ["yamis_v2"]
 runtime = []

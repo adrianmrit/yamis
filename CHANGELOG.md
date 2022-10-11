@@ -1,9 +1,9 @@
 # Changelog
 
-## [1.0.0] - 2022-09-26
+## [1.0.0] - 2022-10-10
 ## Added
 - Get help in the command like by calling yamis with the `--help` or `-h` option
-- Get the version in the command line by calling yamis with `-V` 
+- Get the version in the command line by calling yamis with `-V`
 - Get the list of config files and tasks by calling yamis with `-t`
 - Get basic info about a task by calling yamis with `-i <TASK>`
 - Get list of task files by calling yamis with `-l` option
@@ -15,7 +15,9 @@
 - Preparing for future backward compatibility across mayor versions
 
 ### Changed
-- Syntax has changed
+- Syntax changes
+- Replaced `interpreter` argument with `script_runner` and `script_runner_args`
+- Add `script_extension` alias for `script_ext`
 - Use clap
 - Use pest to parse scripts and arguments
 - A program argument can contain either a task or a literal, not both at the same time
@@ -24,6 +26,7 @@
 - Tasks inherit from os-specific bases if they exist
 - Changed how all arguments and positional arguments are passed
 - Improved and fixed error displaying
+- Key-value arguments can be passed as `--key value` or `--key=value`
 
 ## [0.3.0] - 2022-08-28
 ### Added

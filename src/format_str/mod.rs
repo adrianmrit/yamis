@@ -6,6 +6,16 @@ use pest_derive::Parser;
 #[grammar = "format_str/grammar.pest"]
 struct StrFormatParser;
 
+/// Renames the rules for better error messages
+fn rename_rules(rule: &Rule) -> String {
+    match rule {
+        Rule::literal => "literal".to_string(),
+        Rule::format_param => "%s".to_string(),
+        Rule::EOI => "EOI".to_string(),
+        __other__ => unreachable!("Unexpected rule {:?}", __other__),
+    }
+}
+
 /// Formats the given string with positional parameters. Values in the format string
 /// matching `{}` will be replaced by the corresponding values. Brackets can be escaped
 /// by having two of them in a row, i.e. `{{`.
@@ -21,7 +31,9 @@ pub fn format_string<S: AsRef<str>>(fmt_string: S, vars: &[&str]) -> DynErrResul
 
     let tokens = match tokens {
         Ok(mut tokens) => tokens.next().unwrap().into_inner(),
-        Err(e) => return Err(e.to_string().into()),
+        Err(e) => {
+            return Err(format!("Invalid format string:\n{}", e.renamed_rules(rename_rules)).into())
+        }
     };
 
     let mut result = String::new();
@@ -31,16 +43,15 @@ pub fn format_string<S: AsRef<str>>(fmt_string: S, vars: &[&str]) -> DynErrResul
             Rule::literal => {
                 for literal in token.into_inner() {
                     match literal.as_rule() {
-                        Rule::esc_ob => result.push('{'),
-                        Rule::esc_cb => result.push('}'),
+                        Rule::escaped_val => result.push('%'),
                         Rule::literal_content => result.push_str(literal.as_str()),
                         _ => {
-                            panic!("Unexpected token {}", literal.as_str());
+                            unreachable!("Unexpected token {}", literal.as_str());
                         }
                     }
                 }
             }
-            Rule::tag => match vars.get(i) {
+            Rule::format_param => match vars.get(i) {
                 None => {
                     return Err("Not enough variables".into());
                 }
@@ -53,43 +64,58 @@ pub fn format_string<S: AsRef<str>>(fmt_string: S, vars: &[&str]) -> DynErrResul
                 break;
             }
             _ => {
-                panic!("Unexpected token {}", token.as_str());
+                unreachable!("Unexpected token {}", token.as_str());
             }
         }
     }
     Ok(result)
 }
 
-#[test]
-fn test_format_string() {
-    let fmt_string = "Hello {} {} {} {{ }}";
-    let vars = vec!["world", "!", "?"];
-    let result = format_string(fmt_string, &vars).unwrap();
-    assert_eq!(result, "Hello world ! ? { }");
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    let fmt_string = "";
-    let vars = vec!["world", "!", "?"];
-    let result = format_string(fmt_string, &vars).unwrap();
-    assert_eq!(result, "");
+    #[test]
+    fn test_format_string() {
+        let fmt_string = "Hello %s %s %s %%s";
+        let vars = vec!["world", "!", "?"];
+        let result = format_string(fmt_string, &vars).unwrap();
+        assert_eq!(result, "Hello world ! ? %s");
 
-    let fmt_string = " ";
-    let vars = vec!["world", "!", "?"];
-    let result = format_string(fmt_string, &vars).unwrap();
-    assert_eq!(result, " ");
+        let fmt_string = "";
+        let vars = vec!["world", "!", "?"];
+        let result = format_string(fmt_string, &vars).unwrap();
+        assert_eq!(result, "");
 
-    let fmt_string = " {{";
-    let vars = vec!["world", "!", "?"];
-    let result = format_string(fmt_string, &vars).unwrap();
-    assert_eq!(result, " {");
+        let fmt_string = " ";
+        let vars = vec!["world", "!", "?"];
+        let result = format_string(fmt_string, &vars).unwrap();
+        assert_eq!(result, " ");
 
-    let fmt_string = " {";
-    let vars = vec!["world", "!", "?"];
-    let result = format_string(fmt_string, &vars).unwrap_err().to_string();
-    let expected_result = r#" --> 1:2
+        let fmt_string = " %%";
+        let vars = vec!["world", "!", "?"];
+        let result = format_string(fmt_string, &vars).unwrap();
+        assert_eq!(result, " %");
+    }
+
+    #[test]
+    fn test_format_string_errors() {
+        let fmt_string = " %";
+        let vars = vec!["world", "!", "?"];
+        let result = format_string(fmt_string, &vars).unwrap_err().to_string();
+        let expected_result = r#"Invalid format string:
+ --> 1:2
   |
-1 |  {
+1 |  %
   |  ^---
   |
-  = expected EOI, literal, or tag"#;
-    assert_eq!(result, expected_result);
+  = expected EOI, literal, or %s"#;
+        assert_eq!(result, expected_result);
+
+        let fmt_string = "Hello %s %s %s";
+        let vars = vec!["world", "extra"];
+        let result = format_string(fmt_string, &vars).unwrap_err().to_string();
+        let expected_result = r#"Not enough variables"#;
+        assert_eq!(result, expected_result);
+    }
 }
