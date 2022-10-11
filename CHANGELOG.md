@@ -1,6 +1,6 @@
 # Changelog
 
-## [1.0.0] - 2022-10-08
+## [1.0.0] - 2022-10-10
 ## Added
 - Get help in the command like by calling yamis with the `--help` or `-h` option
 - Get the version in the command line by calling yamis with `-V`
@@ -16,7 +16,7 @@
 
 ### Changed
 - Syntax changes
-- Renamed `interpreter` argument to `script_runner`
+- Replaced `interpreter` argument with `script_runner` and `script_runner_args`
 - Add `script_extension` alias for `script_ext`
 - Use clap
 - Use pest to parse scripts and arguments
