@@ -747,17 +747,14 @@ OTHER_VALUE=HELLO
         let mut project_config_file = File::create(project_config_path.as_path()).unwrap();
         project_config_file
             .write_all(
-                format!(
-                    r#"
-env_file: "{}"
+                r#"
+env_file: ".env"
 env:
   VALUE_OVERRIDE: NEW_VALUE
 tasks:
   hello_local:
     script: echo hello local
-        "#,
-                    dot_env_path.as_os_str().to_string_lossy()
-                )
+        "#
                 .as_bytes(),
             )
             .unwrap();
