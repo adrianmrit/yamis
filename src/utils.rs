@@ -141,12 +141,19 @@ mod tests {
     fn test_read_env_file_not_found() {
         let env_file_path = env::current_dir().unwrap().join("non_existent.env");
         let env_map = read_env_file(&env_file_path).unwrap_err();
+        cfg_if::cfg_if! {
+            if #[cfg(target_os = "windows")] {
+                let expected_error: &str = "The system cannot find the file specified. (os error 2)";
+            } else {
+                let expected_error: &str = "No such file or directory (os error 2)";
+            }
+        }
         assert_eq!(
             env_map.to_string(),
             format!(
                 "Failed to read env file at {}: {}",
                 env_file_path.display(),
-                "No such file or directory (os error 2)"
+                expected_error
             )
         );
     }
