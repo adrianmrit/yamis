@@ -49,15 +49,16 @@
     * [fmt](#fmt-function)
     * [trim](#trim-function)
     * [split](#split-function)
+* [FAQ](#faq) 
 * [Contributing](#contributing)
 
 <a name="motivation"></a>
 ## Motivation
-This project started out of necessity and fun as I wanted to learn Rust, but have become.
-my everyday tool for running tasks. It aims to be simple and powerful, both for individuals and teams,
-specially those working on different platforms. To allow for future improvements in the syntax while
-not breaking the workflow of teams, it aims to be [backward compatible](#backward-compatibility), both between
-the same mayor release, and with previous mayor releases.
+This project started out of the frustration with existing tools and as a desire of learning Rust.
+It aims to be easy to use, and for both individuals and teams, specially those working on different platforms.
+To allow for future improvements in the syntax without breaking the workflow of teams (at least not much, lets be real),
+it aims to be [backward compatible](#backward-compatibility), both between the same mayor release, and with previous
+mayor releases.
 
 Inspired on different tools like [cargo-make](https://github.com/sagiegurari/cargo-make),
 [doskey](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/doskey),
@@ -826,6 +827,23 @@ sample:
 ```
 
 `yamis sample` will result in `echo a b c`
+
+<a name="faq"></a>
+## FAQ
+
+### Why not use make, cargo-make or cmake and similar tools?
+They are great tool, but sometimes simpler is better. I created this tool because I didn't feel comfortable existing solutions,
+specially on the arguments parsing side, but you can use whatever fits your needs, no hard feelings. Also, there should be no any issue
+with using this together with other tools.
+
+### Can I define my own functions?
+Not possible at the moment, unless you fork the repository and add your own (which is easy to do if you know rust). You can always
+contribute so everyone benefits from it. While I have plans to add more functions in the future, allowing custom functions is not
+that straightforward and probably not worth the effort, perhaps it is better to use a separate script, i.e. python. I am open
+to suggestions.
+
+### I have a suggestion, but I don't know rust (or have other priorities), can I still contribute?
+Absolutely, you can open an issue with your suggestion and I will try to implement it if it sounds good. I am eager to get some feedback.
 
 <a name="Contributing"></a>
 ## Contributing
