@@ -1,5 +1,6 @@
 # Yamis
 ![build](https://github.com/adrianmrit/yamis/actions/workflows/test.yml/badge.svg)
+[![codecov](https://codecov.io/gh/adrianmrit/yamis/branch/main/graph/badge.svg?token=3BBJFNNJPT)](https://codecov.io/gh/adrianmrit/yamis)
 ![License: GPL v3](https://img.shields.io/github/license/adrianmrit/yamis)
 
 > Task runner for teams and individuals. Written in [Rust](https://www.rust-lang.org/).
@@ -17,7 +18,7 @@
   * [Task files](#task-files)
   * [Script](#script)
     * [Auto quoting](#auto-quoting)
-    * [Replacing the runner](#replacing-the-runner)
+    * [Replacing the script runner](#replacing-the-script-runner)
   * [Program](#program)
   * [Running tasks serially](#running-tasks-serially)
   * [Script vs Program](#script-vs-program)
@@ -249,11 +250,12 @@ This can be changed at the task or file level by specifying the
 Although quoting prevents common errors like things breaking because an argument with a space was passed,
 it might fail in certain edge cases.
 
-<a name="replacing-the-runner"></a>
-#### Replacing the runner
+<a name="replacing-the-script-runner"></a>
+#### Replacing the script runner
 By default, the script runner in windows is CMD, and bash in unix systems. To use another program you can
-set the `script_runner` option in a task, which should be a list, where the first value is the name of the program,
-and the rest are extra parameters to pass before the script file parameter.
+set the `script_runner` option in a task. Additionally, you can set `script_runner_args` which should be a list
+of extra arguments to pass to the runner before the generated script, i.e. `["-x"]` to run the script in bash
+in debug mode.
 
 You might also want to override the `script_ext` (or `script_extension`) option, which is a string containing the
 extension for the script file, and can be prepended with a dot or not. For some interpreter the extension does not
@@ -263,7 +265,7 @@ Example:
 ```toml
 # Python script that prints the date and time
 [tasks.hello_world]
-script_runner = ["python"]
+script_runner = "python"
 script_ext = "py"  # or .py
 script = """
 from datetime import datetime
@@ -275,7 +277,7 @@ print(datetime.now())
 If using this feature frequently it would be useful to use inheritance to shorten the task. The above can become:
 ```toml
 [tasks._py_script]
-script_runner = ["python"]
+script_runner = "python"
 script_ext = "py"  # or .py
 private = true
 
@@ -584,6 +586,7 @@ The inherited values are:
 - `quote`
 - `script`
 - `script_runner`
+- `script_runner_args`
 - `script_ext`
 - `script_extension` (alias for `script_ext`)
 - `program`

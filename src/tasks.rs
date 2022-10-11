@@ -70,7 +70,9 @@ pub struct Task {
     /// Script to run
     script: Option<String>,
     /// Interpreter program to use
-    script_runner: Option<Vec<String>>,
+    script_runner: Option<String>,
+    /// Extra arguments to pass to the script runner
+    script_runner_args: Option<Vec<String>>,
     /// Script extension
     #[serde(alias = "script_extension")]
     script_ext: Option<String>,
@@ -187,6 +189,7 @@ impl Task {
         inherit_value!(self.help, base_task.help);
         inherit_value!(self.script, base_task.script);
         inherit_value!(self.script_runner, base_task.script_runner);
+        inherit_value!(self.script_runner_args, base_task.script_runner_args);
         inherit_value!(self.script_ext, base_task.script_ext);
         inherit_value!(self.program, base_task.program);
         inherit_value!(self.args, base_task.args);
@@ -288,7 +291,7 @@ impl Task {
         if self.script_runner.is_some() && self.script_runner.as_ref().unwrap().is_empty() {
             return Err(TaskError::ImproperlyConfigured(
                 self.name.clone(),
-                String::from("`script_runner` parameter cannot be an empty array."),
+                String::from("`script_runner` parameter cannot be an empty string."),
             ));
         }
 
@@ -428,10 +431,10 @@ impl Task {
 
         // Interpreter is a list, because sometimes there is need to pass extra arguments to the
         // interpreter, such as the /C option in the batch case
-        let mut interpreter_and_args = if let Some(interpreter) = &self.script_runner {
-            interpreter.clone()
+        let script_runner = if let Some(script_runner) = &self.script_runner {
+            script_runner
         } else {
-            vec![String::from(DEFAULT_INTERPRETER)]
+            DEFAULT_INTERPRETER
         };
 
         let default_script_extension = String::from(DEFAULT_SCRIPT_EXTENSION);
@@ -440,8 +443,11 @@ impl Task {
             .as_ref()
             .unwrap_or(&default_script_extension);
 
-        let mut command = Command::new(&interpreter_and_args.remove(0));
-        command.args(interpreter_and_args);
+        let mut command = Command::new(script_runner);
+
+        if let Some(script_runner_args) = &self.script_runner_args {
+            command.args(script_runner_args);
+        }
 
         let env = self.get_env(config_file);
         command.envs(&env);
@@ -782,13 +788,13 @@ mod tests {
         let task = get_task(
             "sample",
             r#"
-        script_runner = []
+        script_runner = ""
     "#,
             None,
         );
         let expected_error = TaskError::ImproperlyConfigured(
             String::from("sample"),
-            String::from("`script_runner` parameter cannot be an empty array."),
+            String::from("`script_runner` parameter cannot be an empty string."),
         );
         assert_eq!(task.unwrap_err().to_string(), expected_error.to_string());
 
