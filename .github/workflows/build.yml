@@ -2,10 +2,10 @@
 
 on:
   push:
-    tags:
-      - '*'
+#    tags:
+#      - '*'
     branches:
-      - 'main'
+      - 'dev'
   workflow_dispatch:
 
 name: Build
@@ -21,7 +21,7 @@ jobs:
           - target: x86_64-pc-windows-gnu
             archive: zip
           - target: x86_64-unknown-linux-musl
-            archive: tar.gz tar.xz
+            archive: tar.gz
           - target: x86_64-apple-darwin
             archive: zip
     steps:
@@ -32,13 +32,14 @@ jobs:
         with:
           RUSTTARGET: ${{ matrix.target }}
           ARCHIVE_TYPES: ${{ matrix.archive }}
+          ARCHIVE_NAME: yamis-${{  github.ref_name }}-${{ matrix.target }}.${{ matrix.archive }}
           EXTRA_FILES: "README.md LICENSE CHANGELOG.md"
           TOOLCHAIN_VERSION: "stable"
           UPLOAD_MODE: none
       - name: Upload artifact
         uses: actions/upload-artifact@v3
         with:
-          name: Binary
+          name: yamis-${{ github.ref_name }}-releases
           if-no-files-found: error
           path: |
             ${{ steps.compile.outputs.BUILT_ARCHIVE }}
