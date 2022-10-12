@@ -345,10 +345,12 @@ impl Task {
 
         let wd = match &self.wd {
             None => config_file.working_directory(),
-            Some(wd) => get_path_relative_to_base(config_file_folder, wd),
+            Some(wd) => Some(get_path_relative_to_base(config_file_folder, wd)),
         };
 
-        command.current_dir(wd);
+        if let Some(wd) = wd {
+            command.current_dir(wd);
+        }
 
         Ok(())
     }
@@ -362,7 +364,7 @@ impl Task {
         let mut child = match command.spawn() {
             Ok(child) => child,
             Err(e) => {
-                return Err(TaskError::RuntimeError(self.name.clone(), format!("{}", e)).into())
+                return Err(TaskError::RuntimeError(self.name.clone(), format!("{}", e)).into());
             }
         };
 
@@ -668,11 +670,28 @@ mod tests {
         let mut file = File::create(&config_file_path).unwrap();
         file.write_all(
             r#"
-    [tasks.bash]
-    help = """
-    Some multiline help that should be coerced to one line
-    """
-    program = "bash"
+[tasks.base]
+help = """
+New lines should be trimmed
+"""
+program = "bash"
+
+[tasks.help_inherited]
+bases = ["base"]
+
+[tasks.no_help]
+program = "bash"
+
+[tasks.help_removed]
+bases = ["base"]
+help = ""
+
+[tasks.help_overriden]
+bases = ["base"]
+help = """
+First line
+Second line
+"""
     "#
             .as_bytes(),
         )
@@ -680,12 +699,25 @@ mod tests {
 
         let config_file = ConfigFile::load(config_file_path).unwrap();
 
-        let task = config_file.get_task("bash").unwrap();
+        let task = config_file.get_task("base").unwrap();
         let task_ref = task.as_ref();
-        assert_eq!(
-            task_ref.get_help(),
-            "Some multiline help that should be coerced to one line"
-        );
+        assert_eq!(task_ref.get_help(), "New lines should be trimmed");
+
+        let task = config_file.get_task("help_inherited").unwrap();
+        let task_ref = task.as_ref();
+        assert_eq!(task_ref.get_help(), "New lines should be trimmed");
+
+        let task = config_file.get_task("no_help").unwrap();
+        let task_ref = task.as_ref();
+        assert_eq!(task_ref.get_help(), "");
+
+        let task = config_file.get_task("help_removed").unwrap();
+        let task_ref = task.as_ref();
+        assert_eq!(task_ref.get_help(), "");
+
+        let task = config_file.get_task("help_overriden").unwrap();
+        let task_ref = task.as_ref();
+        assert_eq!(task_ref.get_help(), "First line\nSecond line");
     }
 
     #[test]

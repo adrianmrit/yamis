@@ -71,8 +71,8 @@ pub struct ConfigFile {
     #[serde(skip)]
     pub(crate) filepath: PathBuf,
     #[serde(default)]
-    /// Working directory. Defaults to the folder containing the config file.
-    wd: String,
+    /// Working directory. Defaults to the folder where the script runs.
+    wd: Option<String>,
     /// Whether to automatically quote argument with spaces unless task specified
     #[serde(default = "default_quote")]
     pub(crate) quote: EscapeMode,
@@ -224,9 +224,12 @@ impl ConfigFilePaths {
     /// returns:  Result<ConfigFilePaths, Box<dyn error::Error>>
     pub fn only<S: AsRef<OsStr> + ?Sized>(path: &S) -> DynErrResult<ConfigFilePaths> {
         let path = PathBuf::from(path);
+        if !path.is_file() {
+            return Err(format!("{} does not exist", path.display()).into());
+        }
         let config_files = ConfigFilePaths {
             index: 0,
-            ended: true,
+            ended: false,
             root_reached: true,
             single: true,
             current_dir: path.clone(),
@@ -443,11 +446,13 @@ impl ConfigFile {
         self.filepath.parent().unwrap()
     }
 
-    /// Returns the working directory for the config file
-    pub fn working_directory(&self) -> PathBuf {
+    /// If set in the config file, returns the working directory as an absolute path.
+    pub fn working_directory(&self) -> Option<PathBuf> {
         // Some sort of cache would make it faster, but keeping it
         // simple until it is really needed
-        get_path_relative_to_base(self.directory(), &self.wd)
+        self.wd
+            .as_ref()
+            .map(|wd| get_path_relative_to_base(self.directory(), wd))
     }
 
     /// Returns plain and OS specific tasks with normalized names. This consumes `self.tasks`
@@ -644,12 +649,30 @@ mod tests {
         assert!(config_files.has_task("hello"));
         assert!(config_files.has_task("hello_local"));
         assert!(config_files.has_task("hello_global"));
+    }
 
-        let mut paths = ConfigFilePaths::only(project_config_path.as_path()).unwrap();
+    #[test]
+    fn test_discovery_given_file() {
+        let tmp_dir = TempDir::new().unwrap();
+        let sample_config_file_path = tmp_dir.path().join("sample.yamis.toml");
+        let mut sample_config_file = File::create(sample_config_file_path.as_path()).unwrap();
+        sample_config_file
+            .write_all(
+                r#"
+    [tasks.hello_project]
+    script = "echo hello project"
+    "#
+                .as_bytes(),
+            )
+            .unwrap();
 
+        let mut config_files = ConfigFilesContainer::new();
+        let mut paths = ConfigFilePaths::only(&sample_config_file_path).unwrap();
+        let sample_path = paths.next().unwrap().unwrap();
         assert!(paths.next().is_none());
+        config_files.read_config_file(sample_path).unwrap();
 
-        assert_eq!(paths.cached[0], project_config_path.as_path());
+        assert!(config_files.has_task("hello_project"));
     }
 
     #[test]
