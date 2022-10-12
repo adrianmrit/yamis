@@ -1,5 +1,10 @@
 # Changelog
 
+
+## [1.0.1] - 2022-10-11
+### Changed
+- Fix bug preventing `--file` option from working
+
 ## [1.0.0] - 2022-10-10
 ## Added
 - Get help in the command like by calling yamis with the `--help` or `-h` option
