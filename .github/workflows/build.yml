@@ -45,10 +45,11 @@ jobs:
           use-cross: true
           command: build
           args: --release --target ${{ matrix.binary_target }} --target-dir ${{ env.TARGET_DIR }}
-      - name: Package
+      - name: Setup Python 3
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
+      - name: Package
         run: python -m ci_build ${{ env.TARGET_DIR }} ${{ matrix.binary_target }} ${{  github.ref_name }} ${{ env.ARTIFACT_DIR }}
       - name: Upload artifact
         uses: actions/upload-artifact@v3
