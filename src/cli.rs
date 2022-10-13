@@ -382,14 +382,16 @@ pub fn exec() -> DynErrResult<()> {
                 .short('l')
                 .long("list")
                 .help("Lists configuration files that can be reached from the current directory")
-                .conflicts_with_all(&["file"]),
+                .conflicts_with_all(&["file"])
+                .action(ArgAction::SetTrue),
         )
         .arg(
             clap::Arg::new("list-tasks")
                 .short('t')
                 .long("list-tasks")
                 .help("Lists tasks")
-                .conflicts_with_all(&["task-info"]),
+                .conflicts_with_all(&["task-info"])
+                .action(ArgAction::SetTrue),
         )
         .arg(
             clap::Arg::new("task-info")
@@ -411,11 +413,12 @@ pub fn exec() -> DynErrResult<()> {
             clap::Arg::new("update")
                 .long("update")
                 .help("Checks for updates and updates the binary if necessary")
-                .exclusive(true),
+                .exclusive(true)
+                .action(ArgAction::SetTrue),
         );
     let matches = app.get_matches();
 
-    if matches.contains_id("update") {
+    if matches.get_one::<bool>("update").cloned().unwrap_or(false) {
         updater::update()?;
         return Ok(());
     } else if let Some(msg) = updater::check_update_available()? {
@@ -430,7 +433,11 @@ pub fn exec() -> DynErrResult<()> {
         Some(file_path) => ConfigFilePaths::only(file_path)?,
     };
 
-    if matches.contains_id("list-tasks") {
+    if matches
+        .get_one::<bool>("list-tasks")
+        .cloned()
+        .unwrap_or(false)
+    {
         file_containers.print_tasks_list(config_file_paths)?;
         return Ok(());
     };
@@ -440,7 +447,7 @@ pub fn exec() -> DynErrResult<()> {
         return Ok(());
     };
 
-    if matches.contains_id("list") {
+    if matches.get_one::<bool>("list").cloned().unwrap_or(false) {
         for path in config_file_paths {
             let path = path?;
             println!("{}", colorize_config_file_path(&path.to_string_lossy()));
