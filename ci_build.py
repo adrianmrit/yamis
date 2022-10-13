@@ -55,12 +55,12 @@ def tar_files(binary, version, target, final_dir):
 
 
 def __main__(target_dir, target, version, final_dir):
-    import subprocess
+    # import subprocess
 
-    subprocess.run(
-        ["cargo", "build", "--release", "--target", target, "--target-dir", target_dir],
-        check=True
-    )
+    # subprocess.run(
+    #     ["cargo", "build", "--release", "--target", target, "--target-dir", target_dir],
+    #     check=True, stdout=sys.stdout, stderr=sys.stderr
+    # )
 
     if not os.path.exists(final_dir):
         os.mkdir(final_dir)

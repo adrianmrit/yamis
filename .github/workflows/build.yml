@@ -24,6 +24,8 @@ jobs:
             binary_target: x86_64-unknown-linux-musl
           - os: windows-latest
             binary_target: x86_64-pc-windows-msvc
+          - os: windows-latest
+            binary_target: x86_64-pc-windows-gnu
           - os: macos-latest
             binary_target: x86_64-apple-darwin
           - os: macos-latest
@@ -34,20 +36,21 @@ jobs:
         run: sudo apt-get install musl-tools
       - name: Checkout
         uses: actions/checkout@v2
-      - name: Install rust
+      - name: Install toolchain
         uses: actions-rs/toolchain@v1
         with:
           toolchain: stable
+          target: ${{ matrix.binary_target }}
+          default: true
           profile: minimal
           override: true
-      - name: Install rust windows msvc target
-        if: matrix.os == 'windows-latest'
-        uses: actions-rs/toolchain@v1
+      - name: Build target
+        uses: actions-rs/cargo@v1
         with:
-          toolchain: stable-x86_64-pc-windows-msvc
-          profile: minimal
-          override: true
-      - name: Build and PKG
+          use-cross: true
+          command: build
+          args: --release --target ${{ matrix.target }} --target-dir ${{ env.TARGET_DIR }}
+      - name: Package
         run: python -m ci_build ${{ env.TARGET_DIR }} ${{ matrix.binary_target }} ${{  github.ref_name }} ${{ env.ARTIFACT_DIR }}
       - name: Upload artifact
         uses: actions/upload-artifact@v3
