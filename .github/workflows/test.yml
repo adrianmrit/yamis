@@ -5,10 +5,11 @@
 # For multi-OS testing see the `cross.yml` workflow.
 
 on:
-  paths:
-    - 'src/**'
-    - 'Cargo.toml'
-    - 'Cargo.lock'
+  push:
+    paths:
+      - 'src/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
   workflow_dispatch:
 
 name: Tests
