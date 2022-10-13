@@ -1,12 +1,19 @@
 # Changelog
 
 
+## [1.1.0] - 2022-10-13
+### Added
+- Upgrade to the latest version by running with the `--update` option.
+
+### Changed
+- Improve the update information process.
+
 ## [1.0.1] - 2022-10-11
 ### Changed
 - Fix bug preventing `--file` option from working
 
 ## [1.0.0] - 2022-10-10
-## Added
+### Added
 - Get help in the command like by calling yamis with the `--help` or `-h` option
 - Get the version in the command line by calling yamis with `-V`
 - Get the list of config files and tasks by calling yamis with `-t`

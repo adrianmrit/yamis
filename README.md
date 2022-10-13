@@ -94,12 +94,12 @@ in the `PATH`.
 
 <a name="updates"></a>
 ### Updates
-Automatic updates are not supported, but new releases will be notified when invoking the program. To achieve this it
-will look into the repository for new releases, so it needs to be connected to the internet. The message will be cached
-to avoid calling the server unnecessarily.
+When running, if a new version is available, a message will be displayed with the command. The update can be performed
+by running `yamis --update`, which will download and replace the binary. Alternatively it can be updated by following
+the installation instructions again at [Installation](#installation) or [Binary releases](#binary-releases).
 
-You can run `cargo install --force yamis` or download the latest binaries to update to the latest version.
-
+Note that the program will cache the update information for 24 hours, so no need to panic about
+it performing a request every time you run it.
 
 <a name="quick-start"></a>
 ## Quick start
@@ -188,17 +188,16 @@ You can see some help about the command line options by running `yamis -h` or `y
 usage would be like this:
 
 ```
-USAGE:
-    yamis [OPTIONS] [SUBCOMMAND]
+Usage: yamis [OPTIONS] [COMMAND]
 
-OPTIONS:
-    -f, --file <FILE>              Search for tasks in the given file
-    -h, --help                     Print help information
-    -i, --task-info <TASK>         Displays information about the given task
-    -l, --list                     Lists configuration files that can be reached from the current
-                                   directory
-    -t, --list-tasks               Lists tasks
-    -V, --version                  Print version information
+Options:
+  -l, --list              Lists configuration files that can be reached from the current directory
+  -t, --list-tasks        Lists tasks
+  -i, --task-info <TASK>  Displays information about the given task
+  -f, --file <FILE>       Search for tasks in the given file
+      --update            Checks for updates and updates the binary if necessary
+  -h, --help              Print help information
+  -V, --version           Print version information
 ```
 
 You can either call a task directly by passing the name of the task and its arguments, i.e. `yamis say_hi --name John`,
