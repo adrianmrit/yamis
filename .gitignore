@@ -1,3 +1,4 @@
 /target
 ilocal.yamis.toml
 /target_cov
+/target_ci

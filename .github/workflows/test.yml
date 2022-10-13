@@ -5,16 +5,7 @@
 # For multi-OS testing see the `cross.yml` workflow.
 
 on:
-  pull_request:
-    branches:
-      - 'dev'
-    paths:
-      - 'src/**'
-      - 'Cargo.toml'
-      - 'Cargo.lock'
   push:
-    branches:
-      - 'main'
     paths:
       - 'src/**'
       - 'Cargo.toml'
