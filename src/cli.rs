@@ -1,10 +1,11 @@
+use clap::ArgAction;
 use colored::{ColoredString, Colorize};
 use lazy_static::lazy_static;
 use serde_derive::Deserialize;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::error::Error;
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 use std::fs::File;
 use std::path::Path;
 use std::{env, fmt, fs};
@@ -255,6 +256,7 @@ impl ConfigFileContainers {
     }
 }
 
+// TODO: Handle
 impl TaskSubcommand {
     /// Returns a new TaskSubcommand
     pub(crate) fn new(args: &clap::ArgMatches) -> Result<TaskSubcommand, ArgsError> {
@@ -265,9 +267,12 @@ impl TaskSubcommand {
             Some(command) => command,
         };
 
-        if let Some(args) = task_args.values_of("") {
+        if let Some(args) = task_args.get_many::<OsString>("") {
             // All args are pushed into a vector as they are
-            let all_args = args.clone().map(|s| s.to_string()).collect::<Vec<String>>();
+            let all_args = args
+                .clone()
+                .map(|s| s.to_string_lossy().to_string())
+                .collect::<Vec<String>>();
             kwargs.insert(String::from("*"), all_args);
 
             // kwarg found that could be a key
@@ -275,15 +280,16 @@ impl TaskSubcommand {
 
             // looping over the args to find kwargs
             for arg in args {
+                let arg = arg.to_string_lossy().to_string();
                 // if a kwarg key was previously found, assume this is the value, even if
                 // it starts with - or --
                 if let Some(possible_kwarg) = possible_kwarg_key {
                     match kwargs.entry(possible_kwarg) {
                         Entry::Occupied(mut e) => {
-                            e.get_mut().push(arg.to_string());
+                            e.get_mut().push(arg);
                         }
                         Entry::Vacant(e) => {
-                            let args_vec: Vec<String> = vec![arg.to_string()];
+                            let args_vec: Vec<String> = vec![arg];
                             e.insert(args_vec);
                         }
                     }
@@ -298,7 +304,7 @@ impl TaskSubcommand {
                 }
 
                 // Check if this is a kwarg key-value pair
-                if let Some((key, val)) = Self::get_kwarg(arg) {
+                if let Some((key, val)) = Self::get_kwarg(&arg) {
                     match kwargs.entry(key) {
                         Entry::Occupied(mut e) => {
                             e.get_mut().push(val);
@@ -312,7 +318,7 @@ impl TaskSubcommand {
                 }
 
                 // Otherwise it could be a kwarg key, for which we need to check the next arg
-                if let Some(key) = Self::get_kwarg_key(arg) {
+                if let Some(key) = Self::get_kwarg_key(&arg) {
                     possible_kwarg_key = Some(key);
                     continue;
                 }
@@ -375,7 +381,6 @@ pub fn exec() -> DynErrResult<()> {
             clap::Arg::new("list")
                 .short('l')
                 .long("list")
-                .takes_value(false)
                 .help("Lists configuration files that can be reached from the current directory")
                 .conflicts_with_all(&["file"]),
         )
@@ -383,7 +388,6 @@ pub fn exec() -> DynErrResult<()> {
             clap::Arg::new("list-tasks")
                 .short('t')
                 .long("list-tasks")
-                .takes_value(false)
                 .help("Lists tasks")
                 .conflicts_with_all(&["task-info"]),
         )
@@ -391,7 +395,7 @@ pub fn exec() -> DynErrResult<()> {
             clap::Arg::new("task-info")
                 .short('i')
                 .long("task-info")
-                .takes_value(true)
+                .action(ArgAction::Set)
                 .help("Displays information about the given task")
                 .value_name("TASK"),
         )
@@ -399,14 +403,13 @@ pub fn exec() -> DynErrResult<()> {
             clap::Arg::new("file")
                 .short('f')
                 .long("file")
+                .action(ArgAction::Set)
                 .help("Search for tasks in the given file")
-                .takes_value(true)
                 .value_name("FILE"),
         )
         .arg(
             clap::Arg::new("update")
                 .long("update")
-                .takes_value(false)
                 .help("Checks for updates and updates the binary if necessary")
                 .exclusive(true),
         );
@@ -422,7 +425,7 @@ pub fn exec() -> DynErrResult<()> {
     let current_dir = env::current_dir()?;
     let mut file_containers = ConfigFileContainers::new();
 
-    let config_file_paths = match matches.value_of("file") {
+    let config_file_paths = match matches.get_one::<String>("file") {
         None => ConfigFilePaths::new(&current_dir),
         Some(file_path) => ConfigFilePaths::only(file_path)?,
     };
@@ -432,7 +435,7 @@ pub fn exec() -> DynErrResult<()> {
         return Ok(());
     };
 
-    if let Some(task_name) = matches.value_of("task-info") {
+    if let Some(task_name) = matches.get_one::<String>("task-info") {
         file_containers.print_task_info(config_file_paths, task_name)?;
         return Ok(());
     };

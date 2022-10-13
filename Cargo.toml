@@ -30,13 +30,13 @@ petgraph = "0.6"
 uuid = { version = "1.1", features = ["serde", "v4"] }
 ctrlc = "3.2"
 dotenv-parser = "0.1"
-clap = { version = "3.2", features = ["derive", "cargo"] }
+clap = { version = "4.0", features = ["derive", "cargo"] }
 pest = "2.0"
 pest_derive = "2.0"
 indexmap = "1.9"
 shellexpand = "2.1.2"
-self_update = { version = "0.32.0", features = ["archive-tar", "archive-zip", "compression-flate2"] }
-directories = { version = "4.0.1" }
+self_update = { version = "0.32", features = ["archive-tar", "archive-zip", "compression-flate2"] }
+directories = { version = "4.0" }
 
 # Example for adding another version as dependency. Need to remove the runtime feature, and make it optional
 # yamis_v2 = { package="yamis",  version = "2.0", default-features = false, optional = true }
