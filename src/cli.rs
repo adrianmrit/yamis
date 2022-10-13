@@ -13,6 +13,7 @@ use regex::Regex;
 
 use crate::config_files::{ConfigFilePaths, ConfigFilesContainer};
 use crate::types::{DynErrResult, TaskArgs};
+use crate::updater;
 
 const HELP: &str = "The appropriate YAML or TOML config files need to exist \
 in the directory or parents, or a file is specified with the `-f` or `--file` \
@@ -401,8 +402,22 @@ pub fn exec() -> DynErrResult<()> {
                 .help("Search for tasks in the given file")
                 .takes_value(true)
                 .value_name("FILE"),
+        )
+        .arg(
+            clap::Arg::new("update")
+                .long("update")
+                .takes_value(false)
+                .help("Checks for updates and updates the binary if necessary")
+                .exclusive(true),
         );
     let matches = app.get_matches();
+
+    if matches.contains_id("update") {
+        updater::update()?;
+        return Ok(());
+    } else if let Some(msg) = updater::check_update_available()? {
+        println!("{}", msg);
+    }
 
     let current_dir = env::current_dir()?;
     let mut file_containers = ConfigFileContainers::new();
