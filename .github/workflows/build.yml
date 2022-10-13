@@ -49,7 +49,7 @@ jobs:
         with:
           use-cross: true
           command: build
-          args: --release --target ${{ matrix.target }} --target-dir ${{ env.TARGET_DIR }}
+          args: --release --target ${{ matrix.binary_target }} --target-dir ${{ env.TARGET_DIR }}
       - name: Package
         run: python -m ci_build ${{ env.TARGET_DIR }} ${{ matrix.binary_target }} ${{  github.ref_name }} ${{ env.ARTIFACT_DIR }}
       - name: Upload artifact
