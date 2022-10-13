@@ -24,16 +24,11 @@ jobs:
             binary_target: x86_64-unknown-linux-musl
           - os: windows-latest
             binary_target: x86_64-pc-windows-msvc
-          - os: windows-latest
-            binary_target: x86_64-pc-windows-gnu
           - os: macos-latest
             binary_target: x86_64-apple-darwin
           - os: macos-latest
             binary_target: aarch64-apple-darwin
     steps:
-      - name: Install musl tools
-        if: matrix.binary_target == 'x86_64-unknown-linux-musl'
-        run: sudo apt-get install musl-tools
       - name: Checkout
         uses: actions/checkout@v2
       - name: Install toolchain
@@ -51,6 +46,9 @@ jobs:
           command: build
           args: --release --target ${{ matrix.binary_target }} --target-dir ${{ env.TARGET_DIR }}
       - name: Package
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
         run: python -m ci_build ${{ env.TARGET_DIR }} ${{ matrix.binary_target }} ${{  github.ref_name }} ${{ env.ARTIFACT_DIR }}
       - name: Upload artifact
         uses: actions/upload-artifact@v3
