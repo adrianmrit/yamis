@@ -1,44 +1,57 @@
 # Builds the project and uploads as artifacts
-
+name: Build
 on:
   push:
     tags:
       - '*'
   workflow_dispatch:
 
-name: Build
+env:
+  TARGET_DIR: target_ci
+  ARTIFACT_DIR: artifacts
 
 jobs:
   build:
-    name: Build ${{ matrix.target }}
-    runs-on: ubuntu-latest
+    name: Build for ${{ matrix.binary_target }}
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - target: x86_64-pc-windows-gnu
-            archive: zip
-          - target: x86_64-unknown-linux-musl
-            archive: tar.gz tar.xz
-          - target: x86_64-apple-darwin
-            archive: zip
+          - os: ubuntu-latest
+            binary_target: x86_64-unknown-linux-gnu
+          - os: ubuntu-latest
+            binary_target: x86_64-unknown-linux-musl
+          - os: windows-latest
+            binary_target: x86_64-pc-windows-msvc
+          - os: macos-latest
+            binary_target: x86_64-apple-darwin
+          - os: macos-latest
+            binary_target: aarch64-apple-darwin
     steps:
-      - uses: actions/checkout@master
-      - name: Compile
-        id: compile
-        uses: rust-build/rust-build.action@v1.3.2
+      - name: Install musl tools
+        if: matrix.binary_target == 'x86_64-unknown-linux-musl'
+        run: sudo apt-get install musl-tools
+      - name: Checkout
+        uses: actions/checkout@v2
+      - name: Install rust
+        uses: actions-rs/toolchain@v1
         with:
-          RUSTTARGET: ${{ matrix.target }}
-          ARCHIVE_TYPES: ${{ matrix.archive }}
-          ARCHIVE_NAME: yamis-${{  github.ref_name }}-${{ matrix.target }}
-          EXTRA_FILES: "README.md LICENSE CHANGELOG.md"
-          TOOLCHAIN_VERSION: "stable"
-          UPLOAD_MODE: none
+          toolchain: stable
+          profile: minimal
+          override: true
+      - name: Install rust windows msvc target
+        if: matrix.os == 'windows-latest'
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable-x86_64-pc-windows-msvc
+          profile: minimal
+          override: true
+      - name: Build and PKG
+        run: python -m ci_build ${{ env.TARGET_DIR }} ${{ matrix.binary_target }} ${{  github.ref_name }} ${{ env.ARTIFACT_DIR }}
       - name: Upload artifact
         uses: actions/upload-artifact@v3
         with:
           name: yamis-${{ github.ref_name }}-releases
           if-no-files-found: error
-          path: |
-            ${{ steps.compile.outputs.BUILT_ARCHIVE }}
-            ${{ steps.compile.outputs.BUILT_CHECKSUM }}
+          path: ${{ env.ARTIFACT_DIR }}
