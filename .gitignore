@@ -1,4 +1,4 @@
 /target
-ilocal.yamis.toml
+local.yamis.*
 /target_cov
 /target_ci
