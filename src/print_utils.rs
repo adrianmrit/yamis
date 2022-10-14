@@ -14,7 +14,9 @@ impl YamisOutput for str {
 
         let mut result = String::new();
         for line in lines {
-            result.push_str(&format!("{} {}", prefix, line));
+            result.push_str(&prefix);
+            result.push(' ');
+            result.push_str(line);
         }
         result
     }

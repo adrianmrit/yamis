@@ -1,5 +1,5 @@
 use crate::types::DynErrResult;
-use colored::{Color, Colorize};
+use colored::Colorize;
 use self_update::cargo_crate_version;
 use self_update::version::bump_is_greater;
 use std::fs::create_dir_all;
