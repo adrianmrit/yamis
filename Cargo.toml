@@ -35,7 +35,7 @@ pest = "2.0"
 pest_derive = "2.0"
 indexmap = "1.9"
 shellexpand = "2.1.2"
-self_update = { version = "0.32", features = ["archive-tar", "archive-zip", "compression-flate2", "rustls"] }
+self_update = { version = "0.32", features = ["archive-tar", "archive-zip", "compression-flate2"] }
 directories = { version = "4.0" }
 
 # Example for adding another version as dependency. Need to remove the runtime feature, and make it optional
