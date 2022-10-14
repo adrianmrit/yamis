@@ -6,7 +6,6 @@ use std::fs::create_dir_all;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::print_utils::YamisOutput;
 #[cfg(test)]
 use assert_fs::TempDir;
 #[cfg(not(test))]
