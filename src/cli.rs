@@ -1,5 +1,5 @@
 use clap::ArgAction;
-use colored::{ColoredString, Colorize};
+use colored::{Color, ColoredString, Colorize};
 use lazy_static::lazy_static;
 use serde_derive::Deserialize;
 use std::collections::hash_map::Entry;
@@ -13,6 +13,7 @@ use std::{env, fmt, fs};
 use regex::Regex;
 
 use crate::config_files::{ConfigFilePaths, ConfigFilesContainer};
+use crate::print_utils::YamisOutput;
 use crate::types::{DynErrResult, TaskArgs};
 use crate::updater;
 
@@ -421,8 +422,18 @@ pub fn exec() -> DynErrResult<()> {
     if matches.get_one::<bool>("update").cloned().unwrap_or(false) {
         updater::update()?;
         return Ok(());
-    } else if let Some(msg) = updater::check_update_available()? {
-        println!("{}", msg);
+    } else {
+        match updater::check_update_available() {
+            Ok(result) => {
+                if let Some(msg) = result {
+                    println!("{}", msg.yamis_prefix(Color::Blue));
+                }
+            }
+            Err(e) => {
+                let err_msg = format!("Error checking for updates: {}", e);
+                eprintln!("{}", err_msg.yamis_prefix(Color::Red));
+            }
+        }
     }
 
     let current_dir = env::current_dir()?;

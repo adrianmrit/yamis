@@ -114,7 +114,6 @@ pub(crate) fn check_update_available() -> DynErrResult<Option<String>> {
     if cache_file.outdated() {
         #[cfg(not(test))]
         {
-            dbg!("Checking for updates");
             let releases = self_update::backends::github::ReleaseList::configure()
                 .repo_owner("adrianmrit")
                 .repo_name("yamis")
@@ -146,8 +145,6 @@ pub(crate) fn check_update_available() -> DynErrResult<Option<String>> {
             url = LATEST_RELEASE_URL.yellow(),
             inst = update_instructions
         );
-
-        let msg = msg.yamis_prefix(Color::Blue);
 
         Some(msg)
     } else {
