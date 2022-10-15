@@ -65,7 +65,7 @@ jobs:
         with:
             RUSTTARGET: ${{ matrix.binary_target }}
             ARCHIVE_TYPES: tar.gz
-            ARCHIVE_NAME: yamis-${{ github.ref_name }}-${{ matrix.target }}
+            ARCHIVE_NAME: yamis-${{ github.ref_name }}-${{ matrix.binary_target }}
             EXTRA_FILES: "README.md LICENSE CHANGELOG.md"
             TOOLCHAIN_VERSION: "stable"
             UPLOAD_MODE: none
@@ -74,9 +74,9 @@ jobs:
         if: matrix.builder == 'rust-build-action'
         # These should match the python script below
         run: |
-          mkdir -p ${{ env.ARTIFACT_DIR }}
-          mv ${{ steps.compile.outputs.BUILT_ARCHIVE }} ${{ env.ARTIFACT_DIR }}/yamis-${{ github.ref_name }}-${{ matrix.binary_target }}
-          mv ${{ steps.compile.outputs.BUILT_CHECKSUM }} ${{ env.ARTIFACT_DIR }}/yamis-${{ github.ref_name }}-${{ matrix.binary_target }}.sha256
+          sudo mkdir -p ${{ env.ARTIFACT_DIR }}
+          sudo mv ${{ steps.compile.outputs.BUILT_ARCHIVE }} ${{ env.ARTIFACT_DIR }}/yamis-${{ github.ref_name }}-${{ matrix.binary_target }}.tar.gz
+          sudo mv ${{ steps.compile.outputs.BUILT_CHECKSUM }} ${{ env.ARTIFACT_DIR }}/yamis-${{ github.ref_name }}-${{ matrix.binary_target }}.sha256
 
       - name: Setup Python 3
         if: matrix.builder == 'cross'
