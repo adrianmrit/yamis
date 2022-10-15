@@ -18,20 +18,30 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Note that we use different solutions to build for different targets.
+          # For musl there are issues with openssl, but with rust build action it works fine
+          # This action however does not work with certain other targets, so we only use it for musl
           - os: ubuntu-latest
             binary_target: x86_64-unknown-linux-gnu
+            builder: cross
           - os: ubuntu-latest
             binary_target: x86_64-unknown-linux-musl
+            builder: rust-build-action
           - os: windows-latest
             binary_target: x86_64-pc-windows-msvc
+            builder: cross
           - os: macos-latest
             binary_target: x86_64-apple-darwin
+            builder: cross
           - os: macos-latest
             binary_target: aarch64-apple-darwin
+            builder: cross
     steps:
       - name: Checkout
         uses: actions/checkout@v2
+
       - name: Install toolchain
+        if: matrix.builder == 'cross'
         uses: actions-rs/toolchain@v1
         with:
           toolchain: stable
@@ -39,15 +49,16 @@ jobs:
           default: true
           profile: minimal
           override: true
+
       - name: Build target
+        if: matrix.builder == 'cross'
         uses: actions-rs/cargo@v1
         with:
           use-cross: true
           command: build
           args: --release --target ${{ matrix.binary_target }} --target-dir ${{ env.TARGET_DIR }}
+
       - name: Compile
-        # For musl there are issues with openssl, but with this action it should work
-        # This action however does not work with certain other targets, so we only use it for musl
         if: matrix.binary_target == 'x86_64-unknown-linux-musl'
         id: compile
         uses: rust-build/rust-build.action@v1.3.2
@@ -58,21 +69,25 @@ jobs:
             EXTRA_FILES: "README.md LICENSE CHANGELOG.md"
             TOOLCHAIN_VERSION: "stable"
             UPLOAD_MODE: none
+
       - name: Move musl binary
-        if: matrix.binary_target == 'x86_64-unknown-linux-musl'
+        if: matrix.builder == 'rust-build-action'
         # These should match the python script below
         run: |
           mkdir -p ${{ env.ARTIFACT_DIR }}
           mv ${{ steps.compile.outputs.BUILT_ARCHIVE }} ${{ env.ARTIFACT_DIR }}/yamis-${{ github.ref_name }}-${{ matrix.binary_target }}
           mv ${{ steps.compile.outputs.BUILT_CHECKSUM }} ${{ env.ARTIFACT_DIR }}/yamis-${{ github.ref_name }}-${{ matrix.binary_target }}.sha256
+
       - name: Setup Python 3
-        if: matrix.binary_target != 'x86_64-unknown-linux-musl'
+        if: matrix.builder == 'cross'
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
+
       - name: Package
-        if: matrix.binary_target != 'x86_64-unknown-linux-musl'
+        if: matrix.builder == 'cross'
         run: python -m ci_build ${{ env.TARGET_DIR }} ${{ matrix.binary_target }} ${{  github.ref_name }} ${{ env.ARTIFACT_DIR }}
+
       - name: Upload artifact
         uses: actions/upload-artifact@v3
         with:
