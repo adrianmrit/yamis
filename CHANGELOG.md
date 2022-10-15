@@ -1,7 +1,7 @@
 # Changelog
 
 
-## [1.1.0] - 2022-10-13
+## [1.1.0] - 2022-10-14
 ### Added
 - Upgrade to the latest version by running with the `--update` option.
 

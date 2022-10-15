@@ -76,7 +76,7 @@ jobs:
         run: |
           sudo mkdir -p ${{ env.ARTIFACT_DIR }}
           sudo mv ${{ steps.compile.outputs.BUILT_ARCHIVE }} ${{ env.ARTIFACT_DIR }}/yamis-${{ github.ref_name }}-${{ matrix.binary_target }}.tar.gz
-          sudo mv ${{ steps.compile.outputs.BUILT_CHECKSUM }} ${{ env.ARTIFACT_DIR }}/yamis-${{ github.ref_name }}-${{ matrix.binary_target }}.sha256
+          sudo mv ${{ steps.compile.outputs.BUILT_CHECKSUM }} ${{ env.ARTIFACT_DIR }}/yamis-${{ github.ref_name }}-${{ matrix.binary_target }}.tar.gz.sha256
 
       - name: Setup Python 3
         if: matrix.builder == 'cross'
