@@ -10,7 +10,7 @@ pub trait YamisOutput {
 impl YamisOutput for str {
     fn yamis_prefix<S: Into<Color>>(&self, color: S) -> String {
         let lines = self.split_inclusive('\n');
-        let prefix = PREFIX.color(color);
+        let prefix = PREFIX.color(color).to_string();
 
         let mut result = String::new();
         for line in lines {
