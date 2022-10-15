@@ -1,12 +1,13 @@
 # Changelog
 
 
-## [1.1.0] - 2022-10-14
+## [1.1.0] - 2022-10-15
 ### Added
 - Upgrade to the latest version by running with the `--update` option.
 
 ### Changed
 - Improve the update information process.
+- Use rustls instead of openssl. Fixes some dependency issues on linux.
 
 ## [1.0.1] - 2022-10-11
 ### Changed
