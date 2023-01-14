@@ -362,14 +362,14 @@ impl ConfigFile {
                 .into());
             }
         };
-        let contents = match fs::read_to_string(&path) {
+        let contents = match fs::read_to_string(path) {
             Ok(file_contents) => file_contents,
             Err(e) => return Err(format!("There was an error reading the file:\n{}", e).into()),
         };
         if is_yaml {
-            Ok(serde_yaml::from_str(&*contents)?)
+            Ok(serde_yaml::from_str(&contents)?)
         } else {
-            Ok(toml::from_str(&*contents)?)
+            Ok(toml::from_str(&contents)?)
         }
     }
 

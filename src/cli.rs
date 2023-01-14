@@ -129,7 +129,7 @@ impl ConfigFileContainers {
             }
         };
 
-        let file = match File::open(&path) {
+        let file = match File::open(path) {
             Ok(file_contents) => file_contents,
             Err(e) => return Err(format!("There was an error reading the file:\n{}", e).into()),
         };
@@ -138,7 +138,7 @@ impl ConfigFileContainers {
             serde_yaml::from_reader(file)?
         } else {
             // A bytes list should be slightly faster than a string list
-            toml::from_slice(&fs::read(&path)?)?
+            toml::from_slice(&fs::read(path)?)?
         };
 
         Ok(result.version)
@@ -383,7 +383,7 @@ pub fn exec() -> DynErrResult<()> {
                 .short('l')
                 .long("list")
                 .help("Lists configuration files that can be reached from the current directory")
-                .conflicts_with_all(&["file"])
+                .conflicts_with_all(["file"])
                 .action(ArgAction::SetTrue),
         )
         .arg(
@@ -391,7 +391,7 @@ pub fn exec() -> DynErrResult<()> {
                 .short('t')
                 .long("list-tasks")
                 .help("Lists tasks")
-                .conflicts_with_all(&["task-info"])
+                .conflicts_with_all(["task-info"])
                 .action(ArgAction::SetTrue),
         )
         .arg(

@@ -488,7 +488,7 @@ impl Task {
                     &script,
                     script_extension,
                     &self.name,
-                    &config_file.filepath.as_path(),
+                    config_file.filepath.as_path(),
                 )?;
                 command.arg(script_file.to_str().unwrap());
             }
