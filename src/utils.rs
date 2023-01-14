@@ -7,6 +7,8 @@ use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::{env, fs};
 
+/// To uniquely identify the temporary folder. Constant so that the scripts are cached.
+pub const TMP_FOLDER_NAMESPACE: &str = "adrianmrit.yamis";
 /// Returns the task name as per the current OS.
 ///
 /// # Arguments

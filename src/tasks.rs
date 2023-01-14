@@ -5,16 +5,16 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Arc;
-use std::{error, fmt, mem};
+use std::{error, fmt, fs, mem};
 
 use crate::config_files::ConfigFile;
 use crate::defaults::default_false;
 use crate::parser::{parse_params, parse_script, EscapeMode};
 use serde_derive::Deserialize;
-use uuid::Uuid;
 
 use crate::types::{DynErrResult, TaskArgs};
-use crate::utils::{get_path_relative_to_base, read_env_file};
+use crate::utils::{get_path_relative_to_base, read_env_file, TMP_FOLDER_NAMESPACE};
+use md5::{Digest, Md5};
 
 cfg_if::cfg_if! {
     if #[cfg(target_os = "windows")] {
@@ -130,8 +130,15 @@ cfg_if::cfg_if! {
 /// # Arguments
 ///
 /// * `content` - Content of the script file
-fn get_temp_script(content: &str, extension: &str) -> DynErrResult<PathBuf> {
+fn get_temp_script(
+    content: &str,
+    extension: &str,
+    task_name: &str,
+    config_file_path: &Path,
+) -> DynErrResult<PathBuf> {
     let mut path = temp_dir();
+    path.push(TMP_FOLDER_NAMESPACE);
+    fs::create_dir_all(&path)?;
 
     let extension = if extension.is_empty() {
         String::new()
@@ -141,9 +148,22 @@ fn get_temp_script(content: &str, extension: &str) -> DynErrResult<PathBuf> {
         format!(".{}", extension)
     };
 
-    let file_name = format!("{}-yamis{}", Uuid::new_v4(), extension);
-    path.push(file_name);
+    // get md5 hash of the task_name, config_file_path and content
+    let mut hasher = Md5::new();
+    hasher.update(task_name.as_bytes());
+    hasher.update(config_file_path.to_str().unwrap().as_bytes());
+    hasher.update(content.as_bytes());
+    let hash = hasher.finalize();
 
+    let file_name = format!("{:X}{}", hash, extension);
+    path.push(file_name);
+    dbg!(&path);
+
+    // Uses the temp file as a cache, so it doesn't have to create it every time
+    // we run the same script.
+    if path.exists() {
+        return Ok(path);
+    }
     let mut file = create_script_file(&path)?;
     file.write_all(content.as_bytes())?;
     Ok(path)
@@ -464,7 +484,12 @@ impl Task {
 
         match parse_script(script, args, &env, quote) {
             Ok(script) => {
-                let script_file = get_temp_script(&script, script_extension)?;
+                let script_file = get_temp_script(
+                    &script,
+                    script_extension,
+                    &self.name,
+                    &config_file.filepath.as_path(),
+                )?;
                 command.arg(script_file.to_str().unwrap());
             }
             Err(e) => {
@@ -893,23 +918,31 @@ Second line
 
     #[test]
     fn test_create_temp_script() {
+        let tmp_dir = TempDir::new().unwrap();
+        let project_config_path = tmp_dir.join("project.yamis.toml");
         let script = "echo hello world";
         let extension = "sh";
-        let script_path = get_temp_script(script, extension).unwrap();
+        let task_name = "sample";
+        let script_path =
+            get_temp_script(script, extension, task_name, project_config_path.as_path()).unwrap();
         assert!(script_path.exists());
         assert_eq!(script_path.extension().unwrap(), extension);
         let script_content = fs::read_to_string(script_path).unwrap();
         assert_eq!(script_content, script);
 
         let extension = "";
-        let script_path = get_temp_script(script, extension).unwrap();
+        let task_name = "sample2";
+        let script_path =
+            get_temp_script(script, extension, task_name, project_config_path.as_path()).unwrap();
         assert!(script_path.exists());
         assert!(script_path.extension().is_none());
         let script_content = fs::read_to_string(script_path).unwrap();
         assert_eq!(script_content, script);
 
         let extension = ".sh";
-        let script_path = get_temp_script(script, extension).unwrap();
+        let task_name = "sample3";
+        let script_path =
+            get_temp_script(script, extension, task_name, project_config_path.as_path()).unwrap();
         assert!(script_path.exists());
         assert_eq!(script_path.extension().unwrap(), "sh");
         let script_content = fs::read_to_string(script_path).unwrap();
