@@ -1,3 +1,4 @@
+use crate::debug_config::ConfigFileDebugConfig;
 use crate::defaults::default_quote;
 use crate::parser::EscapeMode;
 use crate::tasks::Task;
@@ -70,6 +71,11 @@ pub struct ConfigFile {
     /// Path of the file.
     #[serde(skip)]
     pub(crate) filepath: PathBuf,
+
+    /// Debug options
+    #[serde(default)]
+    pub(crate) debug_config: ConfigFileDebugConfig,
+
     #[serde(default)]
     /// Working directory. Defaults to the folder where the script runs.
     wd: Option<String>,

@@ -167,7 +167,6 @@ mod tests {
         let mut file = File::create(&env_file_path).unwrap();
         file.write_all(r#"INVALID_ENV_FILE"#.as_bytes()).unwrap();
         let env_map = read_env_file(&env_file_path).unwrap_err();
-        dbg!(env_map.to_string());
         let expected_err = format!("Failed to parse env file at {}: ", env_file_path.display());
         assert!(env_map.to_string().contains(&expected_err),);
     }

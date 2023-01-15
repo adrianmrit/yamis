@@ -8,8 +8,10 @@ use std::sync::Arc;
 use std::{error, fmt, fs, mem};
 
 use crate::config_files::ConfigFile;
+use crate::debug_config::{ConcreteTaskDebugConfig, TaskDebugConfig};
 use crate::defaults::default_false;
 use crate::parser::{parse_params, parse_script, EscapeMode};
+use crate::print_utils::YamisOutput;
 use serde_derive::Deserialize;
 
 use crate::types::{DynErrResult, TaskArgs};
@@ -63,6 +65,7 @@ pub struct Task {
     /// Name of the task
     #[serde(skip)]
     name: String,
+    debug_config: Option<TaskDebugConfig>,
     /// Help of the task
     help: Option<String>,
     /// Whether to automatically quote argument with spaces
@@ -157,7 +160,6 @@ fn get_temp_script(
 
     let file_name = format!("{:X}{}", hash, extension);
     path.push(file_name);
-    dbg!(&path);
 
     // Uses the temp file as a cache, so it doesn't have to create it every time
     // we run the same script.
@@ -206,6 +208,7 @@ impl Task {
         if self.quote.is_none() && base_task.quote.is_some() {
             self.quote = Some(base_task.quote.as_ref().unwrap().clone());
         }
+        inherit_value!(self.debug_config, base_task.debug_config);
         inherit_value!(self.help, base_task.help);
         inherit_value!(self.script, base_task.script);
         inherit_value!(self.script_runner, base_task.script_runner);
@@ -216,6 +219,7 @@ impl Task {
         inherit_value!(self.serial, base_task.serial);
         inherit_value!(self.env_file, base_task.env_file);
 
+        // We merge the envs, so the base env is not overwritten
         if !base_task.env.is_empty() {
             let old_env = mem::replace(&mut self.env, base_task.env.clone());
 
@@ -536,6 +540,13 @@ impl Task {
     /// * `config_file` - Configuration file of the task
     /// * `config_files` - global ConfigurationFiles instance
     pub fn run(&self, args: &TaskArgs, config_file: &ConfigFile) -> DynErrResult<()> {
+        let task_debug_config =
+            ConcreteTaskDebugConfig::new(&self.debug_config, &config_file.debug_config);
+
+        if task_debug_config.print_task_name {
+            println!("{}", format!("Task: `{}`", self.name).yamis_info());
+        }
+
         return if self.script.is_some() {
             self.run_script(args, config_file)
         } else if self.program.is_some() {

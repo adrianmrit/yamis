@@ -1,5 +1,5 @@
 use clap::ArgAction;
-use colored::{Color, ColoredString, Colorize};
+use colored::{ColoredString, Colorize};
 use lazy_static::lazy_static;
 use serde_derive::Deserialize;
 use std::collections::hash_map::Entry;
@@ -240,6 +240,9 @@ impl ConfigFileContainers {
                     let task = config_file_lock.get_public_task(task);
                     match task {
                         Some(task) => {
+                            if config_file_lock.debug_config.print_file_path {
+                                println!("{}", &path.to_string_lossy().yamis_info());
+                            }
                             return match task.run(&args, &config_file_lock) {
                                 Ok(val) => Ok(val),
                                 Err(e) => {
@@ -426,12 +429,12 @@ pub fn exec() -> DynErrResult<()> {
         match updater::check_update_available() {
             Ok(result) => {
                 if let Some(msg) = result {
-                    println!("{}", msg.yamis_prefix(Color::Blue));
+                    println!("{}", msg.yamis_prefix_info());
                 }
             }
             Err(e) => {
                 let err_msg = format!("Error checking for updates: {}", e);
-                eprintln!("{}", err_msg.yamis_prefix(Color::Red));
+                eprintln!("{}", err_msg.yamis_error());
             }
         }
     }

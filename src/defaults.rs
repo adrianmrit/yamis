@@ -5,10 +5,10 @@ pub(crate) fn default_quote() -> EscapeMode {
     EscapeMode::Always
 }
 
-// /// Returns true, for serde deserialization defaults
-// pub(crate) fn default_true() -> bool {
-//     true
-// }
+/// Returns true, for serde deserialization defaults
+pub(crate) fn default_true() -> bool {
+    true
+}
 
 /// Returns false, for serde deserialization defaults
 pub(crate) fn default_false() -> bool {
