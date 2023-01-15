@@ -38,6 +38,12 @@ impl Clone for TaskDebugConfig {
     }
 }
 
+/// Task debug options, but with no optional values
+/// This is used to avoid having to check for `None` values
+/// every time we want to use a debug option.
+///
+/// This is created by merging the relevant debug options
+/// from the config file and the task.
 pub(crate) struct ConcreteTaskDebugConfig {
     pub(crate) print_task_name: bool,
 }
