@@ -1,0 +1,182 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "JSON Schema for Yamis, a task runner for teams and individuals",
+    "description": "Yamis is a task runner for teams and individuals",
+    "type": "object",
+    "additionalProperties": false,
+    "$defs": {
+        "quote": {
+            "description": "Escape mode for script arguments",
+            "type": "string",
+            "enum": [
+                "always",
+                "spaces",
+                "never"
+            ]
+        },
+        "env": {
+            "description": "Environment variables to set when running a task",
+            "type": "object",
+            "additionalProperties": {
+                "type": "string"
+            }
+        },
+        "env_file": {
+            "description": "Environment variables to set when running a task",
+            "type": "string"
+        },
+        "wd": {
+            "description": "The working directory when running a task",
+            "type": "string"
+        },
+        "args": {
+            "description": "The arguments to pass to the program",
+            "type": "array",
+            "items": {
+                "type": "string"
+            }
+        },
+        "args_extend": {
+            "description": "Extends the arguments inherited",
+            "type": "array",
+            "items": {
+                "type": "string"
+            }
+        },
+        "task": {
+            "description": "Task configuration",
+            "type": "object",
+            "additionalProperties": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                    "debug_config": {
+                        "description": "The debug configuration for the task",
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                            "print_task_name": {
+                                "description": "Whether to print the task name before running it",
+                                "type": "boolean"
+                            }
+                        }
+                    },
+                    "help": {
+                        "description": "Help for the task",
+                        "type": "string"
+                    },
+                    "quote": {
+                        "$ref": "#/$defs/quote"
+                    },
+                    "script": {
+                        "description": "The script to run for the task",
+                        "type": "string"
+                    },
+                    "script_runner": {
+                        "description": "The script runner to use for the task",
+                        "type": "string"
+                    },
+                    "script_runner_args": {
+                        "description": "The arguments to pass to the script runner before the script",
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        }
+                    },
+                    "script_ext": {
+                        "description": "The extension to use for the script",
+                        "type": "string"
+                    },
+                    "program": {
+                        "description": "The program to run for the task",
+                        "type": "string"
+                    },
+                    "args": {
+                        "$ref": "#/$defs/args"
+                    },
+                    "args_extend": {
+                        "$ref": "#/$defs/args_extend"
+                    },
+                    "args+": {
+                        "$ref": "#/$defs/args"
+                    },
+                    "serial": {
+                        "description": "List of tasks to run serially",
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        }
+                    },
+                    "env": {
+                        "$ref": "#/$defs/env"
+                    },
+                    "env_file": {
+                        "$ref": "#/$defs/env_file"
+                    },
+                    "wd": {
+                        "$ref": "#/$defs/wd"
+                    },
+                    "linux": {
+                        "description": "Task to run on Linux",
+                        "$ref": "#/$defs/task"
+                    },
+                    "windows": {
+                        "description": "Task to run on Windows",
+                        "$ref": "#/$defs/task"
+                    },
+                    "macos": {
+                        "description": "Task to run on MacOS",
+                        "$ref": "#/$defs/task"
+                    },
+                    "bases": {
+                        "description": "The tasks that this task inherits from",
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        }
+                    },
+                    "private": {
+                        "description": "Whether the task is private",
+                        "type": "boolean"
+                    }
+                }
+            }
+        }
+    },
+    "properties": {
+        "version": {
+            "description": "The version of the Yamis schema",
+            "type": "string"
+        },
+        "debug_config": {
+            "description": "The debug configuration at the file level",
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "print_task_name": {
+                    "description": "Whether to print the task name before running it",
+                    "type": "boolean"
+                },
+                "print_file_path": {
+                    "description": "Whether to print the file path before running a task",
+                    "type": "boolean"
+                }
+            }
+        },
+        "wd": {
+            "$ref": "#/$defs/wd"
+        },
+        "quote": {
+            "$ref": "#/$defs/quote"
+        },
+        "env": {
+            "$ref": "#/$defs/env"
+        },
+        "env_file": {
+            "$ref": "#/$defs/env_file"
+        },
+        "tasks": {
+            "$ref": "#/$defs/task"
+        }
+    }
+}
