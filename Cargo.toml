@@ -1,6 +1,6 @@
 [package]
 name = "yamis"
-version = "1.1.0"
+version = "1.2.0"
 edition = "2021"
 license = "GPL-3.0-only"
 authors = ["Adrian Martinez <adrianmrit@gmail.com>"]
@@ -27,7 +27,6 @@ lazy_static = "1.4"
 serde_derive = "1.0"
 serde = {version = "1.0", features = ["derive"]}
 petgraph = "0.6"
-uuid = { version = "1.1", features = ["serde", "v4"] }
 ctrlc = "3.2"
 dotenv-parser = "0.1"
 clap = { version = "4.0", features = ["derive", "cargo"] }
@@ -37,6 +36,7 @@ indexmap = "1.9"
 shellexpand = "2.1.2"
 self_update = { version = "0.32", features = ["archive-tar", "archive-zip", "compression-flate2", "rustls"], default-features = false }
 directories = { version = "4.0" }
+md-5 = "0.10"  # Used for caching
 
 # Example for adding another version as dependency. Need to remove the runtime feature, and make it optional
 # yamis_v2 = { package="yamis",  version = "2.0", default-features = false, optional = true }

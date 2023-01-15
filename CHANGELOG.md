@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.0] - 2023-01-14
+### Added
+- Add option to print task name and config file path when running tasks.
+
+### Changed
+- A hash is generated and used as part of the name of the scripts saved in the temporal
+ directory, so that they can be reused if the same script with same parameters is called
+ again.
 
 ## [1.1.0] - 2022-10-15
 ### Added

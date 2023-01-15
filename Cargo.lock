@@ -242,9 +242,9 @@ checksum = "6184e33543162437515c2e2b48714794e37845ec9851711914eec9d308f6ebe8"
 
 [[package]]
 name = "digest"
-version = "0.10.3"
+version = "0.10.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f2fb860ca6fafa5552fb6d0e816a69c8e49f0908bf524e30a90d97c85892d506"
+checksum = "8168378f4e5023e7218c89c891c0fd8ecdb5e5e4f18cb78f38cf245dd021e76f"
 dependencies = [
  "block-buffer",
  "crypto-common",
@@ -677,9 +677,9 @@ checksum = "e2abad23fbc42b3700f2f279844dc832adb2b2eb069b2df918f455c4e18cc646"
 
 [[package]]
 name = "libc"
-version = "0.2.132"
+version = "0.2.139"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8371e4e5341c3a96db127eb2465ac681ced4c433e01dd0e938adbef26ba93ba5"
+checksum = "201de327520df007757c1f0adce6e827fe8562fbc28bfd9c15571c66ca1f5f79"
 
 [[package]]
 name = "log"
@@ -688,6 +688,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "abb12e687cfb44aa40f41fc3978ef76448f9b6038cad6aef4259d3c095a2382e"
 dependencies = [
  "cfg-if",
+]
+
+[[package]]
+name = "md-5"
+version = "0.10.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6365506850d44bff6e2fbcb5176cf63650e48bd45ef2fe2665ae1570e0f4b9ca"
+dependencies = [
+ "digest",
 ]
 
 [[package]]
@@ -1495,16 +1504,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "uuid"
-version = "1.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dd6469f4314d5f1ffec476e05f17cc9a78bc7a27a6a857842170bdf8d6f98d2f"
-dependencies = [
- "getrandom",
- "serde",
-]
-
-[[package]]
 name = "version_check"
 version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1735,7 +1734,7 @@ dependencies = [
 
 [[package]]
 name = "yamis"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "assert_cmd",
  "assert_fs",
@@ -1747,6 +1746,7 @@ dependencies = [
  "dotenv-parser",
  "indexmap",
  "lazy_static",
+ "md-5",
  "pest",
  "pest_derive",
  "petgraph",
@@ -1758,7 +1758,6 @@ dependencies = [
  "serde_yaml",
  "shellexpand",
  "toml",
- "uuid",
 ]
 
 [[package]]
