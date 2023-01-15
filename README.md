@@ -42,6 +42,7 @@
   * [Task inheritance](#task-inheritance)
     * [Extending program arguments](#extending-program-arguments)
     * [Private tasks](#private-tasks)
+  * [Debug Options](#debug-options)
   * [List of functions](#list-of-functions)
     * [map](#map-function)
     * [join](#join-function)
@@ -228,15 +229,19 @@ If the task is still not found, it will look at `~/.yamis/user.yamis.toml` or `~
 
 <a name="script"></a>
 ### Script
+**⚠️Warning:**
+DO NOT PASS SENSITIVE INFORMATION AS PARAMETERS IN SCRIPTS. Scripts are stored in a file in the temporal
+directory of the system and is the job of the OS to delete it, however it is not guaranteed that that will
+be the case. So any argument passed will be persisted indefinitely.
+
 The `script` value inside a task will be executed in the command line (defaults to cmd in Windows
 and bash in Unix). Scripts can spawn multiple lines, and contain shell built-ins and programs. When
 passing multiple arguments, they will be expanded by default, the common example would be the `"{ $@ }"`
 tag which expands to all the passed arguments.
 
-**⚠️Warning:**
-Scripts are stored in a file in the temporal directory of the system and is the job of the OS to delete it,
-however it is not guaranteed that that will be the case. So any argument passed will be stored in the
-script file and could be persisted indefinitely.
+The generated scripts are stored in the temporal directory, and the filename will be a hash so that if the
+script was previously called with the same parameters, we can reuse the previous file, essentially working
+as a cache.
 
 <a name="auto-quoting"></a>
 #### Auto quoting
@@ -325,8 +330,7 @@ This is not prevented since it can be bypassed by using a script.
 Because escaping arguments properly can get really complex quickly, scripts are prone to fail if certain
 arguments are passed. To prevent classic errors, arguments are quoted by default (see
 [__Auto quoting__](https://github.com/adrianmrit/yamis#auto-quoting)), but this is not completely safe.
-Also, each time a script runs, a temporal batch or cmd file is created. Not a big deal, but an extra step
-nevertheless.
+Also, scripts are saved in the temporal directory, and might be persisted indefinitely.
 
 On the other hand, programs run in their own process with arguments passed directly to it, so there is no
 need to escape them. These can also be extended more easily, like by extending the arguments.
@@ -681,6 +685,16 @@ Tasks can be marked as private by setting `private = true`. Private tasks cannot
 for inheritance.
 
 
+<a name="debug-options"></a>
+### Debug Options
+Some debug options can be added at the task or file level under `debug_config`
+
+- `print_file_path`: Boolean, defined at the file level and false by default. If true, the absolute config file path will
+ be displayed when running a task
+- `print_task_name`: Boolean, defined at the task or file level, true by default. If true, the name of the task will be displayed
+ when tunning a task   
+
+
 <a name="list-of-functions"></a>
 ### List of functions
 List of predefined functions.
@@ -840,9 +854,6 @@ Not possible at the moment, unless you fork the repository and add your own (whi
 contribute so everyone benefits from it. While I have plans to add more functions in the future, allowing custom functions is not
 that straightforward and probably not worth the effort, perhaps it is better to use a separate script, i.e. python. I am open
 to suggestions.
-
-### I have a suggestion, but I don't know rust (or have other priorities), can I still contribute?
-Absolutely, you can open an issue with your suggestion and I will try to implement it if it sounds good. I am eager to get some feedback.
 
 <a name="Contributing"></a>
 ## Contributing

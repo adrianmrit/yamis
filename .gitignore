@@ -2,3 +2,5 @@
 local.yamis.*
 /target_cov
 /target_ci
+/.idea
+/.vscode

@@ -1,5 +1,5 @@
 use clap::ArgAction;
-use colored::{Color, ColoredString, Colorize};
+use colored::{ColoredString, Colorize};
 use lazy_static::lazy_static;
 use serde_derive::Deserialize;
 use std::collections::hash_map::Entry;
@@ -129,7 +129,7 @@ impl ConfigFileContainers {
             }
         };
 
-        let file = match File::open(&path) {
+        let file = match File::open(path) {
             Ok(file_contents) => file_contents,
             Err(e) => return Err(format!("There was an error reading the file:\n{}", e).into()),
         };
@@ -138,7 +138,7 @@ impl ConfigFileContainers {
             serde_yaml::from_reader(file)?
         } else {
             // A bytes list should be slightly faster than a string list
-            toml::from_slice(&fs::read(&path)?)?
+            toml::from_slice(&fs::read(path)?)?
         };
 
         Ok(result.version)
@@ -240,6 +240,9 @@ impl ConfigFileContainers {
                     let task = config_file_lock.get_public_task(task);
                     match task {
                         Some(task) => {
+                            if config_file_lock.debug_config.print_file_path {
+                                println!("{}", &path.to_string_lossy().yamis_info());
+                            }
                             return match task.run(&args, &config_file_lock) {
                                 Ok(val) => Ok(val),
                                 Err(e) => {
@@ -383,7 +386,7 @@ pub fn exec() -> DynErrResult<()> {
                 .short('l')
                 .long("list")
                 .help("Lists configuration files that can be reached from the current directory")
-                .conflicts_with_all(&["file"])
+                .conflicts_with_all(["file"])
                 .action(ArgAction::SetTrue),
         )
         .arg(
@@ -391,7 +394,7 @@ pub fn exec() -> DynErrResult<()> {
                 .short('t')
                 .long("list-tasks")
                 .help("Lists tasks")
-                .conflicts_with_all(&["task-info"])
+                .conflicts_with_all(["task-info"])
                 .action(ArgAction::SetTrue),
         )
         .arg(
@@ -426,12 +429,12 @@ pub fn exec() -> DynErrResult<()> {
         match updater::check_update_available() {
             Ok(result) => {
                 if let Some(msg) = result {
-                    println!("{}", msg.yamis_prefix(Color::Blue));
+                    println!("{}", msg.yamis_prefix_info());
                 }
             }
             Err(e) => {
                 let err_msg = format!("Error checking for updates: {}", e);
-                eprintln!("{}", err_msg.yamis_prefix(Color::Red));
+                eprintln!("{}", err_msg.yamis_error());
             }
         }
     }

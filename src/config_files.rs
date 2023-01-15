@@ -1,3 +1,4 @@
+use crate::debug_config::ConfigFileDebugConfig;
 use crate::defaults::default_quote;
 use crate::parser::EscapeMode;
 use crate::tasks::Task;
@@ -70,6 +71,11 @@ pub struct ConfigFile {
     /// Path of the file.
     #[serde(skip)]
     pub(crate) filepath: PathBuf,
+
+    /// Debug options
+    #[serde(default)]
+    pub(crate) debug_config: ConfigFileDebugConfig,
+
     #[serde(default)]
     /// Working directory. Defaults to the folder where the script runs.
     wd: Option<String>,
@@ -362,14 +368,14 @@ impl ConfigFile {
                 .into());
             }
         };
-        let contents = match fs::read_to_string(&path) {
+        let contents = match fs::read_to_string(path) {
             Ok(file_contents) => file_contents,
             Err(e) => return Err(format!("There was an error reading the file:\n{}", e).into()),
         };
         if is_yaml {
-            Ok(serde_yaml::from_str(&*contents)?)
+            Ok(serde_yaml::from_str(&contents)?)
         } else {
-            Ok(toml::from_str(&*contents)?)
+            Ok(toml::from_str(&contents)?)
         }
     }
 
