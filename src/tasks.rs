@@ -586,23 +586,26 @@ mod tests {
     #[test]
     fn test_env_inheritance() {
         let tmp_dir = TempDir::new().unwrap();
-        let config_file_path = tmp_dir.join("project.yamis.toml");
+        let config_file_path = tmp_dir.join("yamis.root.yml");
         let mut file = File::create(&config_file_path).unwrap();
         file.write_all(
             r#"
-    [tasks.hello_base.env]
-    greeting = "hello world"
+tasks:
+    hello_base:
+        env:
+            greeting: hello world
 
-    [tasks.calc_base.env]
-    one_plus_one = "2"
+    calc_base:
+        env:
+            one_plus_one: 2
 
-    [tasks.hello]
-    bases = ["hello_base", "calc_base"]
-    script = "echo $greeting, 1+1=$one_plus_one"
+    hello:
+        bases: ["hello_base", "calc_base"]
+        script: "echo $greeting, 1+1=$one_plus_one"
 
-    [tasks.hello.windows]
-    bases = ["hello_base", "calc_base"]
-    script = "echo %greeting%, 1+1=%one_plus_one%"
+    hello.windows:
+        bases: ["hello_base", "calc_base"]
+        script: "echo %greeting%, 1+1=%one_plus_one%"
     "#
             .as_bytes(),
         )
@@ -623,23 +626,24 @@ mod tests {
     #[test]
     fn test_quotes_inheritance() {
         let tmp_dir = TempDir::new().unwrap();
-        let config_file_path = tmp_dir.join("project.yamis.toml");
+        let config_file_path = tmp_dir.join("yamis.root.yml");
         let mut file = File::create(&config_file_path).unwrap();
         file.write_all(
             r#"
-    [tasks.hello_base]
-    quote = "spaces"
+    tasks:
+        hello_base:
+            quote: "spaces"
 
-    [tasks.calc_base]
-    quote = "never"
+        calc_base:
+            quote: "never"
 
-    [tasks.hello]
-    bases = ["hello_base", "calc_base"]
-    script = "echo hello_1"
+        hello:
+            bases: ["hello_base", "calc_base"]
+            script: "echo hello_1"
 
-    [tasks.hello_2]
-    bases = ["calc_base", "hello_base"]
-    script = "echo hello_2"
+        hello_2:
+            bases: ["calc_base", "hello_base"]
+            script: "echo hello_2"
     "#
             .as_bytes(),
         )
@@ -659,24 +663,25 @@ mod tests {
     #[test]
     fn test_args_inheritance() {
         let tmp_dir = TempDir::new().unwrap();
-        let config_file_path = tmp_dir.join("project.yamis.toml");
+        let config_file_path = tmp_dir.join("yamis.root.yml");
         let mut file = File::create(&config_file_path).unwrap();
         file.write_all(
             r#"
-    [tasks.bash]
-    program = "bash"
+    tasks:
+        bash:
+            program: "bash"
 
-    [tasks.bash_inline]
-    bases = ["bash"]
-    args_extend = ["-c"]
+        bash_inline:
+            bases: ["bash"]
+            args_extend: ["-c"]
 
-    [tasks.hello]
-    bases = ["bash_inline"]
-    args_extend = ["echo", "hello"]
+        hello:
+            bases: ["bash_inline"]
+            args_extend: ["echo", "hello"]
 
-    [tasks.hello_2]
-    bases = ["hello"]
-    args = ["-c", "echo", "hello"]
+        hello_2:
+            bases: ["hello"]
+            args: ["-c", "echo", "hello"]
     "#
             .as_bytes(),
         )
@@ -702,32 +707,34 @@ mod tests {
     #[test]
     fn test_get_task_help() {
         let tmp_dir = TempDir::new().unwrap();
-        let config_file_path = tmp_dir.join("project.yamis.toml");
+        let config_file_path = tmp_dir.join("yamis.root.yml");
         let mut file = File::create(&config_file_path).unwrap();
         file.write_all(
             r#"
-[tasks.base]
-help = """
-New lines should be trimmed
-"""
-program = "bash"
+tasks:
+    base:
+        help: >
+            New lines
+            should be
+            trimmed
 
-[tasks.help_inherited]
-bases = ["base"]
+        program: "bash"
 
-[tasks.no_help]
-program = "bash"
+    help_inherited:
+        bases: ["base"]
 
-[tasks.help_removed]
-bases = ["base"]
-help = ""
+    no_help:
+        program: "bash"
 
-[tasks.help_overriden]
-bases = ["base"]
-help = """
-First line
-Second line
-"""
+    help_removed:
+        bases: ["base"]
+        help: ""
+
+    help_overriden:
+        bases: ["base"]
+        help: |
+            First line
+            Second line
     "#
             .as_bytes(),
         )
@@ -759,34 +766,35 @@ Second line
     #[test]
     fn test_read_env() {
         let tmp_dir = TempDir::new().unwrap();
-        let project_config_path = tmp_dir.join("project.yamis.toml");
+        let project_config_path = tmp_dir.join("yamis.root.yml");
         let mut project_config_file = File::create(project_config_path.as_path()).unwrap();
         project_config_file
             .write_all(
                 r#"
-            env_file = ".env"
+env_file: ".env"
 
-            [tasks.test.windows]
-            quote = "never"
-            script = "echo %VAR1% %VAR2% %VAR3%"
+tasks:
+    test.windows:
+        quote: "never"
+        script: "echo %VAR1% %VAR2% %VAR3%"
 
-            [tasks.test]
-            quote = "never"
-            script = "echo $VAR1 $VAR2 $VAR3"
+    test:
+        quote: "never"
+        script: "echo $VAR1 $VAR2 $VAR3"
 
-            [tasks.test_2.windows]
-            quote = "never"
-            script = "echo %VAR1% %VAR2% %VAR3%"
-            env_file = ".env_2"
-            env = {"VAR1" = "TASK_VAL1"}
+    test_2.windows:
+        quote: "never"
+        script: "echo %VAR1% %VAR2% %VAR3%"
+        env_file: ".env_2"
+        env: 
+            VAR1: TASK_VAL1
 
-            [tasks.test_2]
-            quote = "never"
-            script = "echo $VAR1 $VAR2 $VAR3"
-            env_file = ".env_2"
-
-            [tasks.test_2.env]
-            VAR1 = "TASK_VAL1"
+    test_2:
+        quote: "never"
+        script: "echo $VAR1 $VAR2 $VAR3"
+        env_file: ".env_2"
+        env:
+            VAR1: "TASK_VAL1"
             "#
                 .as_bytes(),
             )
@@ -930,7 +938,7 @@ Second line
     #[test]
     fn test_create_temp_script() {
         let tmp_dir = TempDir::new().unwrap();
-        let project_config_path = tmp_dir.join("project.yamis.toml");
+        let project_config_path = tmp_dir.join("yamis.root.yml");
         let script = "echo hello world";
         let extension = "sh";
         let task_name = "sample";

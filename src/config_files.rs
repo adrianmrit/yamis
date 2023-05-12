@@ -16,22 +16,26 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::{env, error, fmt, fs};
 
-pub type ConfigFileSharedPtr = Arc<Mutex<ConfigFile>>;
+pub(crate) type ConfigFileSharedPtr = Arc<Mutex<ConfigFile>>;
 
-/// Config file names by order of priority. The first one refers to local config and
-/// should not be committed to the repository. The program should discover config files
+/// Config file names by order of priority. The program should discover config files
 /// by looping on the parent folders and current directory until reaching the root path
 /// or a the project config (last one on the list) is found.
-const CONFIG_FILES_PRIO: &[&str] = &["local.yamis", "yamis", "project.yamis"];
+const CONFIG_FILES_PRIO: &[&str] = &[
+    "yamis.private.yml",
+    "yamis.private.yaml",
+    "yamis.yml",
+    "yamis.yaml",
+    "yamis.root.yml",
+    "yamis.root.yaml",
+];
 
-const GLOBAL_CONFIG_FILE: &str = "user.yamis";
-/// Name the global config file, without extension.
+/// Global config file names by order of priority.
+const GLOBAL_CONFIG_FILES_PRIO: &[&str] =
+    &["~/yamis/yamis.global.yml", "~/yamis/yamis.global.yaml"];
 
-#[cfg(not(test))]
-const GLOBAL_CONFIG_FILE_PATH: &str = "~/yamis";
-
-/// Allowed extensions for config files.
-const ALLOWED_EXTENSIONS: &[&str] = &["yml", "yaml", "toml"];
+pub(crate) type PathIteratorItem = PathBuf;
+pub(crate) type PathIterator = Box<dyn Iterator<Item = PathIteratorItem>>;
 
 /// Errors related to config files and tasks
 #[derive(Debug)]
@@ -42,8 +46,6 @@ pub(crate) enum ConfigError {
     // NoConfigFile, // No config file was discovered
     /// Bad Config error
     BadConfigFile(PathBuf, String),
-    /// Found a config file multiple times with different extensions
-    DuplicateConfigFile(String),
 }
 
 impl Display for ConfigError {
@@ -51,9 +53,11 @@ impl Display for ConfigError {
         match *self {
             // ConfigError::FileNotFound(ref s) => write!(f, "File {} not found.", s),
             // ConfigError::NoConfigFile => write!(f, "No config file found."),
-            ConfigError::BadConfigFile(ref path, ref reason) => write!(f, "Bad config file `{}`:\n    {}", path.to_string_lossy(), reason),
-            ConfigError::DuplicateConfigFile(ref s) => write!(f,  
-                "Config file `{}` defined multiple times with different extensions in the same directory.", s 
+            ConfigError::BadConfigFile(ref path, ref reason) => write!(
+                f,
+                "Bad config file `{}`:\n    {}",
+                path.to_string_lossy(),
+                reason
             ),
         }
     }
@@ -61,143 +65,58 @@ impl Display for ConfigError {
 
 impl error::Error for ConfigError {}
 
-/// Represents a config file.
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ConfigFile {
-    /// Version of the config file.
-    #[allow(dead_code)] // to avoid lint errors
-    #[serde(default, skip_serializing)]
-    version: serde::de::IgnoredAny,
-    /// Path of the file.
-    #[serde(skip)]
-    pub(crate) filepath: PathBuf,
-
-    /// Debug options
-    #[serde(default)]
-    pub(crate) debug_config: ConfigFileDebugConfig,
-
-    #[serde(default)]
-    /// Working directory. Defaults to the folder where the script runs.
-    wd: Option<String>,
-    /// Whether to automatically quote argument with spaces unless task specified
-    #[serde(default = "default_quote")]
-    pub(crate) quote: EscapeMode,
-    /// Tasks inside the config file.
-    #[serde(default)]
-    pub(crate) tasks: HashMap<String, Task>,
-    /// Env variables for all the tasks.
-    pub(crate) env: Option<HashMap<String, String>>,
-    /// Env file to read environment variables from
-    pub(crate) env_file: Option<String>,
-    #[serde(skip)]
-    pub(crate) loaded_tasks: HashMap<String, Arc<Task>>,
-}
-
 /// Iterates over existing config file paths, in order of priority.
-pub struct ConfigFilePaths {
+pub(crate) struct ConfigFilePaths {
     /// Index of value to use from `CONFIG_FILES_PRIO`
     index: usize,
     /// Whether the iterator finished or not
-    root_reached: bool,
-    /// Whether the iterator finished or not
     ended: bool,
-    /// Only loaded one file, which should already be in the cache
-    single: bool,
     /// Current directory
     current_dir: PathBuf,
-    /// Cached config files
-    cached: Vec<PathBuf>,
-}
-
-pub struct ConfigFilesContainer {
-    /// Cached config files
-    cached: IndexMap<PathBuf, ConfigFileSharedPtr>,
 }
 
 impl Iterator for ConfigFilePaths {
     // Returning &Path would be more optimal but complicates more the code. There is no need
     // to optimize that much since it should not find that many config files.
-    type Item = DynErrResult<PathBuf>;
+    type Item = PathIteratorItem;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.ended {
             return None;
         }
 
-        if self.single {
-            self.ended = true;
-            return if self.cached.is_empty() {
-                None
-            } else {
-                Some(Ok(PathBuf::from(self.cached.last().unwrap())))
-            };
-        }
-
-        // Stores any error to return after breaking the loop
-        let mut err: Option<Box<dyn error::Error>> = None;
-
-        // Loops until a project config file is found or the root path is reached
-        while !self.root_reached {
+        while !self.ended {
+            // Loops until a project config file is found or the root path is reached
             let config_file_name = CONFIG_FILES_PRIO[self.index];
+            let config_file_path = self.current_dir.join(config_file_name);
 
-            // project file is the last one on the list
-            let checking_for_project_config = CONFIG_FILES_PRIO.len() - 1 == self.index;
+            let config_file_path = if config_file_path.is_file() {
+                if self.is_root_config_file(&config_file_path) {
+                    self.ended = true;
+                }
+                Some(config_file_path)
+            } else {
+                None
+            };
+
             self.index = (self.index + 1) % CONFIG_FILES_PRIO.len();
 
-            let found_file =
-                self.get_config_file_path(self.current_dir.as_path(), config_file_name);
-            let found_file = match found_file {
-                Ok(v) => v,
-                Err(e) => {
-                    err = Some(e.into());
-                    break;
-                }
-            };
-
-            if checking_for_project_config {
-                // When checking for project config, we need to update the next dir to check
+            // If we checked all the config files, we need to check in the parent directory
+            if self.index == 0 {
                 let new_current = self.current_dir.parent();
                 match new_current {
                     None => {
-                        self.root_reached = true;
+                        self.ended = true;
                     }
                     Some(new_current) => {
                         self.current_dir = new_current.to_path_buf();
                     }
                 }
             }
-
-            if let Some(found_file) = found_file {
-                if checking_for_project_config {
-                    self.root_reached = true;
-                }
-                self.cached.push(found_file.clone());
-                return Some(Ok(found_file));
+            if let Some(config_file_path) = config_file_path {
+                return Some(config_file_path);
             }
         }
-
-        self.root_reached = true;
-        self.ended = true;
-
-        if let Some(err) = err {
-            return Some(Err(err));
-        }
-
-        let global_config_dir = Self::get_global_config_file_dir();
-        let found_file = self.get_config_file_path(&global_config_dir, GLOBAL_CONFIG_FILE);
-        let found_file = match found_file {
-            Ok(v) => v,
-            Err(e) => {
-                return Some(Err(e.into()));
-            }
-        };
-
-        if let Some(found_file) = found_file {
-            self.cached.push(found_file.clone());
-            return Some(Ok(found_file));
-        }
-
         None
     }
 }
@@ -210,99 +129,104 @@ impl ConfigFilePaths {
     /// * `path`: Path to start searching for config files.
     ///
     /// returns: ConfigFilePaths
-    pub fn new<S: AsRef<OsStr> + ?Sized>(path: &S) -> ConfigFilePaths {
+    pub(crate) fn new<S: AsRef<OsStr> + ?Sized>(path: &S) -> Box<Self> {
         let current = PathBuf::from(path);
-        ConfigFilePaths {
+        Box::new(ConfigFilePaths {
             index: 0,
             ended: false,
-            root_reached: false,
-            single: false,
             current_dir: current,
-            cached: Vec::with_capacity(2),
-        }
+        })
     }
 
-    /// Initializes ConfigFilePaths such that it only loads the config file for the given path.
-    ///
+    fn is_root_config_file(&self, path: &Path) -> bool {
+        path.file_name()
+            .map(|s| s.to_string_lossy().starts_with("yamis.root."))
+            .unwrap_or(false)
+    }
+}
+
+/// Single config file path iterator. This iterator will only return the given path
+/// if it exists and is a file, otherwise it will return None.
+
+pub(crate) struct SingleConfigFilePath {
+    path: PathBuf,
+    ended: bool,
+}
+
+impl SingleConfigFilePath {
+    /// Initializes SingleConfigFilePath to start at the given path.
+    /// If the path does not exist or is not a file, the iterator will return None.
     /// # Arguments
-    ///
-    /// * `path`: Path of the config file to load
-    ///
-    /// returns:  Result<ConfigFilePaths, Box<dyn error::Error>>
-    pub fn only<S: AsRef<OsStr> + ?Sized>(path: &S) -> DynErrResult<ConfigFilePaths> {
-        let path = PathBuf::from(path);
-        if !path.is_file() {
-            return Err(format!("{} does not exist", path.display()).into());
-        }
-        let config_files = ConfigFilePaths {
-            index: 0,
+    /// * `path`: Path to start searching for config files.
+    /// returns: SingleConfigFilePath
+
+    pub(crate) fn new<S: AsRef<OsStr> + ?Sized>(path: &S) -> Box<Self> {
+        Box::new(SingleConfigFilePath {
+            path: PathBuf::from(path),
             ended: false,
-            root_reached: true,
-            single: true,
-            current_dir: path.clone(),
-            cached: vec![path],
-        };
-        Ok(config_files)
+        })
     }
+}
 
-    /// Returns the path of the global config file directory.
-    #[cfg(not(test))]
-    pub(crate) fn get_global_config_file_dir() -> PathBuf {
-        let global_config_dir = shellexpand::tilde(GLOBAL_CONFIG_FILE_PATH);
-        PathBuf::from(global_config_dir.as_ref())
-    }
+impl Iterator for SingleConfigFilePath {
+    type Item = PathIteratorItem;
 
-    /// Returns the path of the global config file directory.
-    #[cfg(test)]
-    pub(crate) fn get_global_config_file_dir() -> PathBuf {
-        use assert_fs::TempDir;
-        use lazy_static::lazy_static;
-        lazy_static! {
-            static ref GLOBAL_CONFIG_DIR: TempDir = TempDir::new().unwrap();
-            pub static ref TEST_GLOBAL_CONFIG_PATH: PathBuf =
-                PathBuf::from(GLOBAL_CONFIG_DIR.path());
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.ended {
+            return None;
         }
-        TEST_GLOBAL_CONFIG_PATH.clone()
-    }
+        self.ended = true;
 
-    /// Finds the appropriate filepath to load in the given dir.
-    ///
-    /// # Arguments
-    ///
-    /// * `dir`:
-    /// * `config_file_name`:
-    ///
-    /// returns: Result<Option<PathBuf>, ConfigError>
-    fn get_config_file_path(
-        &self,
-        dir: &Path,
-        config_file_name: &str,
-    ) -> Result<Option<PathBuf>, ConfigError> {
-        let mut files_count: u8 = 0;
-        let mut found_file: Option<PathBuf> = None;
-
-        for file_extension in ALLOWED_EXTENSIONS {
-            let file_name = format!("{}.{}", config_file_name, file_extension);
-            let path = dir.join(file_name);
-            if path.is_file() {
-                files_count += 1;
-                found_file = Some(path);
-            }
-        }
-
-        if files_count > 1 {
-            Err(ConfigError::DuplicateConfigFile(String::from(
-                config_file_name,
-            )))
+        if self.path.is_file() {
+            Some(self.path.clone())
         } else {
-            Ok(found_file)
+            None
         }
     }
 }
 
+/// Iterates over existing global config file paths, in order of priority.
+/// This iterator will only return the first existing global config file.
+/// If no global config file exists, it will return None.
+
+pub(crate) struct GlobalConfigFilePath {
+    ended: bool,
+}
+
+impl GlobalConfigFilePath {
+    /// Initializes GlobalConfigFilePath.
+
+    pub(crate) fn new() -> Box<Self> {
+        Box::new(GlobalConfigFilePath { ended: false })
+    }
+}
+
+impl Iterator for GlobalConfigFilePath {
+    type Item = PathIteratorItem;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.ended {
+            return None;
+        }
+        self.ended = true;
+        for &path in GLOBAL_CONFIG_FILES_PRIO {
+            let path = PathBuf::from(path);
+            if path.is_file() {
+                return Some(path);
+            }
+        }
+        None
+    }
+}
+
+pub(crate) struct ConfigFilesContainer {
+    /// Cached config files
+    cached: IndexMap<PathBuf, ConfigFileSharedPtr>,
+}
+
 impl ConfigFilesContainer {
     /// Initializes ConfigFilesContainer.
-    pub fn new() -> ConfigFilesContainer {
+    pub fn new() -> Self {
         ConfigFilesContainer {
             cached: IndexMap::new(),
         }
@@ -346,6 +270,39 @@ impl Default for ConfigFilesContainer {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Represents a config file.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConfigFile {
+    /// Version of the config file.
+    #[allow(dead_code)] // to avoid lint errors
+    #[serde(default, skip_serializing)]
+    version: serde::de::IgnoredAny,
+    /// Path of the file.
+    #[serde(skip)]
+    pub(crate) filepath: PathBuf,
+
+    /// Debug options
+    #[serde(default)]
+    pub(crate) debug_config: ConfigFileDebugConfig,
+
+    #[serde(default)]
+    /// Working directory. Defaults to the folder where the script runs.
+    wd: Option<String>,
+    /// Whether to automatically quote argument with spaces unless task specified
+    #[serde(default = "default_quote")]
+    pub(crate) quote: EscapeMode,
+    /// Tasks inside the config file.
+    #[serde(default)]
+    pub(crate) tasks: HashMap<String, Task>,
+    /// Env variables for all the tasks.
+    pub(crate) env: Option<HashMap<String, String>>,
+    /// Env file to read environment variables from
+    pub(crate) env_file: Option<String>,
+    #[serde(skip)]
+    pub(crate) loaded_tasks: HashMap<String, Arc<Task>>,
 }
 
 impl ConfigFile {
@@ -588,13 +545,14 @@ mod tests {
     #[test]
     fn test_discovery() {
         let tmp_dir = TempDir::new().unwrap();
-        let project_config_path = tmp_dir.path().join("project.yamis.toml");
+        let project_config_path = tmp_dir.path().join("yamis.root.yml");
         let mut project_config_file = File::create(project_config_path.as_path()).unwrap();
         project_config_file
             .write_all(
                 r#"
-    [tasks.hello_project]
-    script = "echo hello project"
+    tasks:
+        hello_project:
+            script: "echo hello project"
     "#
                 .as_bytes(),
             )
@@ -613,7 +571,7 @@ mod tests {
             )
             .unwrap();
 
-        let local_config_path = tmp_dir.path().join("local.yamis.yaml");
+        let local_config_path = tmp_dir.path().join("yamis.private.yaml");
         let mut local_file = File::create(local_config_path.as_path()).unwrap();
         local_file
             .write_all(
@@ -626,104 +584,48 @@ mod tests {
             )
             .unwrap();
 
-        let global_config_path =
-            ConfigFilePaths::get_global_config_file_dir().join("user.yamis.toml");
-        let mut global_config_file = File::create(global_config_path.as_path()).unwrap();
-        global_config_file
-            .write_all(
-                r#"
-                [tasks.hello_global]
-                script = "echo hello project"
-                "#
-                .as_bytes(),
-            )
-            .unwrap();
-
         let mut config_files = ConfigFilesContainer::new();
-        let mut paths = ConfigFilePaths::new(&tmp_dir.path());
-        let local_path = paths.next().unwrap().unwrap();
-        let regular_path = paths.next().unwrap().unwrap();
-        let project_path = paths.next().unwrap().unwrap();
-        let global_path = paths.next().unwrap().unwrap();
+        let mut paths: Box<ConfigFilePaths> = ConfigFilePaths::new(&tmp_dir.path());
+        let local_path = paths.next().unwrap();
+        let regular_path = paths.next().unwrap();
+        let project_path = paths.next().unwrap();
+
         assert!(paths.next().is_none());
+
         config_files.read_config_file(local_path).unwrap();
         config_files.read_config_file(regular_path).unwrap();
         config_files.read_config_file(project_path).unwrap();
-        config_files.read_config_file(global_path).unwrap();
 
         assert!(!config_files.has_task("non_existent"));
         assert!(config_files.has_task("hello_project"));
         assert!(config_files.has_task("hello"));
         assert!(config_files.has_task("hello_local"));
-        assert!(config_files.has_task("hello_global"));
     }
 
     #[test]
     fn test_discovery_given_file() {
         let tmp_dir = TempDir::new().unwrap();
-        let sample_config_file_path = tmp_dir.path().join("sample.yamis.toml");
+        let sample_config_file_path = tmp_dir.path().join("sample.yamis.yml");
         let mut sample_config_file = File::create(sample_config_file_path.as_path()).unwrap();
         sample_config_file
             .write_all(
                 r#"
-    [tasks.hello_project]
-    script = "echo hello project"
+tasks:
+    hello_project:
+        script: echo hello project
     "#
                 .as_bytes(),
             )
             .unwrap();
 
         let mut config_files = ConfigFilesContainer::new();
-        let mut paths = ConfigFilePaths::only(&sample_config_file_path).unwrap();
-        let sample_path = paths.next().unwrap().unwrap();
+        let mut paths = SingleConfigFilePath::new(&sample_config_file_path);
+        let sample_path = paths.next().unwrap();
         assert!(paths.next().is_none());
+
         config_files.read_config_file(sample_path).unwrap();
 
         assert!(config_files.has_task("hello_project"));
-    }
-
-    #[test]
-    fn test_dup_config_error() {
-        let tmp_dir = TempDir::new().unwrap();
-
-        let project_config_path = tmp_dir.path().join("project.yamis.toml");
-        File::create(project_config_path.as_path()).unwrap();
-
-        let config_path = tmp_dir.path().join("project.yamis.yaml");
-        File::create(config_path.as_path()).unwrap();
-
-        let mut paths = ConfigFilePaths::new(&tmp_dir.path());
-        let val = paths.next().unwrap();
-        assert!(val.is_err());
-        assert_eq!(
-            val.unwrap_err().to_string(),
-            "Config file `project.yamis` defined multiple times with different extensions in the same directory."
-        );
-    }
-
-    #[test]
-    fn test_config_file_only_iter() {
-        let path = PathBuf::from("sample_path.yml");
-        let mut config_files = ConfigFilePaths {
-            index: 0,
-            ended: false,
-            root_reached: true,
-            single: true,
-            current_dir: path.clone(),
-            cached: vec![],
-        };
-        // cache is empty, nothing to return
-        assert!(config_files.next().is_none());
-
-        let mut config_files = ConfigFilePaths {
-            index: 0,
-            ended: false,
-            root_reached: true,
-            single: true,
-            current_dir: path.clone(),
-            cached: vec![path.clone()],
-        };
-        assert_eq!(config_files.next().unwrap().unwrap(), path);
     }
 
     #[test]
@@ -741,7 +643,7 @@ mod tests {
     #[test]
     fn test_container_read_config_error() {
         let tmp_dir = TempDir::new().unwrap();
-        let project_config_path = tmp_dir.path().join("project.yamis.toml");
+        let project_config_path = tmp_dir.path().join("yamis.root.yml");
         let mut project_config_file = File::create(project_config_path.as_path()).unwrap();
         project_config_file
             .write_all(
@@ -773,7 +675,7 @@ OTHER_VALUE=HELLO
             )
             .unwrap();
 
-        let project_config_path = tmp_dir.path().join("project.yamis.yaml");
+        let project_config_path = tmp_dir.path().join("yamis.root.yaml");
         let mut project_config_file = File::create(project_config_path.as_path()).unwrap();
         project_config_file
             .write_all(
@@ -799,7 +701,7 @@ tasks:
     fn test_config_file_get_task_names() {
         let tmp_dir = TempDir::new().unwrap();
 
-        let project_config_path = tmp_dir.path().join("project.yamis.yaml");
+        let project_config_path = tmp_dir.path().join("yamis.root.yaml");
         let mut project_config_file = File::create(project_config_path.as_path()).unwrap();
         project_config_file
             .write_all(
@@ -832,7 +734,7 @@ tasks:
     fn test_config_file_get_task() {
         let tmp_dir = TempDir::new().unwrap();
 
-        let project_config_path = tmp_dir.path().join("project.yamis.yaml");
+        let project_config_path = tmp_dir.path().join("yamis.root.yaml");
         let mut project_config_file = File::create(project_config_path.as_path()).unwrap();
         project_config_file
             .write_all(
@@ -871,7 +773,7 @@ tasks:
     fn test_config_file_get_non_private_task() {
         let tmp_dir = TempDir::new().unwrap();
 
-        let project_config_path = tmp_dir.path().join("project.yamis.yaml");
+        let project_config_path = tmp_dir.path().join("yamis.root.yaml");
         let mut project_config_file = File::create(project_config_path.as_path()).unwrap();
         project_config_file
             .write_all(
@@ -909,7 +811,7 @@ tasks:
     fn test_wrong_config_file_extension() {
         let tmp_dir = TempDir::new().unwrap();
 
-        let project_config_path = tmp_dir.path().join("project.yamis.wrong");
+        let project_config_path = tmp_dir.path().join("yamis.root.wrong");
         File::create(project_config_path.as_path()).unwrap();
         let config_file = ConfigFile::load(project_config_path);
         assert!(config_file.is_err());

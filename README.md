@@ -6,13 +6,11 @@
 > Task runner for teams and individuals. Written in [Rust](https://www.rust-lang.org/).
 
 ## Index
-* [Motivation](#motivation)
-* [Backward compatibility](#backward-compatibility)
+* [Inspiration](#inspiration)
 * [Installation](#installation)
   * [Binary releases](#binary-releases)
   * [Updates](#updates)
 * [Quick start](#quick-start)
-* [Note about YAML and TOML files](#note-about-yaml-and-toml-files)
 * [Usage](#usage)
   * [Command line options](#command-line-options)
   * [Task files](#task-files)
@@ -53,28 +51,14 @@
 * [FAQ](#faq) 
 * [Contributing](#contributing)
 
-<a name="motivation"></a>
-## Motivation
-This project started out of the frustration with existing tools and as a desire of learning Rust.
-It aims to be easy to use, and for both individuals and teams, specially those working on different platforms.
-To allow for future improvements in the syntax without breaking the workflow of teams (at least not much, lets be real),
-it aims to be [backward compatible](#backward-compatibility), both between the same mayor release, and with previous
-mayor releases.
-
+<a name="inspiration"></a>
+## Inspiration
 Inspired on different tools like [cargo-make](https://github.com/sagiegurari/cargo-make),
+[go-task](https://taskfile.dev/)
 [doskey](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/doskey),
 [bash](https://www.gnu.org/savannah-checkouts/gnu/bash/manual/bash.html)
 and
 [docker-compose](https://docs.docker.com/compose/).
-
-
-<a name="backward-compatibility"></a>
-## Backward compatibility
-Starting from version 1.0.0, the goal is to be backward compatible with mayor versions and follow
-[Semantic Versioning](https://semver.org/).
-When a mayor version is released, the plan is to support config files from the latest versions by setting
-the mayor version in the TOML or YAML file with the `version` key, i.e. `version: "1"`.
-If the version is not set, the least mayor version supported will be used.
 
 <a name="installation"></a>
 ## Installation
@@ -104,24 +88,21 @@ it performing a request every time you run it.
 
 <a name="quick-start"></a>
 ## Quick start
-The first step is to add a YAML or TOML file in the project root, i.e. `project.yamis.yaml`.
- 
-Here is a sample YAML file to demonstrate some features:
+Create a file named `yamis.root.yml` in the root of your project.
+
+Here is an example of a task file:
 ```yaml
-# project.yamis.yaml
+# yamis.root.yml
 env:  # global env variables
   DEBUG: "FALSE"
   DOCKER_CONTAINER: sample_docker_container
 
 tasks:
-  _debuggable_task:
-    private: true   # cannot be invoked directly
-    env:
-      DEBUG: "TRUE"  # Add env variables per task
-
   say_hi:
-    help: "Just say hi"  # help message, printend when running `yamis -i say_hi`
-    script: "echo Hello {name}"  # takes a name argument, i.e. `--name John`
+    help: "Just say hi"  # help message, printed when running `yamis -i say_hi`
+    script: "echo Hello {$NAME}"  # takes a name argument, i.e. `--name John`
+    env:
+      NAME: "World"  # Add env variables per task
   
   say_hi.windows:
     script: "echo Hello {name} from Windows"  # Task version for windows systems
@@ -151,35 +132,6 @@ After having a config file, you can run a task by calling `yamis`, the name of t
 `yamis say_hi --name "world"`. Passing the same argument multiple times will also add it multiple times, i.e.
 `yamis say_hi --name "person 1" --name="person 2"` is equivalent to `echo Hello person 1 person 2`
 
-
-<a name="note-about-yaml-and-toml-files"></a>
-## Note about YAML and TOML files:
-The parser used to process YAML files treats values as strings if a string is expected.
-
-For example, the following examples are equivalent
-```yaml
-env:
-  DEBUG: Yes  # Normally becomes true
-  AGENT: 007  # Normally becomes 7
-```
-```yaml
-env:
-  DEBUG: "Yes"
-  AGENT: "007"
-```
-
-However, in the case of TOML files, the parser returns the appropriate type, and therefore it will result
-in errors.
-
-I.e. the following is not valid
-```toml
-[env]
-    AGENT = 007
-```
-
-We do not implicitly perform this conversion because we would need to modify the TOML parser.
-If we performed the conversion after parsing the file we would get `AGENT=7` which might be undesired.
-
 <a name="usage"></a>
 ## Usage
 
@@ -196,35 +148,37 @@ Options:
   -t, --list-tasks        Lists tasks
   -i, --task-info <TASK>  Displays information about the given task
   -f, --file <FILE>       Search for tasks in the given file
+  -g, --global            Search for tasks in ~/yamis/yamis.global.{yml,yaml}
       --update            Checks for updates and updates the binary if necessary
   -h, --help              Print help information
   -V, --version           Print version information
 ```
 
-You can either call a task directly by passing the name of the task and its arguments, i.e. `yamis say_hi --name John`,
-or you can specify the configuration file to use with the -f option, i.e. `yamis -f project.yamis.yaml say_hi --name John`.
-Note that the -f option is set before the task name, otherwise it would be interpreted as an argument for the task.
-
-The next sections talks about how task files are auto-discovered.
-
 <a name="task-files"></a>
 ### Task files
-The task files must be either a TOML or YAML file with the appropriate extension, i.e. `project.yamis.toml`, or
-`project.yamis.yml`. Note that across this document examples are given in either version, but the conversion between
-them is straightforward.
+The tasks are defined using the YAML format.
 
 When invoking a task, starting in the working directory and continuing to the root directory, the program will
-look configuration files in a certain order until either a task is found, a `project.yamis` (either TOML or YAML)
-task file is found, or there are no more parent folders (reached root directory). The name of these files is
-case-sensitive in case-sensitive systems, i.e. `PROJECT.yamis.toml` will not work in linux.
+look configuration files in a certain order until either a task is found, a `yamis.root.{yml,yaml}` file is found,
+or there are no more parent folders (reached root directory). The name of these files is case-sensitive in case-sensitive
+systems, i.e. `yamis.root.yml` will not work in linux.
 
-The configuration files (in order of precedence, with extension omitted) are named as following:
-- `local.yamis`: Should hold private tasks and should not be committed to the repository.
-- `yamis`: Should be used in sub-folders of a project for tasks specific to that folder and sub-folders.
-- `project.yamis`: Should hold tasks for the entire project.
+The priority order is as follows:
+- `yamis.private.yml`: Should hold private tasks and should not be committed to the repository.
+- `yamis.private.yaml`: Same as above but for yaml format.
+- `yamis.yml`: Should be used in sub-folders of a project for tasks specific to that folder and sub-folders.
+- `yamis.yaml`: Same as above but for yaml format.
+- `yamis.root.yml`: Should hold tasks for the entire project.
+- `yamis.root.yaml`: Same as above but for yaml format.
 
-If the task is still not found, it will look at `~/.yamis/user.yamis.toml` or `~/.yamis/user.yamis.yaml` or
-`~/.yamis/user.yamis.yml` for user-wide tasks. This is useful for everyday tasks not related to a specific project.
+An especial task file can be defined at `~/yamis/yamis.global.yml` or `~/yamis/yamis.global.yaml` for global tasks.
+To run a global task, you need to pass the `--global` or `-g` flag, i.e. `yamis -g say_hi`. This is useful for
+personal tasks that are not related to a specific project.
+
+Tasks can also be defined in a different file by passing the `--file` or `-f` flag, i.e. `yamis -f my_tasks.yml say_hi`.
+
+While you can add any of the two formats, i.e. `yamis.root.yml` and `yamis.root.yaml`, it is recommended to use
+only one format for consistency and to avoid confusion.
 
 
 <a name="script"></a>
@@ -267,32 +221,31 @@ extension for the script file, and can be prepended with a dot or not. For some 
 matter, but for others it does. In windows the extension defaults to `cmd`, and `sh` in unix.
 
 Example:
-```toml
+```yaml
 # Python script that prints the date and time
-[tasks.hello_world]
-script_runner = "python"
-script_ext = "py"  # or .py
-script = """
-from datetime import datetime
+tasks:
+  hello_world:
+  script_runner: python
+  script_ext: py  # or .py
+  script: |
+    from datetime import datetime
+    print(datetime.now())
 
-print(datetime.now())
-"""
 ```
 
 If using this feature frequently it would be useful to use inheritance to shorten the task. The above can become:
-```toml
-[tasks._py_script]
-script_runner = "python"
-script_ext = "py"  # or .py
-private = true
+```yml
+tasks:
+  _py_script:
+    script_runner: python
+    script_ext: py  # or .py
+    private: true
 
-[tasks.hello_world]
-bases = ["_py_script"]
-script = """
-from datetime import datetime
-
-print(datetime.now())
-"""
+  hello_world:
+    bases: [_py_script]
+    script: |
+      from datetime import datetime
+      print(datetime.now())
 ```
 
 <a name="program"></a>
@@ -309,15 +262,16 @@ This is useful for adding extra parameters without rewriting them.
 <a name="running-tasks-serially"></a>
 ### Running tasks serially
 One obvious option to run tasks one after the other is to create a script, i.e. with the following:
-```
+```bash
 yamis say_hi
 yamis say_bye
 ```
 
 The other option is to use `serial`, which should take a list of tasks to run in order, i.e.:
-```toml
-[tasks.greet]
-serial = ["say_hi", "say_bye"]
+```yaml
+tasks:
+  greet:
+    serial: [say_hi, say_bye]
 ```
 Note that any argument passed will be passed to both tasks equally. 
 
@@ -480,13 +434,14 @@ Here are some examples for parameters `hello world -p=1 -p=2 -p=3`:
 ### Unpacking
 Expressions that return an array will be unpacked. For example, given the following tasks:
 
-```toml
-[tasks.say-hi]
-script = "echo hello {person}"
+```yaml
+tasks:
+  say-hi:
+  script: "echo hello {person}"
 
-[tasks.something]
-program = "imaginary-program"
-args = ["{ map('-o %s', f) }"]  # map returns an array of strings
+  something:
+    program: "imaginary-program"
+    args: ["{ map('-o %s', f) }"]  # map returns an array of strings
 ```
 
 If we call `yamis hello --person John1 --person John2`, it will run `echo hello John1 John2`.
@@ -497,26 +452,28 @@ called [map](#map-function).
 
 <a name="setting-environment-variables"></a>
 ### Setting environment variables
-Environment variables can be defined at the task level. These two forms are equivalent:
-```toml
-[tasks.echo]
-env = {"DEBUG" = "TRUE"}
 
-[tasks.echo.env]
-DEBUG = "TRUE"
-  ```
-They can also be passed globally
-```toml
-[env]
-DEBUG = "TRUE"
+Environment variables can be defined at the task level.
+```yaml
+tasks:
+  echo:
+    env: {DEBUG: "TRUE"}
 ```
+
+They can also be passed globally
+```yaml
+env:
+  DEBUG: "TRUE"
+```
+
 Also, an env file can be specified at the task or global level. The path will be relative to the config file unless it is
 an absolute path.
-```toml
-env_file = ".env"
+```yaml
+env_file: ".env"
 
-[tasks.some]
-env_file = ".env_2"
+tasks:
+  some:
+    env_file: ".env_2"
 ```
 
 If both `env_file` and `env` options are set at the same level, both will be loaded, if there are duplicate keys, `env` will
@@ -526,6 +483,7 @@ are also set there, with the env variables defined on the task taking precedence
 
 <a name="os-specific-tasks"></a>
 ### OS specific tasks
+
 You can have a different OS version for each task. If a task for the current OS is not found, it will
 fall back to the non os-specific task if it exists. I.e.
 ```yaml

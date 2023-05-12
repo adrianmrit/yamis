@@ -19,11 +19,12 @@ fn test_no_config_file_discovered() {
 #[test]
 fn test_run_simple_task() -> Result<(), Box<dyn std::error::Error>> {
     let tmp_dir = TempDir::new().unwrap();
-    let mut file = File::create(tmp_dir.join("project.yamis.toml"))?;
+    let mut file = File::create(tmp_dir.join("yamis.root.yml"))?;
     file.write_all(
         r#"
-    [tasks.hello]
-    script = "echo \"hello world\""
+    tasks:
+        hello:
+            script: echo "hello world"
     "#
         .as_bytes(),
     )?;
@@ -41,24 +42,25 @@ fn test_run_simple_task() -> Result<(), Box<dyn std::error::Error>> {
 #[test]
 fn test_file_option() -> Result<(), Box<dyn std::error::Error>> {
     let tmp_dir = TempDir::new().unwrap();
-    let mut file = File::create(tmp_dir.join("sample.yamis.toml"))?;
+    let mut file = File::create(tmp_dir.join("sample.yamis.yml"))?;
     file.write_all(
         r#"
-    [tasks.hello]
-    script = "ls"
+    tasks:
+        hello:
+            script: "ls"
 
-    [tasks.hello.windows]
-    script = "dir"
+        hello.windows:
+            script: "dir"
     "#
         .as_bytes(),
     )?;
 
     let mut cmd = Command::cargo_bin("yamis")?;
     cmd.current_dir(tmp_dir.path());
-    cmd.args(["-f=sample.yamis.toml", "hello"]);
+    cmd.args(["-f=sample.yamis.yml", "hello"]);
     cmd.assert()
         .success()
-        .stdout(predicate::str::contains("sample.yamis.toml"));
+        .stdout(predicate::str::contains("sample.yamis.yml"));
     drop(file);
     drop(tmp_dir);
     Ok(())
@@ -68,12 +70,13 @@ fn test_file_option() -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(windows)] // echo does not prints the quotes in unix
 fn test_escape_always_windows() -> Result<(), Box<dyn std::error::Error>> {
     let tmp_dir = TempDir::new().unwrap();
-    let mut file = File::create(tmp_dir.join("project.yamis.toml"))?;
+    let mut file = File::create(tmp_dir.join("yamis.root.yml"))?;
     file.write_all(
         r#"
-    [tasks.say_hello]
-    quote = "always"
-    script = "echo {$1} {$2} {hello}{$4?} {$@}"
+    tasks:
+        say_hello:
+            quote: "always"
+            script: "echo {$1} {$2} {hello}{$4?} {$@}"
     "#
         .as_bytes(),
     )?;
@@ -92,12 +95,13 @@ fn test_escape_always_windows() -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(windows)] // echo does not prints the quotes in unix
 fn test_escape_on_space_windows() -> Result<(), Box<dyn std::error::Error>> {
     let tmp_dir = TempDir::new().unwrap();
-    let mut file = File::create(tmp_dir.join("project.yamis.toml"))?;
+    let mut file = File::create(tmp_dir.join("yamis.root.yml"))?;
     file.write_all(
         r#"
-    [tasks.say_hello]
-    quote = "spaces"
-    script = "echo {$1} {$2} {hello}{$4?} {$@}"
+    tasks:
+        say_hello:
+            quote: "spaces"
+            script: "echo {$1} {$2} {hello}{$4?} {$@}"
     "#
         .as_bytes(),
     )?;
@@ -118,12 +122,13 @@ fn test_escape_on_space_windows() -> Result<(), Box<dyn std::error::Error>> {
 #[test]
 fn test_escape_never() -> Result<(), Box<dyn std::error::Error>> {
     let tmp_dir = TempDir::new().unwrap();
-    let mut file = File::create(tmp_dir.join("project.yamis.toml"))?;
+    let mut file = File::create(tmp_dir.join("yamis.root.yml"))?;
     file.write_all(
         r#"
-    [tasks.say_hello]
-    quote = "never"
-    script = "echo {$1} {$2} {hello}{$4?} {$@}"
+    tasks:
+        say_hello:
+            quote: "never"
+            script: "echo {$1} {$2} {hello}{$4?} {$@}"
     "#
         .as_bytes(),
     )?;
@@ -141,26 +146,27 @@ fn test_escape_never() -> Result<(), Box<dyn std::error::Error>> {
 #[test]
 fn test_run_os_task() -> Result<(), Box<dyn std::error::Error>> {
     let tmp_dir = TempDir::new().unwrap();
-    let mut file = File::create(tmp_dir.join("project.yamis.toml"))?;
+    let mut file = File::create(tmp_dir.join("yamis.root.yml"))?;
     file.write_all(
         r#"
-    [tasks.hello.windows]
-    script = "echo hello windows"
+    tasks:
+        hello.windows:
+            script: echo hello windows
 
-    [tasks.hello.linux]
-    script = "echo hello linux"
+        hello.linux:
+            script: echo hello linux
 
-    [tasks.hello.macos]
-    script = "echo hello macos"
+        hello.macos:
+            script: echo hello macos
 
-    [tasks.hello_again]
-    script = "echo hello windows"
+        hello_again:
+            script: echo hello windows
 
-    [tasks.hello_again.linux]
-    script = "echo hello linux"
+        hello_again.linux:
+            script: echo hello linux
 
-    [tasks.hello_again.macos]
-    script = "echo hello macos"
+        hello_again.macos:
+            script: echo hello macos
     "#
         .as_bytes(),
     )?;
@@ -192,24 +198,23 @@ fn test_run_os_task() -> Result<(), Box<dyn std::error::Error>> {
 #[test]
 fn test_set_env() -> Result<(), Box<dyn std::error::Error>> {
     let tmp_dir = TempDir::new().unwrap();
-    let mut file = File::create(tmp_dir.join("project.yamis.toml"))?;
+    let mut file = File::create(tmp_dir.join("yamis.root.yml"))?;
     file.write_all(
         r#"
-    [env]
-    greeting = "hello world"
-    one_plus_one = "two"
+env:
+    greeting: "hello world"
+    one_plus_one: "two"
 
-    [tasks.hello.windows]
-    script = "echo %greeting%, one plus one is %one_plus_one%"
+tasks:
+    hello.windows:
+        script: echo %greeting%, one plus one is %one_plus_one%
+        env:
+            greeting: "hi world"
 
-    [tasks.hello]
-    script = "echo $greeting, one plus one is $one_plus_one"
-
-    [tasks.hello.env]
-    greeting = "hi world"
-
-    [tasks.hello.windows.env]
-    greeting = "hi world"
+    hello:
+        script: "echo $greeting, one plus one is $one_plus_one"
+        env:
+            greeting: "hi world"
     "#
         .as_bytes(),
     )?;
@@ -249,32 +254,32 @@ fn test_env_file() -> Result<(), Box<dyn std::error::Error>> {
         )
         .unwrap();
 
-    let mut file = File::create(tmp_dir.join("project.yamis.toml"))?;
+    let mut file = File::create(tmp_dir.join("yamis.root.yml"))?;
     file.write_all(
         r#"
-            env_file = ".env"
+env_file: ".env"
 
-            [tasks.test.windows]
-            quote = "never"
-            script = "echo %VAR1% %VAR2% %VAR3%"
+tasks:
+    test.windows:
+        quote: "never"
+        script: "echo %VAR1% %VAR2% %VAR3%"
 
-            [tasks.test]
-            quote = "never"
-            script = "echo $VAR1 $VAR2 $VAR3"
+    test:
+        quote: "never"
+        script: "echo $VAR1 $VAR2 $VAR3"
 
-            [tasks.test_2.windows]
-            quote = "never"
-            script = "echo %VAR1% %VAR2% %VAR3%"
-            env_file = ".env_2"
-            env = {"VAR1" = "TASK_VAL1"}
+    test_2.windows:
+        quote: "never"
+        script: "echo %VAR1% %VAR2% %VAR3%"
+        env_file: ".env_2"
+        env: {VAR1: "TASK_VAL1"}
 
-            [tasks.test_2]
-            quote = "never"
-            script = "echo $VAR1 $VAR2 $VAR3"
-            env_file = ".env_2"
-
-            [tasks.test_2.env]
-            VAR1 = "TASK_VAL1"
+    test_2:
+        quote: never
+        script: echo $VAR1 $VAR2 $VAR3
+        env_file: .env_2
+        env:
+            VAR1: "TASK_VAL1"
             "#
         .as_bytes(),
     )?;
@@ -307,13 +312,14 @@ fn test_run_program() -> Result<(), Box<dyn std::error::Error>> {
     let mut batch_file = File::create(tmp_dir.join(batch_file_name))?;
     batch_file.write_all(batch_file_content).unwrap();
 
-    let mut file = File::create(tmp_dir.join("project.yamis.toml"))?;
+    let mut file = File::create(tmp_dir.join("yamis.root.yml"))?;
     file.write_all(
         format!(
             r#"
-            [tasks.hello]
-            program = "{}"
-            args = ["{}", "{}", "hello", "world"]
+    tasks:
+        hello:
+            program: {}
+            args: ["{}", "{}", "hello", "world"]
             "#,
             program, param, batch_file_name
         )
@@ -341,20 +347,21 @@ fn test_run_serial() -> Result<(), Box<dyn std::error::Error>> {
     let mut batch_file = File::create(tmp_dir.join(batch_file_name))?;
     batch_file.write_all(batch_file_content).unwrap();
 
-    let mut file = File::create(tmp_dir.join("project.yamis.toml"))?;
+    let mut file = File::create(tmp_dir.join("yamis.root.yml"))?;
     file.write_all(
         format!(
             r#"
-            [tasks.hello]
-            program = "{}"
-            args = ["{}", "{}", "{{$1}}"]
+    tasks:
+        hello:
+            program: "{}"
+            args: ["{}", "{}", "{{$1}}"]
 
-            [tasks.bye]
-            quote = "never"
-            script = "echo Bye {{$2}}"
+        bye:
+            quote: "never"
+            script: "echo Bye {{$2}}"
 
-            [tasks.greet]
-            serial = ["hello", "bye"]
+        greet:
+            serial: ["hello", "bye"]
             "#,
             program, param, batch_file_name
         )
@@ -376,22 +383,25 @@ fn test_run_serial() -> Result<(), Box<dyn std::error::Error>> {
 #[test]
 fn test_env_inheritance() -> Result<(), Box<dyn std::error::Error>> {
     let tmp_dir = TempDir::new().unwrap();
-    let mut file = File::create(tmp_dir.join("project.yamis.toml"))?;
+    let mut file = File::create(tmp_dir.join("yamis.root.yml"))?;
     file.write_all(
         r#"
-    [tasks.hello_base.env]
-    greeting = "hello world"
+tasks:
+    hello_base:
+        env:
+            greeting: "hello world"
 
-    [tasks.calc_base.env]
-    one_plus_one = "2"
+    calc_base:
+        env:
+            one_plus_one: "2"
 
-    [tasks.hello]
-    bases = ["hello_base", "calc_base"]
-    script = "echo $greeting, 1+1=$one_plus_one"
+    hello:
+        bases: ["hello_base", "calc_base"]
+        script: "echo $greeting, 1+1=$one_plus_one"
 
-    [tasks.hello.windows]
-    bases = ["hello_base", "calc_base"]
-    script = "echo %greeting%, 1+1=%one_plus_one%"
+    hello.windows:
+        bases: ["hello_base", "calc_base"]
+        script: "echo %greeting%, 1+1=%one_plus_one%"
     "#
         .as_bytes(),
     )?;
@@ -416,7 +426,7 @@ fn test_extend_args() -> Result<(), Box<dyn std::error::Error>> {
     let mut batch_file = File::create(tmp_dir.join(batch_file_name))?;
     batch_file.write_all(batch_file_content).unwrap();
 
-    let mut file = File::create(tmp_dir.join("project.yamis.yml"))?;
+    let mut file = File::create(tmp_dir.join("yamis.root.yml"))?;
     file.write_all(
         format!(
             r#"

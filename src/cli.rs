@@ -12,7 +12,9 @@ use std::{env, fmt, fs};
 
 use regex::Regex;
 
-use crate::config_files::{ConfigFilePaths, ConfigFilesContainer};
+use crate::config_files::{
+    ConfigFilePaths, ConfigFilesContainer, GlobalConfigFilePath, PathIterator, SingleConfigFilePath,
+};
 use crate::print_utils::YamisOutput;
 use crate::types::{DynErrResult, TaskArgs};
 use crate::updater;
@@ -144,9 +146,8 @@ impl ConfigFileContainers {
     }
 
     /// prints config file paths and their tasks
-    fn print_tasks_list(&mut self, paths: ConfigFilePaths) -> DynErrResult<()> {
+    fn print_tasks_list(&mut self, paths: PathIterator) -> DynErrResult<()> {
         for path in paths {
-            let path = path?;
             let version = ConfigFileContainers::get_file_version(&path)?;
             match version {
                 Version::V1 => {
@@ -170,9 +171,8 @@ impl ConfigFileContainers {
     }
 
     /// Prints help for the given task
-    fn print_task_info(&mut self, paths: ConfigFilePaths, task: &str) -> DynErrResult<()> {
+    fn print_task_info(&mut self, paths: PathIterator, task: &str) -> DynErrResult<()> {
         for path in paths {
-            let path = path?;
             let version = ConfigFileContainers::get_file_version(&path)?;
             match version {
                 Version::V1 => {
@@ -213,9 +213,8 @@ impl ConfigFileContainers {
     }
 
     /// Runs the given task
-    fn run_task(&mut self, paths: ConfigFilePaths, task: &str, args: TaskArgs) -> DynErrResult<()> {
+    fn run_task(&mut self, paths: PathIterator, task: &str, args: TaskArgs) -> DynErrResult<()> {
         for path in paths {
-            let path = path?;
             let version = match ConfigFileContainers::get_file_version(&path) {
                 Ok(version) => version,
                 Err(e) => {
@@ -413,6 +412,13 @@ pub fn exec() -> DynErrResult<()> {
                 .value_name("FILE"),
         )
         .arg(
+            clap::Arg::new("global")
+                .short('g')
+                .help("Search for tasks in ~/yamis/yamis.global.{yml,yaml}")
+                .exclusive(true)
+                .action(ArgAction::SetTrue),
+        )
+        .arg(
             clap::Arg::new("update")
                 .long("update")
                 .help("Checks for updates and updates the binary if necessary")
@@ -441,9 +447,12 @@ pub fn exec() -> DynErrResult<()> {
     let current_dir = env::current_dir()?;
     let mut file_containers = ConfigFileContainers::new();
 
-    let config_file_paths = match matches.get_one::<String>("file") {
-        None => ConfigFilePaths::new(&current_dir),
-        Some(file_path) => ConfigFilePaths::only(file_path)?,
+    let config_file_paths: PathIterator = match matches.get_one::<String>("file") {
+        None => match matches.get_one::<bool>("global").cloned().unwrap_or(false) {
+            true => GlobalConfigFilePath::new(),
+            false => ConfigFilePaths::new(&current_dir),
+        },
+        Some(file_path) => SingleConfigFilePath::new(file_path),
     };
 
     if matches
@@ -462,7 +471,6 @@ pub fn exec() -> DynErrResult<()> {
 
     if matches.get_one::<bool>("list").cloned().unwrap_or(false) {
         for path in config_file_paths {
-            let path = path?;
             println!("{}", colorize_config_file_path(&path.to_string_lossy()));
         }
         return Ok(());
@@ -475,65 +483,35 @@ pub fn exec() -> DynErrResult<()> {
 
 #[cfg(test)]
 mod tests {
-    use crate::config_files::ConfigFilePaths;
     use assert_cmd::Command;
     use assert_fs::TempDir;
-    use predicates::prelude::predicate;
+    use predicates::prelude::{predicate, PredicateBooleanExt};
     use std::fs::File;
-    use std::io::Write;
 
     #[test]
-    #[ignore = "Fails but works fine when run manually"]
+    // #[ignore = "Fails but works fine when run manually"]
     fn test_list() -> Result<(), Box<dyn std::error::Error>> {
         let tmp_dir = TempDir::new().unwrap();
-        let global_config_dir = ConfigFilePaths::get_global_config_file_dir();
+        let tmp_dir_path = tmp_dir.path();
+        File::create(tmp_dir_path.join("yamis.private.yml"))?;
+        File::create(tmp_dir_path.join("yamis.root.yml"))?;
+        File::create(tmp_dir_path.join("yamis.other.yml"))?;
 
-        // Global config dir should not be the same as the current dir
-        assert_ne!(tmp_dir.path(), &global_config_dir);
-
-        // Should always return the same global dir
-        assert_eq!(
-            &ConfigFilePaths::get_global_config_file_dir(),
-            &global_config_dir
+        let expected_private = format!(
+            "{tmp_dir}/yamis.private.yml\n",
+            tmp_dir = tmp_dir_path.to_str().unwrap()
         );
-
-        let global_config_path = global_config_dir.join("user.yamis.toml");
-        let mut global_config_file = File::create(global_config_path.as_path()).unwrap();
-        global_config_file
-            .write_all(
-                r#"
-                [tasks.hello_global]
-                script = "echo hello project"
-                help = "Some help here"
-                "#
-                .as_bytes(),
-            )
-            .unwrap();
-
-        let mut file = File::create(tmp_dir.join("project.yamis.toml"))?;
-        file.write_all(
-            r#"
-
-    [tasks.hello.windows]
-    script = "echo %greeting%, one plus one is %one_plus_one%"
-    private=true
-
-    [tasks.hello]
-    script = "echo $greeting, one plus one is $one_plus_one"
-    "#
-            .as_bytes(),
-        )?;
-        let expected = format!(
-            "{tmp_dir}/project.yamis.toml\n{global_config_dir}/user.yamis.toml\n",
-            tmp_dir = tmp_dir.path().to_str().unwrap(),
-            global_config_dir = global_config_dir.to_str().unwrap()
+        let expected_root = format!(
+            "{tmp_dir}/yamis.root.yml\n",
+            tmp_dir = tmp_dir_path.to_str().unwrap()
         );
         let mut cmd = Command::cargo_bin("yamis")?;
-        cmd.current_dir(tmp_dir.path());
+        cmd.current_dir(tmp_dir_path);
         cmd.arg("--list");
-        cmd.assert()
-            .success()
-            .stdout(predicate::str::contains(expected));
+        cmd.assert().success().stdout(
+            predicate::str::contains(expected_private)
+                .and(predicate::str::ends_with(expected_root)),
+        );
         Ok(())
     }
 }

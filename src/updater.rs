@@ -111,7 +111,7 @@ pub(crate) fn check_update_available() -> DynErrResult<Option<String>> {
     let mut cache_file = UpdateCacheFile::new();
 
     if cache_file.outdated() {
-        #[cfg(not(test))]
+        // #[cfg(not(test))]
         {
             let releases = self_update::backends::github::ReleaseList::configure()
                 .repo_owner("adrianmrit")
