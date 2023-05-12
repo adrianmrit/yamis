@@ -28,7 +28,7 @@ const GLOBAL_CONFIG_FILE: &str = "user.yamis";
 /// Name the global config file, without extension.
 
 #[cfg(not(test))]
-const GLOBAL_CONFIG_FILE_PATH: &str = "~/.yamis";
+const GLOBAL_CONFIG_FILE_PATH: &str = "~/yamis";
 
 /// Allowed extensions for config files.
 const ALLOWED_EXTENSIONS: &[&str] = &["yml", "yaml", "toml"];
@@ -52,8 +52,9 @@ impl Display for ConfigError {
             // ConfigError::FileNotFound(ref s) => write!(f, "File {} not found.", s),
             // ConfigError::NoConfigFile => write!(f, "No config file found."),
             ConfigError::BadConfigFile(ref path, ref reason) => write!(f, "Bad config file `{}`:\n    {}", path.to_string_lossy(), reason),
-            ConfigError::DuplicateConfigFile(ref s) => write!(f,
-                                                              "Config file `{}` defined multiple times with different extensions in the same directory.", s),
+            ConfigError::DuplicateConfigFile(ref s) => write!(f,  
+                "Config file `{}` defined multiple times with different extensions in the same directory.", s 
+            ),
         }
     }
 }

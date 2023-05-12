@@ -137,8 +137,7 @@ impl ConfigFileContainers {
         let result: ConfigFileVersionSerializer = if is_yaml {
             serde_yaml::from_reader(file)?
         } else {
-            // A bytes list should be slightly faster than a string list
-            toml::from_slice(&fs::read(path)?)?
+            toml::from_str(&fs::read_to_string(path)?)?
         };
 
         Ok(result.version)
