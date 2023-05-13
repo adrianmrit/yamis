@@ -498,12 +498,12 @@ mod tests {
         File::create(tmp_dir_path.join("yamis.other.yml"))?;
 
         let expected_private = format!(
-            "{tmp_dir}/yamis.private.yml\n",
-            tmp_dir = tmp_dir_path.to_str().unwrap()
+            "{tmp_dir}\n",
+            tmp_dir = tmp_dir_path.join("yamis.private.yml").to_str().unwrap()
         );
         let expected_root = format!(
-            "{tmp_dir}/yamis.root.yml\n",
-            tmp_dir = tmp_dir_path.to_str().unwrap()
+            "{tmp_dir}\n",
+            tmp_dir = tmp_dir_path.join("yamis.root.yml").to_str().unwrap()
         );
         let mut cmd = Command::cargo_bin("yamis")?;
         cmd.current_dir(tmp_dir_path);
