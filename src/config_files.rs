@@ -6,6 +6,7 @@ use crate::types::DynErrResult;
 use crate::utils::{
     get_path_relative_to_base, get_task_dependency_graph, read_env_file, to_os_task_name,
 };
+use directories::UserDirs;
 use indexmap::IndexMap;
 use petgraph::algo::toposort;
 use serde_derive::Deserialize;
@@ -31,8 +32,7 @@ const CONFIG_FILES_PRIO: &[&str] = &[
 ];
 
 /// Global config file names by order of priority.
-const GLOBAL_CONFIG_FILES_PRIO: &[&str] =
-    &["~/yamis/yamis.global.yml", "~/yamis/yamis.global.yaml"];
+const GLOBAL_CONFIG_FILES_PRIO: &[&str] = &["yamis/yamis.global.yml", "yamis/yamis.global.yaml"];
 
 pub(crate) type PathIteratorItem = PathBuf;
 pub(crate) type PathIterator = Box<dyn Iterator<Item = PathIteratorItem>>;
@@ -209,10 +209,13 @@ impl Iterator for GlobalConfigFilePath {
             return None;
         }
         self.ended = true;
-        for &path in GLOBAL_CONFIG_FILES_PRIO {
-            let path = PathBuf::from(path);
-            if path.is_file() {
-                return Some(path);
+        if let Some(user_dirs) = UserDirs::new() {
+            let home_dir = user_dirs.home_dir();
+            for &path in GLOBAL_CONFIG_FILES_PRIO {
+                let path = home_dir.join(path);
+                if path.is_file() {
+                    return Some(path);
+                }
             }
         }
         None

@@ -147,7 +147,9 @@ impl ConfigFileContainers {
 
     /// prints config file paths and their tasks
     fn print_tasks_list(&mut self, paths: PathIterator) -> DynErrResult<()> {
+        let mut found = false;
         for path in paths {
+            found = true;
             let version = ConfigFileContainers::get_file_version(&path)?;
             match version {
                 Version::V1 => {
@@ -166,6 +168,9 @@ impl ConfigFileContainers {
                     }
                 }
             }
+        }
+        if !found {
+            println!("No config files found.");
         }
         Ok(())
     }
@@ -384,7 +389,6 @@ pub fn exec() -> DynErrResult<()> {
                 .short('l')
                 .long("list")
                 .help("Lists configuration files that can be reached from the current directory")
-                .conflicts_with_all(["file"])
                 .action(ArgAction::SetTrue),
         )
         .arg(
@@ -414,8 +418,9 @@ pub fn exec() -> DynErrResult<()> {
         .arg(
             clap::Arg::new("global")
                 .short('g')
+                .long("global")
                 .help("Search for tasks in ~/yamis/yamis.global.{yml,yaml}")
-                .exclusive(true)
+                .conflicts_with_all(["file"])
                 .action(ArgAction::SetTrue),
         )
         .arg(
