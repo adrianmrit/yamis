@@ -67,56 +67,6 @@ fn test_file_option() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
-#[cfg(windows)] // echo does not prints the quotes in unix
-fn test_escape_always_windows() -> Result<(), Box<dyn std::error::Error>> {
-    let tmp_dir = TempDir::new().unwrap();
-    let mut file = File::create(tmp_dir.join("yamis.root.yml"))?;
-    file.write_all(
-        r#"
-    tasks:
-        say_hello:
-            quote: "always"
-            script: "echo {$1} {$2} {hello}{$4?} {$@}"
-    "#
-        .as_bytes(),
-    )?;
-
-    let mut cmd = Command::cargo_bin("yamis")?;
-    cmd.current_dir(tmp_dir.path());
-    cmd.arg("say_hello");
-    cmd.args(["hello", "world", "--hello=hello world"]);
-    cmd.assert().success().stdout(predicate::str::contains(
-        "\"hello\" \"world\" \"hello world\" \"hello\" \"world\" \"--hello=hello world\"",
-    ));
-    Ok(())
-}
-
-#[test]
-#[cfg(windows)] // echo does not prints the quotes in unix
-fn test_escape_on_space_windows() -> Result<(), Box<dyn std::error::Error>> {
-    let tmp_dir = TempDir::new().unwrap();
-    let mut file = File::create(tmp_dir.join("yamis.root.yml"))?;
-    file.write_all(
-        r#"
-    tasks:
-        say_hello:
-            quote: "spaces"
-            script: "echo {$1} {$2} {hello}{$4?} {$@}"
-    "#
-        .as_bytes(),
-    )?;
-
-    let mut cmd = Command::cargo_bin("yamis")?;
-    cmd.current_dir(tmp_dir.path());
-    cmd.arg("say_hello");
-    cmd.args(["hello", "world", "--hello=hello world"]);
-    cmd.assert().success().stdout(predicate::str::contains(
-        "hello world \"hello world\" hello world \"--hello=hello world\"",
-    ));
-    Ok(())
-}
-
-#[test]
 fn test_run_os_task() -> Result<(), Box<dyn std::error::Error>> {
     let tmp_dir = TempDir::new().unwrap();
     let mut file = File::create(tmp_dir.join("yamis.root.yml"))?;
@@ -234,21 +184,17 @@ env_file: ".env"
 
 tasks:
     test.windows:
-        quote: "never"
         script: "echo %VAR1% %VAR2% %VAR3%"
 
     test:
-        quote: "never"
         script: "echo $VAR1 $VAR2 $VAR3"
 
     test_2.windows:
-        quote: "never"
         script: "echo %VAR1% %VAR2% %VAR3%"
         env_file: ".env_2"
         env: {VAR1: "TASK_VAL1"}
 
     test_2:
-        quote: never
         script: echo $VAR1 $VAR2 $VAR3
         env_file: .env_2
         env:
@@ -380,7 +326,6 @@ fn test_run_serial() -> Result<(), Box<dyn std::error::Error>> {
             args: ["{}", "{}", "{{{{args.0}}}}"]
 
         bye:
-            quote: "never"
             script: "echo Bye {{{{args.1}}}}"
 
         greet:

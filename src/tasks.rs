@@ -10,7 +10,6 @@ use std::{error, fmt, fs, mem};
 use crate::config_files::ConfigFile;
 use crate::debug_config::{ConcreteTaskDebugConfig, TaskDebugConfig};
 use crate::defaults::default_false;
-use crate::parser::EscapeMode;
 use crate::print_utils::YamisOutput;
 use serde_derive::{Deserialize, Serialize};
 use tera::{Context, Tera};
@@ -140,8 +139,6 @@ pub struct Task {
     debug_config: Option<TaskDebugConfig>,
     /// Help of the task
     help: Option<String>,
-    /// Whether to automatically quote argument with spaces
-    quote: Option<EscapeMode>,
     /// Script to run
     script: Option<String>,
     /// Interpreter program to use
@@ -208,9 +205,6 @@ impl Task {
     /// returns: ()
     ///
     pub(crate) fn extend_task(&mut self, base_task: &Task) {
-        if self.quote.is_none() && base_task.quote.is_some() {
-            self.quote = Some(base_task.quote.as_ref().unwrap().clone());
-        }
         inherit_value!(self.debug_config, base_task.debug_config);
         inherit_value!(self.help, base_task.help);
         inherit_value!(self.script, base_task.script);
@@ -344,12 +338,6 @@ impl Task {
             ));
         }
 
-        if (self.program.is_some() | self.serial.is_some()) && self.quote.is_some() {
-            return Err(TaskError::ImproperlyConfigured(
-                self.name.clone(),
-                String::from("`quote` parameter can only be set for scripts."),
-            ));
-        }
         Ok(())
     }
 
@@ -709,43 +697,6 @@ tasks:
     }
 
     #[test]
-    fn test_quotes_inheritance() {
-        let tmp_dir = TempDir::new().unwrap();
-        let config_file_path = tmp_dir.join("yamis.root.yml");
-        let mut file = File::create(&config_file_path).unwrap();
-        file.write_all(
-            r#"
-    tasks:
-        hello_base:
-            quote: "spaces"
-
-        calc_base:
-            quote: "never"
-
-        hello:
-            bases: ["hello_base", "calc_base"]
-            script: "echo hello_1"
-
-        hello_2:
-            bases: ["calc_base", "hello_base"]
-            script: "echo hello_2"
-    "#
-            .as_bytes(),
-        )
-        .unwrap();
-
-        let config_file = ConfigFile::load(config_file_path).unwrap();
-
-        let task = config_file.get_task("hello").unwrap();
-        let task_ref = task.as_ref();
-        assert_eq!(task_ref.quote.as_ref().unwrap(), &EscapeMode::Spaces);
-
-        let task = config_file.get_task("hello_2").unwrap();
-        let task_ref = task.as_ref();
-        assert_eq!(task_ref.quote.as_ref().unwrap(), &EscapeMode::Never);
-    }
-
-    #[test]
     fn test_args_inheritance() {
         let tmp_dir = TempDir::new().unwrap();
         let config_file_path = tmp_dir.join("yamis.root.yml");
@@ -860,22 +811,18 @@ env_file: ".env"
 
 tasks:
     test.windows:
-        quote: "never"
         script: "echo %VAR1% %VAR2% %VAR3%"
 
     test:
-        quote: "never"
         script: "echo $VAR1 $VAR2 $VAR3"
 
     test_2.windows:
-        quote: "never"
         script: "echo %VAR1% %VAR2% %VAR3%"
         env_file: ".env_2"
         env: 
             VAR1: TASK_VAL1
 
     test_2:
-        quote: "never"
         script: "echo $VAR1 $VAR2 $VAR3"
         env_file: ".env_2"
         env:
@@ -986,21 +933,6 @@ tasks:
         let expected_error = TaskError::ImproperlyConfigured(
             String::from("sample"),
             String::from("Cannot specify `program` and `serial` at the same time."),
-        );
-        assert_eq!(task.unwrap_err().to_string(), expected_error.to_string());
-
-        let task = get_task(
-            "sample",
-            r#"
-        quote = "spaces"
-        program = "python"
-    "#,
-            None,
-        );
-
-        let expected_error = TaskError::ImproperlyConfigured(
-            String::from("sample"),
-            String::from("`quote` parameter can only be set for scripts."),
         );
         assert_eq!(task.unwrap_err().to_string(), expected_error.to_string());
 

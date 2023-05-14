@@ -1,6 +1,4 @@
 use crate::debug_config::ConfigFileDebugConfig;
-use crate::defaults::default_quote;
-use crate::parser::EscapeMode;
 use crate::tasks::Task;
 use crate::types::DynErrResult;
 use crate::utils::{
@@ -293,9 +291,6 @@ pub struct ConfigFile {
     #[serde(default)]
     /// Working directory. Defaults to the folder where the script runs.
     wd: Option<String>,
-    /// Whether to automatically quote argument with spaces unless task specified
-    #[serde(default = "default_quote")]
-    pub(crate) quote: EscapeMode,
     /// Tasks inside the config file.
     #[serde(default)]
     pub(crate) tasks: HashMap<String, Task>,
