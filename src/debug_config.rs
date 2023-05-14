@@ -1,8 +1,8 @@
 use crate::defaults::{default_false, default_true};
-use serde_derive::Deserialize;
+use serde_derive::{Deserialize, Serialize};
 
 /// Config file debug options
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ConfigFileDebugConfig {
     /// Print the name of the task before running
@@ -23,7 +23,7 @@ impl Default for ConfigFileDebugConfig {
 }
 
 /// Task debug options
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize, Serialize, Default)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct TaskDebugConfig {
     /// Name of the task

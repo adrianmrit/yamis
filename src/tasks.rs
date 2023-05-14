@@ -10,12 +10,13 @@ use std::{error, fmt, fs, mem};
 use crate::config_files::ConfigFile;
 use crate::debug_config::{ConcreteTaskDebugConfig, TaskDebugConfig};
 use crate::defaults::default_false;
-use crate::parser::{parse_params, parse_script, EscapeMode};
+use crate::parser::EscapeMode;
 use crate::print_utils::YamisOutput;
-use serde_derive::Deserialize;
+use serde_derive::{Deserialize, Serialize};
+use tera::{Context, Tera};
 
 use crate::types::{DynErrResult, TaskArgs};
-use crate::utils::{get_path_relative_to_base, read_env_file, TMP_FOLDER_NAMESPACE};
+use crate::utils::{get_path_relative_to_base, read_env_file, split_command, TMP_FOLDER_NAMESPACE};
 use md5::{Digest, Md5};
 
 cfg_if::cfg_if! {
@@ -57,57 +58,6 @@ impl fmt::Display for TaskError {
 }
 
 impl error::Error for TaskError {}
-
-/// Represents a Task
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Task {
-    /// Name of the task
-    #[serde(skip)]
-    name: String,
-    debug_config: Option<TaskDebugConfig>,
-    /// Help of the task
-    help: Option<String>,
-    /// Whether to automatically quote argument with spaces
-    quote: Option<EscapeMode>,
-    /// Script to run
-    script: Option<String>,
-    /// Interpreter program to use
-    script_runner: Option<String>,
-    /// Extra arguments to pass to the script runner
-    script_runner_args: Option<Vec<String>>,
-    /// Script extension
-    #[serde(alias = "script_extension")]
-    script_ext: Option<String>,
-    /// A program to run
-    program: Option<String>,
-    /// Args to pass to a command
-    args: Option<Vec<String>>,
-    /// Extends args from bases
-    #[serde(alias = "args+")]
-    args_extend: Option<Vec<String>>,
-    /// If given, runs all those tasks at once
-    serial: Option<Vec<String>>,
-    /// Env variables for the task
-    #[serde(default)]
-    pub(crate) env: HashMap<String, String>,
-    /// Env file to read environment variables from
-    env_file: Option<String>,
-    /// Working dir
-    wd: Option<String>,
-    /// Task to run instead if the OS is linux
-    pub(crate) linux: Option<Box<Task>>,
-    /// Task to run instead if the OS is windows
-    pub(crate) windows: Option<Box<Task>>,
-    /// Task to run instead if the OS is macos
-    pub(crate) macos: Option<Box<Task>>,
-    /// Base task to inherit from
-    #[serde(default)]
-    pub(crate) bases: Vec<String>,
-    /// If private, it cannot be called
-    #[serde(default = "default_false")]
-    private: bool,
-}
 
 cfg_if::cfg_if! {
     if #[cfg(target_os = "windows")] {
@@ -180,6 +130,59 @@ macro_rules! inherit_value {
     };
 }
 
+/// Represents a Task
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Task {
+    /// Name of the task
+    #[serde(skip_deserializing)]
+    name: String,
+    debug_config: Option<TaskDebugConfig>,
+    /// Help of the task
+    help: Option<String>,
+    /// Whether to automatically quote argument with spaces
+    quote: Option<EscapeMode>,
+    /// Script to run
+    script: Option<String>,
+    /// Interpreter program to use
+    script_runner: Option<String>,
+    /// Extra arguments to pass to the script runner
+    script_runner_args: Option<Vec<String>>,
+    /// Script extension
+    #[serde(alias = "script_extension")]
+    script_ext: Option<String>,
+    /// A program to run
+    program: Option<String>,
+    /// Args to pass to a command
+    args: Option<Vec<String>>,
+    /// Run commands
+    cmds: Option<Vec<String>>,
+    /// Extends args from bases
+    #[serde(alias = "args+")]
+    args_extend: Option<Vec<String>>,
+    /// If given, runs all those tasks at once
+    serial: Option<Vec<String>>,
+    /// Env variables for the task
+    #[serde(default)]
+    pub(crate) env: HashMap<String, String>,
+    /// Env file to read environment variables from
+    env_file: Option<String>,
+    /// Working dir
+    wd: Option<String>,
+    /// Task to run instead if the OS is linux
+    pub(crate) linux: Option<Box<Task>>,
+    /// Task to run instead if the OS is windows
+    pub(crate) windows: Option<Box<Task>>,
+    /// Task to run instead if the OS is macos
+    pub(crate) macos: Option<Box<Task>>,
+    /// Base task to inherit from
+    #[serde(default)]
+    pub(crate) bases: Vec<String>,
+    /// If private, it cannot be called
+    #[serde(default = "default_false")]
+    private: bool,
+}
+
 impl Task {
     /// Does extra setup on the task and does some validation.
     ///
@@ -216,6 +219,7 @@ impl Task {
         inherit_value!(self.script_ext, base_task.script_ext);
         inherit_value!(self.program, base_task.program);
         inherit_value!(self.args, base_task.args);
+        inherit_value!(self.cmds, base_task.cmds);
         inherit_value!(self.serial, base_task.serial);
         inherit_value!(self.env_file, base_task.env_file);
 
@@ -349,6 +353,10 @@ impl Task {
         Ok(())
     }
 
+    fn get_tera_instance(&self) -> Tera {
+        Tera::default()
+    }
+
     /// Sets common parameters for commands, like stdout, stderr, stdin, working directory and
     /// environment variables.
     ///
@@ -360,7 +368,9 @@ impl Task {
         &self,
         command: &mut Command,
         config_file: &ConfigFile,
+        env: &HashMap<String, String>,
     ) -> DynErrResult<()> {
+        command.envs(env);
         command.stdout(Stdio::inherit());
         command.stderr(Stdio::inherit());
         command.stdin(Stdio::inherit());
@@ -420,29 +430,91 @@ impl Task {
     /// * `name` - Name of the task, displayed in errors.
     /// * `args` - Arguments to format the task args with
     /// * `config_file` - Configuration file of the task
-    fn run_program(&self, args: &TaskArgs, config_file: &ConfigFile) -> DynErrResult<()> {
+    fn run_program(
+        &self,
+        args: &TaskArgs,
+        config_file: &ConfigFile,
+        env: &HashMap<String, String>,
+    ) -> DynErrResult<()> {
         let program = self.program.as_ref().unwrap();
         let mut command = Command::new(program);
-        self.set_command_basics(&mut command, config_file)?;
+        self.set_command_basics(&mut command, config_file, env)?;
 
-        let env = self.get_env(config_file);
-        command.envs(&env);
+        let mut tera = self.get_tera_instance();
+        let context = self.get_tera_context(args, config_file, env);
 
         if let Some(task_args) = &self.args {
-            match parse_params(task_args, args, &env) {
-                Ok(task_args) => {
-                    // Programs need to exclude empty arguments, otherwise they might be passed as real parameters
-                    command.args(task_args.iter().filter(|val| !val.is_empty()));
-                }
-                Err(e) => {
-                    return Err(
-                        TaskError::ImproperlyConfigured(self.name.clone(), e.to_string()).into(),
-                    );
+            let mut rendered_args = Vec::<String>::with_capacity(task_args.len());
+
+            let task_name = &self.name;
+
+            for (i, arg) in task_args.iter().enumerate() {
+                let template_name = format!("tasks.{task_name}.args.{i}");
+                tera.add_raw_template(&template_name, arg)?;
+                let arg = tera.render(&template_name, &context)?;
+                let arg = arg.trim();
+                if !arg.is_empty() {
+                    rendered_args.push(arg.to_string());
                 }
             }
+            command.args(rendered_args);
         }
 
         self.spawn_command(&mut command)
+    }
+
+    /// Returns the context for the Tera template engine.
+    fn get_tera_context(
+        &self,
+        args: &TaskArgs,
+        config_file: &ConfigFile,
+        env: &HashMap<String, String>,
+    ) -> Context {
+        let mut context = Context::new();
+
+        context.insert("env", &env);
+        context.insert("TASK", self);
+        context.insert("FILE", config_file);
+
+        // insert * into args if * exists, else insert empty vector
+        match args.get("*") {
+            Some(args) => {
+                let args: Vec<&str> = args.iter().map(|arg| arg.as_str()).collect();
+                context.insert("args", &args);
+            }
+            None => {
+                let args: Vec<&str> = Vec::new();
+                context.insert("args", &args);
+            }
+        };
+        context.insert("kwargs", args);
+
+        context
+    }
+
+    /// Runs the commands specified with the cmds option.
+    fn run_cmds(
+        &self,
+        args: &TaskArgs,
+        config_file: &ConfigFile,
+        env: &HashMap<String, String>,
+    ) -> DynErrResult<()> {
+        let mut tera = Tera::default();
+        let context = self.get_tera_context(args, config_file, env);
+
+        for (i, cmd) in self.cmds.as_ref().unwrap().iter().enumerate() {
+            tera.add_raw_template(&format!("cmds.{i}"), cmd)?;
+            let cmd = tera.render(&format!("cmds.{i}", i = i), &context)?;
+            let task_args = split_command(&cmd);
+            let program = &task_args[0];
+            let task_args = &task_args[1..];
+            let mut command: Command = Command::new(program);
+            self.set_command_basics(&mut command, config_file, env)?;
+
+            command.args(task_args.iter());
+            self.spawn_command(&mut command)?;
+        }
+        Ok(())
     }
 
     /// Runs a script from a task.
@@ -452,8 +524,20 @@ impl Task {
     /// * `name` - Name of the task, displayed in errors.
     /// * `args` - Arguments to format the task args with
     /// * `config_file` - Configuration file of the task
-    fn run_script(&self, args: &TaskArgs, config_file: &ConfigFile) -> DynErrResult<()> {
+    fn run_script(
+        &self,
+        args: &TaskArgs,
+        config_file: &ConfigFile,
+        env: &HashMap<String, String>,
+    ) -> DynErrResult<()> {
         let script = self.script.as_ref().unwrap();
+
+        let mut tera = Tera::default();
+        let context = self.get_tera_context(args, config_file, env);
+        let task_name = &self.name;
+        let template_name = format!("tasks.{task_name}");
+        tera.add_raw_template(&template_name, script)?;
+        let script = tera.render(&template_name, &context)?;
 
         // Interpreter is a list, because sometimes there is need to pass extra arguments to the
         // interpreter, such as the /C option in the batch case
@@ -475,33 +559,15 @@ impl Task {
             command.args(script_runner_args);
         }
 
-        let env = self.get_env(config_file);
-        command.envs(&env);
+        self.set_command_basics(&mut command, config_file, env)?;
 
-        self.set_command_basics(&mut command, config_file)?;
-
-        let quote = if self.quote.is_some() {
-            self.quote.as_ref().unwrap()
-        } else {
-            &config_file.quote
-        };
-
-        match parse_script(script, args, &env, quote) {
-            Ok(script) => {
-                let script_file = get_temp_script(
-                    &script,
-                    script_extension,
-                    &self.name,
-                    config_file.filepath.as_path(),
-                )?;
-                command.arg(script_file.to_str().unwrap());
-            }
-            Err(e) => {
-                return Err(
-                    TaskError::ImproperlyConfigured(self.name.clone(), e.to_string()).into(),
-                );
-            }
-        }
+        let script_file = get_temp_script(
+            &script,
+            script_extension,
+            &self.name,
+            config_file.filepath.as_path(),
+        )?;
+        command.arg(script_file.to_str().unwrap());
 
         self.spawn_command(&mut command)
     }
@@ -511,7 +577,12 @@ impl Task {
     /// # Arguments
     /// * `args` - Arguments to format the task args with
     /// * `config_file` - Configuration file of the task
-    fn run_serial(&self, args: &TaskArgs, config_file: &ConfigFile) -> DynErrResult<()> {
+    fn run_serial(
+        &self,
+        args: &TaskArgs,
+        config_file: &ConfigFile,
+        env: &HashMap<String, String>,
+    ) -> DynErrResult<()> {
         let serial = self.serial.as_ref().unwrap();
         let mut tasks: Vec<Arc<Task>> = Vec::new();
         for task_name in serial {
@@ -526,9 +597,40 @@ impl Task {
             }
         }
         for task in tasks {
-            task.run(args, config_file)?;
+            task.run_helper(args, config_file, env)?;
         }
         Ok(())
+    }
+
+    /// Helper function for running a task. Accepts the environment variables as a HashMap.
+    /// So that we can reuse the environment variables for multiple tasks.
+    fn run_helper(
+        &self,
+        args: &TaskArgs,
+        config_file: &ConfigFile,
+        env: &HashMap<String, String>,
+    ) -> DynErrResult<()> {
+        let task_debug_config =
+            ConcreteTaskDebugConfig::new(&self.debug_config, &config_file.debug_config);
+
+        if task_debug_config.print_task_name {
+            println!("{}", format!("Task: `{}`", self.name).yamis_info());
+        }
+
+        return if self.script.is_some() {
+            self.run_script(args, config_file, env)
+        } else if self.program.is_some() {
+            self.run_program(args, config_file, env)
+        } else if self.cmds.is_some() {
+            self.run_cmds(args, config_file, env)
+        } else if self.serial.is_some() {
+            self.run_serial(args, config_file, env)
+        } else {
+            Err(
+                TaskError::ImproperlyConfigured(self.name.clone(), String::from("Nothing to run."))
+                    .into(),
+            )
+        };
     }
 
     /// Runs a task.
@@ -540,25 +642,8 @@ impl Task {
     /// * `config_file` - Configuration file of the task
     /// * `config_files` - global ConfigurationFiles instance
     pub fn run(&self, args: &TaskArgs, config_file: &ConfigFile) -> DynErrResult<()> {
-        let task_debug_config =
-            ConcreteTaskDebugConfig::new(&self.debug_config, &config_file.debug_config);
-
-        if task_debug_config.print_task_name {
-            println!("{}", format!("Task: `{}`", self.name).yamis_info());
-        }
-
-        return if self.script.is_some() {
-            self.run_script(args, config_file)
-        } else if self.program.is_some() {
-            self.run_program(args, config_file)
-        } else if self.serial.is_some() {
-            self.run_serial(args, config_file)
-        } else {
-            Err(
-                TaskError::ImproperlyConfigured(self.name.clone(), String::from("Nothing to run."))
-                    .into(),
-            )
-        };
+        let env = self.get_env(config_file);
+        return self.run_helper(args, config_file, &env);
     }
 }
 

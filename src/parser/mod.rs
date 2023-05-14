@@ -4,7 +4,7 @@ use pest::error::{Error as PestError, ErrorVariant};
 use pest::iterators::Pair;
 use pest::Parser;
 use pest_derive::Parser;
-use serde_derive::Deserialize;
+use serde_derive::{Deserialize, Serialize};
 use std::cmp::{max, min};
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
@@ -14,7 +14,7 @@ use std::{error, fmt};
 mod functions;
 
 /// Modes to escape (add quotes) the arguments passed to the script
-#[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum EscapeMode {
     /// Always quote the arguments

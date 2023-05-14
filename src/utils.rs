@@ -131,6 +131,37 @@ pub fn read_env_file<S: AsRef<OsStr> + ?Sized>(path: &S) -> DynErrResult<BTreeMa
     }
 }
 
+/// Split a command into its arguments. This is a very simple implementation
+/// but it should be enough for most cases.
+pub(crate) fn split_command(val: &str) -> Vec<String> {
+    let mut result = Vec::new();
+    let mut current = String::new();
+    let mut in_quotes = false;
+    let mut escaped = false;
+    for c in val.chars() {
+        if escaped {
+            current.push(c);
+            escaped = false;
+            continue;
+        }
+        match c {
+            '\\' => escaped = true,
+            '"' => in_quotes = !in_quotes,
+            ' ' if !in_quotes => {
+                if !current.is_empty() {
+                    result.push(current.clone());
+                    current.clear();
+                }
+            }
+            _ => current.push(c),
+        }
+    }
+    if !current.is_empty() {
+        result.push(current);
+    }
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -198,5 +229,20 @@ mod tests {
         let path = "/test";
         let path = get_path_relative_to_base(base, path);
         assert_eq!(path, PathBuf::from("/test"));
+    }
+
+    #[test]
+    fn test_split_command() {
+        let command = "echo \"Hello World\"";
+        let args = split_command(command);
+        assert_eq!(args, vec!["echo", "Hello World"]);
+
+        let command = "echo \"Hello World\" \"Hello World\"";
+        let args = split_command(command);
+        assert_eq!(args, vec!["echo", "Hello World", "Hello World"]);
+
+        let command = "echo Hello\\ World \"Hello \\\"World\"";
+        let args = split_command(command);
+        assert_eq!(args, vec!["echo", "Hello World", "Hello \"World"]);
     }
 }

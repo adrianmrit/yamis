@@ -9,7 +9,7 @@ use crate::utils::{
 use directories::UserDirs;
 use indexmap::IndexMap;
 use petgraph::algo::toposort;
-use serde_derive::Deserialize;
+use serde_derive::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::fmt::{Display, Formatter};
@@ -185,10 +185,7 @@ impl Iterator for SingleConfigFilePath {
     }
 }
 
-/// Iterates over existing global config file paths, in order of priority.
-/// This iterator will only return the first existing global config file.
-/// If no global config file exists, it will return None.
-
+/// Iterator that returns the first existing global config file path.
 pub(crate) struct GlobalConfigFilePath {
     ended: bool,
 }
@@ -222,6 +219,8 @@ impl Iterator for GlobalConfigFilePath {
     }
 }
 
+// At the moment we don't really take advantage of this, but might be useful in the future.
+/// Caches config files to avoid reading them multiple times.
 pub(crate) struct ConfigFilesContainer {
     /// Cached config files
     cached: IndexMap<PathBuf, ConfigFileSharedPtr>,
@@ -276,7 +275,7 @@ impl Default for ConfigFilesContainer {
 }
 
 /// Represents a config file.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ConfigFile {
     /// Version of the config file.

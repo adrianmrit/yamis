@@ -116,33 +116,6 @@ fn test_escape_on_space_windows() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-// TODO: Test escaping in Unix
-//   Not critical since we already test the script formatter
-
-#[test]
-fn test_escape_never() -> Result<(), Box<dyn std::error::Error>> {
-    let tmp_dir = TempDir::new().unwrap();
-    let mut file = File::create(tmp_dir.join("yamis.root.yml"))?;
-    file.write_all(
-        r#"
-    tasks:
-        say_hello:
-            quote: "never"
-            script: "echo {$1} {$2} {hello}{$4?} {$@}"
-    "#
-        .as_bytes(),
-    )?;
-
-    let mut cmd = Command::cargo_bin("yamis")?;
-    cmd.current_dir(tmp_dir.path());
-    cmd.arg("say_hello");
-    cmd.args(["hello", "world", "--hello=hello world"]);
-    cmd.assert().success().stdout(predicate::str::contains(
-        "hello world hello world hello world --hello=hello world",
-    ));
-    Ok(())
-}
-
 #[test]
 fn test_run_os_task() -> Result<(), Box<dyn std::error::Error>> {
     let tmp_dir = TempDir::new().unwrap();
@@ -337,6 +310,56 @@ fn test_run_program() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
+fn test_run_cmds() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp_dir = TempDir::new().unwrap();
+    let (program, param, batch_file_name, batch_file_content) = if cfg!(target_os = "windows") {
+        ("cmd", "/C", "echo_args.cmd", "echo %1 %2".as_bytes())
+    } else {
+        ("bash", "", "echo_args.sh", "echo $1 $2".as_bytes())
+    };
+    let mut batch_file = File::create(tmp_dir.join(batch_file_name))?;
+    batch_file.write_all(batch_file_content).unwrap();
+
+    let mut file = File::create(tmp_dir.join("yamis.root.yml"))?;
+    file.write_all(
+        format!(
+            r#"
+    env:
+        greeting: "hello world"
+
+    tasks:
+        testing:
+            cmds:
+                - {p} {pms} {bf} hello world
+                - {p} {pms} {bf} "hello world" hello
+                - {p} {pms} {bf} "hello\" world" hello
+                - {p} {pms} {bf} "{{{{args.0}}}} {{{{ kwargs.name.0 }}}}" "{{{{ env.greeting }}}}"
+                - {p} {pms} {bf} {{{{ TASK.name }}}} "{{{{ FILE.env.greeting }}}}"
+            "#,
+            p = program,
+            pms = param,
+            bf = batch_file_name
+        )
+        .as_bytes(),
+    )?;
+
+    let mut cmd = Command::cargo_bin("yamis")?;
+    cmd.current_dir(tmp_dir.path());
+    cmd.arg("testing");
+    cmd.arg("hi");
+    cmd.arg("--name=world");
+    cmd.assert().success().stdout(predicate::str::contains(
+        r#"hello world
+hello world hello
+hello" world hello
+hi world hello world
+testing hello world
+"#,
+    ));
+    Ok(())
+}
+
+#[test]
 fn test_run_serial() -> Result<(), Box<dyn std::error::Error>> {
     let tmp_dir = TempDir::new().unwrap();
     let (program, param, batch_file_name, batch_file_content) = if cfg!(target_os = "windows") {
@@ -354,11 +377,11 @@ fn test_run_serial() -> Result<(), Box<dyn std::error::Error>> {
     tasks:
         hello:
             program: "{}"
-            args: ["{}", "{}", "{{$1}}"]
+            args: ["{}", "{}", "{{{{args.0}}}}"]
 
         bye:
             quote: "never"
-            script: "echo Bye {{$2}}"
+            script: "echo Bye {{{{args.1}}}}"
 
         greet:
             serial: ["hello", "bye"]

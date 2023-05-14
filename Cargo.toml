@@ -37,6 +37,7 @@ shellexpand = "3.0.0"
 self_update = { version = "0.36.0", features = ["archive-tar", "archive-zip", "compression-flate2", "rustls"], default-features = false }
 directories = { version = "5.0.1" }
 md-5 = "0.10"  # Used for caching
+tera = "1.18" # Used for templating
 
 # Example for adding another version as dependency. Need to remove the runtime feature, and make it optional
 # yamis_v2 = { package="yamis",  version = "2.0", default-features = false, optional = true }
