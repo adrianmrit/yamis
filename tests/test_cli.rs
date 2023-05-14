@@ -238,7 +238,7 @@ fn test_run_program() -> Result<(), Box<dyn std::error::Error>> {
     tasks:
         hello:
             program: {}
-            args: ["{}", "{}", "hello", "world"]
+            args: {} {} hello world
             "#,
             program, param, batch_file_name
         )
@@ -294,14 +294,24 @@ fn test_run_cmds() -> Result<(), Box<dyn std::error::Error>> {
     cmd.arg("testing");
     cmd.arg("hi");
     cmd.arg("--name=world");
-    cmd.assert().success().stdout(predicate::str::contains(
-        r#"hello world
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains(format!(
+            r#"[YAMIS] testing.cmds.0: {p} {pms} {bf} hello world
+hello world
+[YAMIS] testing.cmds.1: {p} {pms} {bf} "hello world" hello
 hello world hello
+[YAMIS] testing.cmds.2: {p} {pms} {bf} "hello\" world" hello
 hello" world hello
+[YAMIS] testing.cmds.3: {p} {pms} {bf} "hi world" "hello world"
 hi world hello world
+[YAMIS] testing.cmds.4: {p} {pms} {bf} testing "hello world"
 testing hello world
 "#,
-    ));
+            p = program,
+            pms = param,
+            bf = batch_file_name
+        )));
     Ok(())
 }
 
@@ -323,7 +333,7 @@ fn test_run_serial() -> Result<(), Box<dyn std::error::Error>> {
     tasks:
         hello:
             program: "{}"
-            args: ["{}", "{}", "{{{{args.0}}}}"]
+            args: {} {} {{{{args.0}}}}
 
         bye:
             script: "echo Bye {{{{args.1}}}}"
@@ -401,20 +411,20 @@ fn test_extend_args() -> Result<(), Box<dyn std::error::Error>> {
 tasks:
   echo_program:
     program: "bash"
-    args: ["{b}"]
+    args: "{b}"
     private: true
 
     windows:
       program: "cmd.exe"
-      args: ["/C", "{b}"]
+      args: "/C {b}"
 
   hello:
     bases: ["echo_program"]
-    args_extend: ["hello", "world"]
+    args_extend: "hello world"
 
     windows:
       bases: ["echo_program"]
-      args+: ["hello", "world"]
+      args+: "hello world"
 "#,
             b = batch_file_name
         )

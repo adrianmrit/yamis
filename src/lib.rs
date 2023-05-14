@@ -4,7 +4,6 @@ extern crate core;
 pub mod cli;
 
 pub mod config_files;
-pub(crate) mod debug_config;
 mod defaults;
 pub mod print_utils;
 pub mod tasks;

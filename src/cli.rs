@@ -19,9 +19,7 @@ use crate::print_utils::YamisOutput;
 use crate::types::{DynErrResult, TaskArgs};
 use crate::updater;
 
-const HELP: &str = "The appropriate YAML or TOML config files need to exist \
-in the directory or parents, or a file is specified with the `-f` or `--file` \
-options. For help about the config files check https://github.com/adrianmrit/yamis";
+const HELP: &str = "For documentation check https://github.com/adrianmrit/yamis.";
 
 /// Holds the data for running the given task.
 struct TaskSubcommand {
@@ -243,9 +241,7 @@ impl ConfigFileContainers {
                     let task = config_file_lock.get_public_task(task);
                     match task {
                         Some(task) => {
-                            if config_file_lock.debug_config.print_file_path {
-                                println!("{}", &path.to_string_lossy().yamis_info());
-                            }
+                            println!("{}", &path.to_string_lossy().yamis_info());
                             return match task.run(&args, &config_file_lock) {
                                 Ok(val) => Ok(val),
                                 Err(e) => {

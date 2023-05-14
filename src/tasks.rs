@@ -8,7 +8,6 @@ use std::sync::Arc;
 use std::{error, fmt, fs, mem};
 
 use crate::config_files::ConfigFile;
-use crate::debug_config::{ConcreteTaskDebugConfig, TaskDebugConfig};
 use crate::defaults::default_false;
 use crate::print_utils::YamisOutput;
 use serde_derive::{Deserialize, Serialize};
@@ -136,7 +135,6 @@ pub struct Task {
     /// Name of the task
     #[serde(skip_deserializing)]
     name: String,
-    debug_config: Option<TaskDebugConfig>,
     /// Help of the task
     help: Option<String>,
     /// Script to run
@@ -151,12 +149,12 @@ pub struct Task {
     /// A program to run
     program: Option<String>,
     /// Args to pass to a command
-    args: Option<Vec<String>>,
+    args: Option<String>,
     /// Run commands
     cmds: Option<Vec<String>>,
     /// Extends args from bases
     #[serde(alias = "args+")]
-    args_extend: Option<Vec<String>>,
+    args_extend: Option<String>,
     /// If given, runs all those tasks at once
     serial: Option<Vec<String>>,
     /// Env variables for the task
@@ -205,7 +203,6 @@ impl Task {
     /// returns: ()
     ///
     pub(crate) fn extend_task(&mut self, base_task: &Task) {
-        inherit_value!(self.debug_config, base_task.debug_config);
         inherit_value!(self.help, base_task.help);
         inherit_value!(self.script, base_task.script);
         inherit_value!(self.script_runner, base_task.script_runner);
@@ -231,10 +228,11 @@ impl Task {
         if self.args_extend.is_some() {
             let new_args = mem::replace(&mut self.args_extend, None).unwrap();
             if self.args.is_none() {
-                self.args = mem::replace(&mut self.args, Some(Vec::<String>::new()));
+                self.args = mem::replace(&mut self.args, Some(String::new()));
             }
             if let Some(args) = &mut self.args {
-                args.extend(new_args);
+                args.push(' ');
+                args.push_str(&new_args);
             } else {
                 self.args = Some(new_args);
             }
@@ -341,8 +339,38 @@ impl Task {
         Ok(())
     }
 
+    // Returns the Tera instance for the Tera template engine.
     fn get_tera_instance(&self) -> Tera {
         Tera::default()
+    }
+
+    /// Returns the context for the Tera template engine.
+    fn get_tera_context(
+        &self,
+        args: &TaskArgs,
+        config_file: &ConfigFile,
+        env: &HashMap<String, String>,
+    ) -> Context {
+        let mut context = Context::new();
+
+        context.insert("env", &env);
+        context.insert("TASK", self);
+        context.insert("FILE", config_file);
+
+        // insert * into args if * exists, else insert empty vector
+        match args.get("*") {
+            Some(args) => {
+                let args: Vec<&str> = args.iter().map(|arg| arg.as_str()).collect();
+                context.insert("args", &args);
+            }
+            None => {
+                let args: Vec<&str> = Vec::new();
+                context.insert("args", &args);
+            }
+        };
+        context.insert("kwargs", args);
+
+        context
     }
 
     /// Sets common parameters for commands, like stdout, stderr, stdin, working directory and
@@ -432,52 +460,23 @@ impl Task {
         let context = self.get_tera_context(args, config_file, env);
 
         if let Some(task_args) = &self.args {
-            let mut rendered_args = Vec::<String>::with_capacity(task_args.len());
-
             let task_name = &self.name;
+            let template_name = format!("tasks.{task_name}.args");
 
-            for (i, arg) in task_args.iter().enumerate() {
-                let template_name = format!("tasks.{task_name}.args.{i}");
-                tera.add_raw_template(&template_name, arg)?;
-                let arg = tera.render(&template_name, &context)?;
-                let arg = arg.trim();
-                if !arg.is_empty() {
-                    rendered_args.push(arg.to_string());
-                }
-            }
-            command.args(rendered_args);
+            tera.add_raw_template(&template_name, task_args)?;
+
+            let rendered_args = tera.render(&template_name, &context)?;
+            let rendered_args_list = split_command(&rendered_args);
+            println!(
+                "{}",
+                format!("{}: {} {}", self.name, program, rendered_args).yamis_info()
+            );
+            command.args(rendered_args_list);
+        } else {
+            println!("{}", format!("{}: {}", self.name, program).yamis_info());
         }
 
         self.spawn_command(&mut command)
-    }
-
-    /// Returns the context for the Tera template engine.
-    fn get_tera_context(
-        &self,
-        args: &TaskArgs,
-        config_file: &ConfigFile,
-        env: &HashMap<String, String>,
-    ) -> Context {
-        let mut context = Context::new();
-
-        context.insert("env", &env);
-        context.insert("TASK", self);
-        context.insert("FILE", config_file);
-
-        // insert * into args if * exists, else insert empty vector
-        match args.get("*") {
-            Some(args) => {
-                let args: Vec<&str> = args.iter().map(|arg| arg.as_str()).collect();
-                context.insert("args", &args);
-            }
-            None => {
-                let args: Vec<&str> = Vec::new();
-                context.insert("args", &args);
-            }
-        };
-        context.insert("kwargs", args);
-
-        context
     }
 
     /// Runs the commands specified with the cmds option.
@@ -490,14 +489,18 @@ impl Task {
         let mut tera = Tera::default();
         let context = self.get_tera_context(args, config_file, env);
 
+        let task_name = &self.name;
         for (i, cmd) in self.cmds.as_ref().unwrap().iter().enumerate() {
-            tera.add_raw_template(&format!("cmds.{i}"), cmd)?;
-            let cmd = tera.render(&format!("cmds.{i}", i = i), &context)?;
+            let template_name = &format!("tasks.{task_name}.cmds.{i}");
+            tera.add_raw_template(template_name, cmd)?;
+            let cmd = tera.render(template_name, &context)?;
             let task_args = split_command(&cmd);
             let program = &task_args[0];
             let task_args = &task_args[1..];
             let mut command: Command = Command::new(program);
             self.set_command_basics(&mut command, config_file, env)?;
+
+            println!("{}", format!("{task_name}.cmds.{i}: {cmd}").yamis_info());
 
             command.args(task_args.iter());
             self.spawn_command(&mut command)?;
@@ -555,6 +558,9 @@ impl Task {
             &self.name,
             config_file.filepath.as_path(),
         )?;
+
+        // TODO: Print the script contents in debug mode
+
         command.arg(script_file.to_str().unwrap());
 
         self.spawn_command(&mut command)
@@ -598,13 +604,6 @@ impl Task {
         config_file: &ConfigFile,
         env: &HashMap<String, String>,
     ) -> DynErrResult<()> {
-        let task_debug_config =
-            ConcreteTaskDebugConfig::new(&self.debug_config, &config_file.debug_config);
-
-        if task_debug_config.print_task_name {
-            println!("{}", format!("Task: `{}`", self.name).yamis_info());
-        }
-
         return if self.script.is_some() {
             self.run_script(args, config_file, env)
         } else if self.program.is_some() {
@@ -709,15 +708,15 @@ tasks:
 
         bash_inline:
             bases: ["bash"]
-            args_extend: ["-c"]
+            args_extend: "-c"
 
         hello:
             bases: ["bash_inline"]
-            args_extend: ["echo", "hello"]
+            args_extend: echo hello
 
         hello_2:
             bases: ["hello"]
-            args: ["-c", "echo", "hello"]
+            args: -c "echo hello"
     "#
             .as_bytes(),
         )
@@ -727,17 +726,11 @@ tasks:
 
         let task = config_file.get_task("hello").unwrap();
         let task_ref = task.as_ref();
-        assert_eq!(
-            task_ref.args.as_ref().unwrap(),
-            &vec!["-c".to_string(), "echo".to_string(), "hello".to_string()]
-        );
+        assert_eq!(task_ref.args.as_ref().unwrap(), "-c echo hello");
 
         let task = config_file.get_task("hello_2").unwrap();
         let task_ref = task.as_ref();
-        assert_eq!(
-            task_ref.args.as_ref().unwrap(),
-            &vec!["-c".to_string(), "echo".to_string(), "hello".to_string()]
-        );
+        assert_eq!(task_ref.args.as_ref().unwrap(), &"-c \"echo hello\"");
     }
 
     #[test]
@@ -940,7 +933,7 @@ tasks:
             "sample",
             r#"
         script = "sample script"
-        args = ["some", "args"]
+        args = "some args"
     "#,
             None,
         );

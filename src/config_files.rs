@@ -1,4 +1,3 @@
-use crate::debug_config::ConfigFileDebugConfig;
 use crate::tasks::Task;
 use crate::types::DynErrResult;
 use crate::utils::{
@@ -281,12 +280,8 @@ pub struct ConfigFile {
     #[serde(default, skip_serializing)]
     version: serde::de::IgnoredAny,
     /// Path of the file.
-    #[serde(skip)]
+    #[serde(skip_deserializing)]
     pub(crate) filepath: PathBuf,
-
-    /// Debug options
-    #[serde(default)]
-    pub(crate) debug_config: ConfigFileDebugConfig,
 
     #[serde(default)]
     /// Working directory. Defaults to the folder where the script runs.
