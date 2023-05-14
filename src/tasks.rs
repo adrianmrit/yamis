@@ -9,7 +9,8 @@ use std::{error, fmt, fs, mem};
 
 use crate::config_files::ConfigFile;
 use crate::defaults::default_false;
-use crate::print_utils::YamisOutput;
+use crate::print_utils::{YamisOutput, INFO_COLOR};
+use colored::Colorize;
 use serde_derive::{Deserialize, Serialize};
 use tera::{Context, Tera};
 
@@ -20,13 +21,13 @@ use md5::{Digest, Md5};
 cfg_if::cfg_if! {
     if #[cfg(target_os = "windows")] {
         // Will run the actual script in CMD, but we don't need to specify /C option
-        const DEFAULT_INTERPRETER: &str = "powershell";
+        const DEFAULT_SCRIPT_RUNNER: &str = "powershell {{ script_path }}";
         const DEFAULT_SCRIPT_EXTENSION: &str = "cmd";
     } else if #[cfg(target_os = "linux")] {
-        const DEFAULT_INTERPRETER: &str = "bash";
+        const DEFAULT_SCRIPT_RUNNER: &str = "bash {{ script_path }}";
         const DEFAULT_SCRIPT_EXTENSION: &str = "sh";
     } else if #[cfg(target_os = "macos")] {
-        const DEFAULT_INTERPRETER: &str = "bash";
+        const DEFAULT_SCRIPT_RUNNER: &str = "bash {{ script_path }}";
         const DEFAULT_SCRIPT_EXTENSION: &str = "sh";
     }else {
         compile_error!("Unsupported platform.");
@@ -141,8 +142,6 @@ pub struct Task {
     script: Option<String>,
     /// Interpreter program to use
     script_runner: Option<String>,
-    /// Extra arguments to pass to the script runner
-    script_runner_args: Option<Vec<String>>,
     /// Script extension
     #[serde(alias = "script_extension")]
     script_ext: Option<String>,
@@ -206,7 +205,6 @@ impl Task {
         inherit_value!(self.help, base_task.help);
         inherit_value!(self.script, base_task.script);
         inherit_value!(self.script_runner, base_task.script_runner);
-        inherit_value!(self.script_runner_args, base_task.script_runner_args);
         inherit_value!(self.script_ext, base_task.script_ext);
         inherit_value!(self.program, base_task.program);
         inherit_value!(self.args, base_task.args);
@@ -410,7 +408,11 @@ impl Task {
     /// # Arguments
     ///
     /// * `command` - Command to spawn
-    fn spawn_command(&self, command: &mut Command) -> DynErrResult<()> {
+    fn spawn_command(&self, command: &mut Command, dry_run: bool) -> DynErrResult<()> {
+        if dry_run {
+            println!("{}", "Dry run mode, nothing executed.".yamis_info());
+            return Ok(());
+        }
         let mut child = match command.spawn() {
             Ok(child) => child,
             Err(e) => {
@@ -439,18 +441,13 @@ impl Task {
         }
     }
 
-    /// Runs a program from a task.
-    ///
-    /// # Arguments
-    ///
-    /// * `name` - Name of the task, displayed in errors.
-    /// * `args` - Arguments to format the task args with
-    /// * `config_file` - Configuration file of the task
+    /// Runs a program
     fn run_program(
         &self,
         args: &TaskArgs,
         config_file: &ConfigFile,
         env: &HashMap<String, String>,
+        dry_mode: bool,
     ) -> DynErrResult<()> {
         let program = self.program.as_ref().unwrap();
         let mut command = Command::new(program);
@@ -476,7 +473,7 @@ impl Task {
             println!("{}", format!("{}: {}", self.name, program).yamis_info());
         }
 
-        self.spawn_command(&mut command)
+        self.spawn_command(&mut command, dry_mode)
     }
 
     /// Runs the commands specified with the cmds option.
@@ -485,6 +482,7 @@ impl Task {
         args: &TaskArgs,
         config_file: &ConfigFile,
         env: &HashMap<String, String>,
+        dry_run: bool,
     ) -> DynErrResult<()> {
         let mut tera = Tera::default();
         let context = self.get_tera_context(args, config_file, env);
@@ -503,79 +501,79 @@ impl Task {
             println!("{}", format!("{task_name}.cmds.{i}: {cmd}").yamis_info());
 
             command.args(task_args.iter());
-            self.spawn_command(&mut command)?;
+            self.spawn_command(&mut command, dry_run)?;
         }
         Ok(())
     }
 
-    /// Runs a script from a task.
-    ///
-    /// # Arguments
-    ///
-    /// * `name` - Name of the task, displayed in errors.
-    /// * `args` - Arguments to format the task args with
-    /// * `config_file` - Configuration file of the task
+    /// Runs a script
     fn run_script(
         &self,
         args: &TaskArgs,
         config_file: &ConfigFile,
         env: &HashMap<String, String>,
+        dry_run: bool,
     ) -> DynErrResult<()> {
         let script = self.script.as_ref().unwrap();
 
         let mut tera = Tera::default();
-        let context = self.get_tera_context(args, config_file, env);
+        let mut context = self.get_tera_context(args, config_file, env);
         let task_name = &self.name;
         let template_name = format!("tasks.{task_name}");
         tera.add_raw_template(&template_name, script)?;
         let script = tera.render(&template_name, &context)?;
-
-        // Interpreter is a list, because sometimes there is need to pass extra arguments to the
-        // interpreter, such as the /C option in the batch case
-        let script_runner = if let Some(script_runner) = &self.script_runner {
-            script_runner
-        } else {
-            DEFAULT_INTERPRETER
-        };
-
         let default_script_extension = String::from(DEFAULT_SCRIPT_EXTENSION);
         let script_extension = self
             .script_ext
             .as_ref()
             .unwrap_or(&default_script_extension);
 
-        let mut command = Command::new(script_runner);
-
-        if let Some(script_runner_args) = &self.script_runner_args {
-            command.args(script_runner_args);
-        }
-
-        self.set_command_basics(&mut command, config_file, env)?;
-
-        let script_file = get_temp_script(
+        let script_path = get_temp_script(
             &script,
             script_extension,
             &self.name,
             config_file.filepath.as_path(),
         )?;
 
-        // TODO: Print the script contents in debug mode
+        // Interpreter is a list, because sometimes there is need to pass extra arguments to the
+        // interpreter, such as the /C option in the batch case
+        let script_runner = if let Some(script_runner) = &self.script_runner {
+            script_runner
+        } else {
+            DEFAULT_SCRIPT_RUNNER
+        };
 
-        command.arg(script_file.to_str().unwrap());
+        let script_runner_template_name = format!("tasks.{task_name}.script_runner");
+        context.insert("script_path", &script_path);
+        tera.add_raw_template(&script_runner_template_name, script_runner)?;
 
-        self.spawn_command(&mut command)
+        let script_runner = tera.render(&script_runner_template_name, &context)?;
+        let script_runner_values = split_command(&script_runner);
+
+        let mut command = Command::new(&script_runner_values[0]);
+
+        // The script runner might not contain the actual script path, but we just leave it as a feature ;)
+        if script_runner_values.len() > 1 {
+            command.args(script_runner_values[1..].iter());
+        }
+
+        self.set_command_basics(&mut command, config_file, env)?;
+
+        println!("{}", format!("{task_name}: {script_runner}").yamis_info());
+        println!("{}", "Script Begin:".yamis_info());
+        println!("{}", script.color(INFO_COLOR));
+        println!("{}", "Script End.".yamis_info());
+
+        self.spawn_command(&mut command, dry_run)
     }
 
     /// Runs a series of tasks from a task, in order.
-    ///
-    /// # Arguments
-    /// * `args` - Arguments to format the task args with
-    /// * `config_file` - Configuration file of the task
     fn run_serial(
         &self,
         args: &TaskArgs,
         config_file: &ConfigFile,
         env: &HashMap<String, String>,
+        dry_run: bool,
     ) -> DynErrResult<()> {
         let serial = self.serial.as_ref().unwrap();
         let mut tasks: Vec<Arc<Task>> = Vec::new();
@@ -591,7 +589,7 @@ impl Task {
             }
         }
         for task in tasks {
-            task.run_helper(args, config_file, env)?;
+            task.run_helper(args, config_file, env, dry_run)?;
         }
         Ok(())
     }
@@ -603,15 +601,16 @@ impl Task {
         args: &TaskArgs,
         config_file: &ConfigFile,
         env: &HashMap<String, String>,
+        dry_run: bool,
     ) -> DynErrResult<()> {
         return if self.script.is_some() {
-            self.run_script(args, config_file, env)
+            self.run_script(args, config_file, env, dry_run)
         } else if self.program.is_some() {
-            self.run_program(args, config_file, env)
+            self.run_program(args, config_file, env, dry_run)
         } else if self.cmds.is_some() {
-            self.run_cmds(args, config_file, env)
+            self.run_cmds(args, config_file, env, dry_run)
         } else if self.serial.is_some() {
-            self.run_serial(args, config_file, env)
+            self.run_serial(args, config_file, env, dry_run)
         } else {
             Err(
                 TaskError::ImproperlyConfigured(self.name.clone(), String::from("Nothing to run."))
@@ -621,16 +620,14 @@ impl Task {
     }
 
     /// Runs a task.
-    ///
-    /// # Arguments
-    ///
-    /// * `name` - Name of the task, displayed in errors.
-    /// * `args` - Arguments to format the task args with
-    /// * `config_file` - Configuration file of the task
-    /// * `config_files` - global ConfigurationFiles instance
-    pub fn run(&self, args: &TaskArgs, config_file: &ConfigFile) -> DynErrResult<()> {
+    pub fn run(
+        &self,
+        args: &TaskArgs,
+        config_file: &ConfigFile,
+        dry_run: bool,
+    ) -> DynErrResult<()> {
         let env = self.get_env(config_file);
-        return self.run_helper(args, config_file, &env);
+        return self.run_helper(args, config_file, &env, dry_run);
     }
 }
 

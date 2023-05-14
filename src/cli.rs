@@ -216,7 +216,13 @@ impl ConfigFileContainers {
     }
 
     /// Runs the given task
-    fn run_task(&mut self, paths: PathIterator, task: &str, args: TaskArgs) -> DynErrResult<()> {
+    fn run_task(
+        &mut self,
+        paths: PathIterator,
+        task: &str,
+        args: TaskArgs,
+        dry_run: bool,
+    ) -> DynErrResult<()> {
         for path in paths {
             let version = match ConfigFileContainers::get_file_version(&path) {
                 Ok(version) => version,
@@ -242,7 +248,7 @@ impl ConfigFileContainers {
                     match task {
                         Some(task) => {
                             println!("{}", &path.to_string_lossy().yamis_info());
-                            return match task.run(&args, &config_file_lock) {
+                            return match task.run(&args, &config_file_lock, dry_run) {
                                 Ok(val) => Ok(val),
                                 Err(e) => {
                                     let e = format!("{}:\n{}", &path.to_string_lossy().red(), e);
@@ -404,6 +410,12 @@ pub fn exec() -> DynErrResult<()> {
                 .value_name("TASK"),
         )
         .arg(
+            clap::Arg::new("dry")
+                .long("dry")
+                .action(ArgAction::SetTrue)
+                .help("Runs the task in dry mode, i.e. without executing any commands"),
+        )
+        .arg(
             clap::Arg::new("file")
                 .short('f')
                 .long("file")
@@ -456,6 +468,8 @@ pub fn exec() -> DynErrResult<()> {
         Some(file_path) => SingleConfigFilePath::new(file_path),
     };
 
+    let dry_run = matches.get_one::<bool>("dry").cloned().unwrap_or(false);
+
     if matches
         .get_one::<bool>("list-tasks")
         .cloned()
@@ -479,7 +493,12 @@ pub fn exec() -> DynErrResult<()> {
 
     let task_command = TaskSubcommand::new(&matches)?;
 
-    file_containers.run_task(config_file_paths, &task_command.task, task_command.args)
+    file_containers.run_task(
+        config_file_paths,
+        &task_command.task,
+        task_command.args,
+        dry_run,
+    )
 }
 
 #[cfg(test)]

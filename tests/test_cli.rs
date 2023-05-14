@@ -440,3 +440,33 @@ tasks:
 
     Ok(())
 }
+
+#[test]
+fn test_specify_script_runner() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp_dir = TempDir::new().unwrap();
+
+    let mut file = File::create(tmp_dir.join("yamis.root.yml"))?;
+    file.write_all(
+        r#"
+tasks:
+    hello:
+        script_runner: "python -m {{ script_path }}"
+        script_ext: ".py"
+        script: "print('hello world')"
+    "#
+        .as_bytes(),
+    )?;
+
+    let mut cmd = Command::cargo_bin("yamis")?;
+    cmd.current_dir(tmp_dir.path());
+    cmd.arg("--dry");
+    cmd.arg("hello");
+    cmd.assert()
+        .success()
+        .stdout(
+            predicate::str::contains("[YAMIS] hello: python -m").and(predicate::str::contains(
+                "[YAMIS] Script Begin:\nprint('hello world')\n[YAMIS] Script End.\n[YAMIS] Dry run mode, nothing executed.",
+            )),
+        );
+    Ok(())
+}

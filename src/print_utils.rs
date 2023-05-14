@@ -1,9 +1,9 @@
 use colored::{Color, ColoredString, Colorize};
 
 const PREFIX: &str = "[YAMIS]";
-const INFO_COLOR: Color = Color::BrightBlue;
-const WARN_COLOR: Color = Color::BrightYellow;
-const ERROR_COLOR: Color = Color::BrightRed;
+pub(crate) const INFO_COLOR: Color = Color::BrightBlue;
+pub(crate) const WARN_COLOR: Color = Color::BrightYellow;
+pub(crate) const ERROR_COLOR: Color = Color::BrightRed;
 
 pub trait YamisOutput {
     /// Returns the given string with the `[YAMIS]` prefix in each line. The prefix will also take the given color.
