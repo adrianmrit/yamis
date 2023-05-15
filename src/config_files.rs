@@ -330,7 +330,7 @@ impl ConfigFile {
                 } else if let Some(base_task) = conf.tasks.get(&base) {
                     task.extend_task(base_task);
                 } else {
-                    panic!("found non existent task {}", base);
+                    panic!("Task `{}` does not exist", base);
                 }
             }
             // insert modified task back in
