@@ -1,0 +1,17 @@
+wd: ""
+
+tasks:
+  cov:
+    help: "Run coverage and merge it into target_cov/cov"
+    cmds:
+      - python generate_cov.py
+  
+  install-kcov.linux:
+    help: "Install kcov"
+    cmds:
+      - apt-get install binutils-dev libssl-dev libcurl4-openssl-dev zlib1g-dev libdw-dev libiberty-dev
+  
+  install-kcov.macos:
+    help: "Install kcov"
+    cmds:
+      - brew install kcov
