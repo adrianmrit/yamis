@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::{error, fmt, fs, mem};
 
+use crate::args::ArgsContext;
 use crate::config_files::ConfigFile;
 use crate::defaults::default_false;
 use crate::print_utils::{YamisOutput, INFO_COLOR};
@@ -13,7 +14,7 @@ use colored::Colorize;
 use serde::{de, Deserialize, Serialize};
 use tera::{Context, Tera};
 
-use crate::types::{DynErrResult, TaskArgs};
+use crate::types::DynErrResult;
 use crate::utils::{get_path_relative_to_base, read_env_file, split_command, TMP_FOLDER_NAMESPACE};
 use md5::{Digest, Md5};
 
@@ -409,28 +410,18 @@ impl Task {
     /// Returns the context for the Tera template engine.
     fn get_tera_context(
         &self,
-        args: &TaskArgs,
+        args: &ArgsContext,
         config_file: &ConfigFile,
         env: &HashMap<String, String>,
     ) -> Context {
         let mut context = Context::new();
 
+        context.insert("args", &args.args);
+        context.insert("kwargs", &args.kwargs);
+        context.insert("pkwargs", &args.pkwargs);
         context.insert("env", &env);
         context.insert("TASK", self);
         context.insert("FILE", config_file);
-
-        // insert * into args if * exists, else insert empty vector
-        match args.get("*") {
-            Some(args) => {
-                let args: Vec<&str> = args.iter().map(|arg| arg.as_str()).collect();
-                context.insert("args", &args);
-            }
-            None => {
-                let args: Vec<&str> = Vec::new();
-                context.insert("args", &args);
-            }
-        };
-        context.insert("kwargs", args);
 
         context
     }
@@ -508,7 +499,7 @@ impl Task {
     /// Runs a program
     fn run_program(
         &self,
-        args: &TaskArgs,
+        args: &ArgsContext,
         config_file: &ConfigFile,
         env: &HashMap<String, String>,
         dry_mode: bool,
@@ -544,7 +535,7 @@ impl Task {
         &self,
         cmd: &str,
         cmd_index: usize,
-        args: &TaskArgs,
+        args: &ArgsContext,
         config_file: &ConfigFile,
         env: &HashMap<String, String>,
         dry_run: bool,
@@ -573,7 +564,7 @@ impl Task {
         &self,
         task_name: &str,
         cmd_index: usize,
-        args: &TaskArgs,
+        args: &ArgsContext,
         config_file: &ConfigFile,
         dry_run: bool,
     ) -> DynErrResult<()> {
@@ -594,7 +585,7 @@ impl Task {
         &self,
         task: &Task,
         cmd_index: usize,
-        args: &TaskArgs,
+        args: &ArgsContext,
         config_file: &ConfigFile,
         dry_run: bool,
     ) -> DynErrResult<()> {
@@ -625,7 +616,7 @@ impl Task {
     /// Runs the commands specified with the cmds option.
     fn run_cmds(
         &self,
-        args: &TaskArgs,
+        args: &ArgsContext,
         config_file: &ConfigFile,
         env: &HashMap<String, String>,
         dry_run: bool,
@@ -649,7 +640,7 @@ impl Task {
     /// Runs a script
     fn run_script(
         &self,
-        args: &TaskArgs,
+        args: &ArgsContext,
         config_file: &ConfigFile,
         env: &HashMap<String, String>,
         dry_run: bool,
@@ -659,7 +650,7 @@ impl Task {
         let mut tera = Tera::default();
         let mut context = self.get_tera_context(args, config_file, env);
         let task_name = &self.name;
-        let template_name = format!("tasks.{task_name}");
+        let template_name = format!("tasks.{task_name}.script");
         tera.add_raw_template(&template_name, script)?;
         let script = tera.render(&template_name, &context)?;
         let default_script_extension = String::from(DEFAULT_SCRIPT_EXTENSION);
@@ -711,7 +702,7 @@ impl Task {
     /// So that we can reuse the environment variables for multiple tasks.
     pub fn run(
         &self,
-        args: &TaskArgs,
+        args: &ArgsContext,
         config_file: &ConfigFile,
         dry_run: bool,
     ) -> DynErrResult<()> {

@@ -40,6 +40,88 @@ fn test_run_simple_task() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
+fn test_args() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp_dir = TempDir::new().unwrap();
+    let mut file = File::create(tmp_dir.join("yamis.root.yml"))?;
+    file.write_all(
+        r#"
+    tasks:
+        hello:
+            script: echo {{ args.0 }} {{ args.1 }} {{ args }}
+    "#
+        .as_bytes(),
+    )?;
+
+    let mut cmd = Command::cargo_bin("yamis")?;
+    cmd.current_dir(tmp_dir.path());
+    cmd.arg("--dry");
+    cmd.arg("hello");
+    cmd.arg("arg1");
+    cmd.arg("arg2");
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("echo arg1 arg2 [arg1, arg2]"));
+
+    Ok(())
+}
+
+#[test]
+fn test_kwargs() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp_dir = TempDir::new().unwrap();
+    let mut file = File::create(tmp_dir.join("yamis.root.yml"))?;
+    file.write_all(
+        r#"
+    tasks:
+        hello:
+            script: echo {{ kwargs.k1 }} {{ kwargs.k2 }}
+    "#
+        .as_bytes(),
+    )?;
+
+    let mut cmd = Command::cargo_bin("yamis")?;
+    cmd.current_dir(tmp_dir.path());
+    cmd.arg("--dry");
+    cmd.arg("hello");
+    cmd.arg("--k1=arg1");
+    cmd.arg("--k1=arg2");
+    cmd.arg("--k2");
+    cmd.arg("arg3");
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("echo arg2 arg3"));
+
+    Ok(())
+}
+
+#[test]
+fn test_pkwargs() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp_dir = TempDir::new().unwrap();
+    let mut file = File::create(tmp_dir.join("yamis.root.yml"))?;
+    file.write_all(
+        r#"
+    tasks:
+        hello:
+            script: echo {{ pkwargs.k1.0 }} {{ pkwargs.k1.1 }} {{ pkwargs.k2.0 }}
+    "#
+        .as_bytes(),
+    )?;
+
+    let mut cmd = Command::cargo_bin("yamis")?;
+    cmd.current_dir(tmp_dir.path());
+    cmd.arg("--dry");
+    cmd.arg("hello");
+    cmd.arg("--k1=arg1");
+    cmd.arg("--k1=arg2");
+    cmd.arg("--k2");
+    cmd.arg("arg3");
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("echo arg1 arg2 arg3"));
+
+    Ok(())
+}
+
+#[test]
 fn test_file_option() -> Result<(), Box<dyn std::error::Error>> {
     let tmp_dir = TempDir::new().unwrap();
     let mut file = File::create(tmp_dir.join("sample.yamis.yml"))?;

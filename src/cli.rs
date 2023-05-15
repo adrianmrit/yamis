@@ -1,22 +1,19 @@
 use clap::ArgAction;
 use colored::{ColoredString, Colorize};
-use lazy_static::lazy_static;
 use serde_derive::Deserialize;
-use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::error::Error;
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsStr;
 use std::fs::File;
 use std::path::Path;
 use std::{env, fmt, fs};
 
-use regex::Regex;
-
+use crate::args::ArgsContext;
 use crate::config_files::{
     ConfigFilePaths, ConfigFilesContainer, GlobalConfigFilePath, PathIterator, SingleConfigFilePath,
 };
 use crate::print_utils::YamisOutput;
-use crate::types::{DynErrResult, TaskArgs};
+use crate::types::DynErrResult;
 use crate::updater;
 
 const HELP: &str = "For documentation check https://github.com/adrianmrit/yamis.";
@@ -26,7 +23,7 @@ struct TaskSubcommand {
     /// Task to run, if given
     pub task: String,
     /// Args to run the command with
-    pub args: TaskArgs,
+    pub args_context: ArgsContext,
 }
 
 /// Enum of config file containers by version
@@ -220,7 +217,7 @@ impl ConfigFileContainers {
         &mut self,
         paths: PathIterator,
         task: &str,
-        args: TaskArgs,
+        args: &ArgsContext,
         dry_run: bool,
     ) -> DynErrResult<()> {
         for path in paths {
@@ -248,7 +245,7 @@ impl ConfigFileContainers {
                     match task {
                         Some(task) => {
                             println!("{}", &path.to_string_lossy().yamis_info());
-                            return match task.run(&args, &config_file_lock, dry_run) {
+                            return match task.run(args, &config_file_lock, dry_run) {
                                 Ok(val) => Ok(val),
                                 Err(e) => {
                                     let e = format!("{}:\n{}", &path.to_string_lossy().red(), e);
@@ -269,110 +266,15 @@ impl ConfigFileContainers {
 impl TaskSubcommand {
     /// Returns a new TaskSubcommand
     pub(crate) fn new(args: &clap::ArgMatches) -> Result<TaskSubcommand, ArgsError> {
-        let mut kwargs = TaskArgs::new();
-
         let (task_name, task_args) = match args.subcommand() {
             None => return Err(ArgsError::MissingTaskArg),
             Some(command) => command,
         };
 
-        if let Some(args) = task_args.get_many::<OsString>("") {
-            // All args are pushed into a vector as they are
-            let all_args = args
-                .clone()
-                .map(|s| s.to_string_lossy().to_string())
-                .collect::<Vec<String>>();
-            kwargs.insert(String::from("*"), all_args);
-
-            // kwarg found that could be a key
-            let mut possible_kwarg_key = None;
-
-            // looping over the args to find kwargs
-            for arg in args {
-                let arg = arg.to_string_lossy().to_string();
-                // if a kwarg key was previously found, assume this is the value, even if
-                // it starts with - or --
-                if let Some(possible_kwarg) = possible_kwarg_key {
-                    match kwargs.entry(possible_kwarg) {
-                        Entry::Occupied(mut e) => {
-                            e.get_mut().push(arg);
-                        }
-                        Entry::Vacant(e) => {
-                            let args_vec: Vec<String> = vec![arg];
-                            e.insert(args_vec);
-                        }
-                    }
-                    possible_kwarg_key = None;
-                    continue;
-                }
-
-                // Quick check to see if the arg is a kwarg key or key-value pair
-                // if it is a positional value, we just continue
-                if !arg.starts_with('-') {
-                    continue;
-                }
-
-                // Check if this is a kwarg key-value pair
-                if let Some((key, val)) = Self::get_kwarg(&arg) {
-                    match kwargs.entry(key) {
-                        Entry::Occupied(mut e) => {
-                            e.get_mut().push(val);
-                        }
-                        Entry::Vacant(e) => {
-                            let args_vec: Vec<String> = vec![val];
-                            e.insert(args_vec);
-                        }
-                    }
-                    continue;
-                }
-
-                // Otherwise it could be a kwarg key, for which we need to check the next arg
-                if let Some(key) = Self::get_kwarg_key(&arg) {
-                    possible_kwarg_key = Some(key);
-                    continue;
-                }
-
-                // Finally if it is not a kwarg key or key-value pair, it is a positional arg,
-                // i.e. -0
-            }
-        } else {
-            kwargs.insert(String::from("*"), vec![]);
-        }
-
         Ok(TaskSubcommand {
             task: String::from(task_name),
-            args: kwargs,
+            args_context: ArgsContext::from(task_args.clone()),
         })
-    }
-
-    /// Returns the key if the arg represents a kwarg key, otherwise None
-    fn get_kwarg_key(arg: &str) -> Option<String> {
-        lazy_static! {
-            static ref KWARG_KEY_REGEX: Regex = Regex::new(r"-{1,2}(?P<key>[a-zA-Z]+\w*)").unwrap();
-        }
-        let kwarg_match = KWARG_KEY_REGEX.captures(arg);
-        if let Some(arg_match) = kwarg_match {
-            let key = String::from(arg_match.name("key").unwrap().as_str());
-            Some(key)
-        } else {
-            None
-        }
-    }
-
-    /// Returns the key and value if the arg represents a kwarg key-value pair, otherwise None
-    fn get_kwarg(arg: &str) -> Option<(String, String)> {
-        lazy_static! {
-            static ref KWARG_REGEX: Regex =
-                Regex::new(r"-{1,2}(?P<key>[a-zA-Z]+\w*)=(?P<val>[\s\S]*)").unwrap();
-        }
-        let kwarg_match = KWARG_REGEX.captures(arg);
-        if let Some(arg_match) = kwarg_match {
-            let key = String::from(arg_match.name("key").unwrap().as_str());
-            let val = String::from(arg_match.name("val").unwrap().as_str());
-            Some((key, val))
-        } else {
-            None
-        }
     }
 }
 
@@ -496,7 +398,7 @@ pub fn exec() -> DynErrResult<()> {
     file_containers.run_task(
         config_file_paths,
         &task_command.task,
-        task_command.args,
+        &task_command.args_context,
         dry_run,
     )
 }
