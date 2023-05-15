@@ -560,3 +560,43 @@ tasks:
         );
     Ok(())
 }
+
+#[test]
+fn test_vars() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp_dir = TempDir::new().unwrap();
+    let mut file = File::create(tmp_dir.join("yamis.root.yml"))?;
+    file.write_all(
+        r#"
+version: 2
+
+vars:
+    arg: val1
+    other: [1, 2, 3]
+    user:
+        name: "user1"
+        age: 18
+
+tasks:
+    test:
+        cmds:
+            - "echo arg: {{ vars.arg }}"
+            - "echo other: {{ vars.other[0] }} {{ vars.other[1] }} {{ vars.other[2] }}"
+            - "echo user: {{ vars.user.name }} {{ vars.user.age }}"
+    "#
+        .as_bytes(),
+    )?;
+
+    let mut cmd = Command::cargo_bin("yamis")?;
+    cmd.current_dir(tmp_dir.path());
+    cmd.arg("--dry");
+    cmd.arg("test");
+    cmd.assert()
+        .success()
+        .stdout(
+            predicate::str::contains("arg: val1").and(
+                predicate::str::contains("other: 1 2 3")
+                    .and(predicate::str::contains("user: user1 18")),
+            ),
+        );
+    Ok(())
+}

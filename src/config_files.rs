@@ -8,6 +8,7 @@ use directories::UserDirs;
 use indexmap::IndexMap;
 use petgraph::algo::toposort;
 use serde_derive::{Deserialize, Serialize};
+use serde_yaml::Value;
 use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
@@ -263,6 +264,8 @@ pub(crate) struct ConfigFile {
     pub(crate) env: Option<HashMap<String, String>>,
     /// Env file to read environment variables from
     pub(crate) env_file: Option<String>,
+    /// Variables to be used around in the config file
+    pub(crate) vars: Option<HashMap<String, Value>>,
 }
 
 impl ConfigFile {
@@ -402,7 +405,7 @@ impl ConfigFile {
         Ok(flat_tasks)
     }
 
-    /// Finds and task by name on this config file and returns it if it exists.
+    /// Finds and task by name on this config file and returns a clone if it exists.
     /// It searches fist for the current OS version of the task, if None is found,
     /// it tries with the plain name.
     ///

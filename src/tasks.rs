@@ -220,40 +220,60 @@ pub(crate) struct Task {
     /// Name of the task
     #[serde(skip_deserializing)]
     name: String,
+
     /// Help of the task
     help: Option<String>,
+
     /// Script to run
     script: Option<String>,
+
     /// Interpreter program to use
     script_runner: Option<String>,
+
     /// Script extension
     #[serde(alias = "script_ext")]
     script_extension: Option<String>,
+
     /// A program to run
     program: Option<String>,
+
     /// Args to pass to a command
     args: Option<String>,
+
     /// Run commands
     cmds: Option<Vec<Cmd>>,
+
     /// Extends args from bases
     #[serde(alias = "args+")]
     args_extend: Option<String>,
+
     /// Env variables for the task
     #[serde(default)]
     pub(crate) env: HashMap<String, String>,
+
     /// Env file to read environment variables from
     env_file: Option<String>,
+
+    /// Variables to use around in the task
+    #[serde(default)]
+    pub(crate) vars: HashMap<String, serde_yaml::Value>,
+
     /// Working dir
     wd: Option<String>,
+
     /// Task to run instead if the OS is linux
     pub(crate) linux: Option<Box<Task>>,
+
     /// Task to run instead if the OS is windows
     pub(crate) windows: Option<Box<Task>>,
+
     /// Task to run instead if the OS is macos
     pub(crate) macos: Option<Box<Task>>,
+
     /// Base task to inherit from
     #[serde(default)]
     pub(crate) bases: Vec<String>,
+
     /// If private, it cannot be called
     #[serde(default = "default_false")]
     private: bool,
@@ -372,6 +392,25 @@ impl Task {
         new_env
     }
 
+    /// Returns the environment variables by merging the ones from the config file with
+    /// the ones from the task, where the task takes precedence.
+    ///
+    /// # Arguments
+    ///
+    /// * `config_file`: Config file to load extra environment variables from
+    ///
+    /// returns: HashMap<String, String, RandomState>
+    fn get_vars(
+        &self,
+        env: &HashMap<String, serde_yaml::Value>,
+    ) -> HashMap<String, serde_yaml::Value> {
+        let mut new_vars: HashMap<String, serde_yaml::Value> = self.vars.clone();
+        for (key, val) in env {
+            new_vars.entry(key.clone()).or_insert_with(|| val.clone());
+        }
+        new_vars
+    }
+
     /// Validates the task configuration.
     ///
     /// # Arguments
@@ -413,12 +452,14 @@ impl Task {
         args: &ArgsContext,
         config_file: &ConfigFile,
         env: &HashMap<String, String>,
+        vars: &HashMap<String, serde_yaml::Value>,
     ) -> Context {
         let mut context = Context::new();
 
         context.insert("args", &args.args);
         context.insert("kwargs", &args.kwargs);
         context.insert("pkwargs", &args.pkwargs);
+        context.insert("vars", &vars);
         context.insert("env", &env);
         context.insert("TASK", self);
         context.insert("FILE", config_file);
@@ -502,6 +543,7 @@ impl Task {
         args: &ArgsContext,
         config_file: &ConfigFile,
         env: &HashMap<String, String>,
+        vars: &HashMap<String, serde_yaml::Value>,
         dry_mode: bool,
     ) -> DynErrResult<()> {
         let program = self.program.as_ref().unwrap();
@@ -509,7 +551,7 @@ impl Task {
         self.set_command_basics(&mut command, config_file, env)?;
 
         let mut tera = self.get_tera_instance();
-        let context = self.get_tera_context(args, config_file, env);
+        let context = self.get_tera_context(args, config_file, env, vars);
 
         if let Some(task_args) = &self.args {
             let task_name = &self.name;
@@ -539,10 +581,11 @@ impl Task {
         args: &ArgsContext,
         config_file: &ConfigFile,
         env: &HashMap<String, String>,
+        vars: &HashMap<String, serde_yaml::Value>,
         dry_run: bool,
     ) -> DynErrResult<()> {
         let mut tera = Tera::default();
-        let context = self.get_tera_context(args, config_file, env);
+        let context = self.get_tera_context(args, config_file, env, vars);
 
         let task_name = &self.name;
         let task_name = &format!("{task_name}.cmds.{cmd_index}");
@@ -572,6 +615,10 @@ impl Task {
         let display_task_name = format!("{}.cmds.{}.{}", self.name, cmd_index, task_name);
         if let Some(mut task) = config_file.get_task(task_name) {
             task.name = display_task_name;
+            let new_env = task.get_env(&self.env);
+            let new_vars = task.get_vars(&self.vars);
+            task.env = new_env;
+            task.vars = new_vars;
             task.run(args, config_file, dry_run)
         } else {
             Err(TaskError::RuntimeError(
@@ -610,7 +657,9 @@ impl Task {
             }
         }
         let new_env = task.get_env(&self.env);
+        let new_vars = task.get_vars(&self.vars);
         task.env = new_env;
+        task.vars = new_vars;
         task.run(args, config_file, dry_run)
     }
 
@@ -620,12 +669,13 @@ impl Task {
         args: &ArgsContext,
         config_file: &ConfigFile,
         env: &HashMap<String, String>,
+        vars: &HashMap<String, serde_yaml::Value>,
         dry_run: bool,
     ) -> DynErrResult<()> {
         for (i, cmd) in self.cmds.as_ref().unwrap().iter().enumerate() {
             match cmd {
                 Cmd::Cmd(cmd) => {
-                    self.run_cmds_cmd(cmd, i, args, config_file, env, dry_run)?;
+                    self.run_cmds_cmd(cmd, i, args, config_file, env, vars, dry_run)?;
                 }
                 Cmd::TaskName(task_name) => {
                     self.run_cmds_task_name(task_name, i, args, config_file, dry_run)?;
@@ -644,12 +694,13 @@ impl Task {
         args: &ArgsContext,
         config_file: &ConfigFile,
         env: &HashMap<String, String>,
+        vars: &HashMap<String, serde_yaml::Value>,
         dry_run: bool,
     ) -> DynErrResult<()> {
         let script = self.script.as_ref().unwrap();
 
         let mut tera = Tera::default();
-        let mut context = self.get_tera_context(args, config_file, env);
+        let mut context = self.get_tera_context(args, config_file, env, vars);
         let task_name = &self.name;
         let template_name = format!("tasks.{task_name}.script");
         tera.add_raw_template(&template_name, script)?;
@@ -721,12 +772,16 @@ impl Task {
             Some(env) => self.get_env(env),
             None => self.env.clone(),
         };
+        let vars = match config_file.vars.as_ref() {
+            Some(vars) => self.get_vars(vars),
+            None => self.vars.clone(),
+        };
         return if self.script.is_some() {
-            self.run_script(args, config_file, &env, dry_run)
+            self.run_script(args, config_file, &env, &vars, dry_run)
         } else if self.program.is_some() {
-            self.run_program(args, config_file, &env, dry_run)
+            self.run_program(args, config_file, &env, &vars, dry_run)
         } else if self.cmds.is_some() {
-            self.run_cmds(args, config_file, &env, dry_run)
+            self.run_cmds(args, config_file, &env, &vars, dry_run)
         } else {
             Err(
                 TaskError::ImproperlyConfigured(self.name.clone(), String::from("Nothing to run."))
