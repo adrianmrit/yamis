@@ -293,8 +293,6 @@ pub struct ConfigFile {
     pub(crate) env: Option<HashMap<String, String>>,
     /// Env file to read environment variables from
     pub(crate) env_file: Option<String>,
-    #[serde(skip)]
-    pub(crate) loaded_tasks: HashMap<String, Arc<Task>>,
 }
 
 impl ConfigFile {
@@ -378,21 +376,21 @@ impl ConfigFile {
             let bases = std::mem::take(&mut task.bases);
             for base in bases {
                 let os_task_name = format!("{}.{}", &base, env::consts::OS);
-                if let Some(base_task) = conf.loaded_tasks.get(&os_task_name) {
+                if let Some(base_task) = conf.tasks.get(&os_task_name) {
                     task.extend_task(base_task);
-                } else if let Some(base_task) = conf.loaded_tasks.get(&base) {
+                } else if let Some(base_task) = conf.tasks.get(&base) {
                     task.extend_task(base_task);
                 } else {
                     panic!("found non existent task {}", base);
                 }
             }
             // insert modified task back in
-            conf.loaded_tasks.insert(dependency_name, Arc::new(task));
+            conf.tasks.insert(dependency_name, task);
         }
 
         // Store the other tasks left
         for (task_name, task) in tasks {
-            conf.loaded_tasks.insert(task_name, Arc::new(task));
+            conf.tasks.insert(task_name, task);
         }
         Ok(conf)
     }
@@ -462,13 +460,17 @@ impl ConfigFile {
     /// # Arguments
     ///
     /// * task_name - Name of the task to search for
-    pub fn get_task(&self, task_name: &str) -> Option<Arc<Task>> {
+    pub fn get_task(&self, task_name: &str) -> Option<Task> {
+        self.get_task_ref(task_name).cloned()
+    }
+
+    pub fn get_task_ref(&self, task_name: &str) -> Option<&Task> {
         let os_task_name = to_os_task_name(task_name);
 
-        if let Some(task) = self.loaded_tasks.get(&os_task_name) {
-            return Some(Arc::clone(task));
-        } else if let Some(task) = self.loaded_tasks.get(task_name) {
-            return Some(Arc::clone(task));
+        if let Some(task) = self.tasks.get(&os_task_name) {
+            return Some(task);
+        } else if let Some(task) = self.tasks.get(task_name) {
+            return Some(task);
         }
         None
     }
@@ -480,19 +482,19 @@ impl ConfigFile {
     /// # Arguments
     ///
     /// * task_name - Name of the task to search for
-    pub fn get_public_task(&self, task_name: &str) -> Option<Arc<Task>> {
+    pub fn get_public_task(&self, task_name: &str) -> Option<Task> {
         let os_task_name = to_os_task_name(task_name);
 
-        if let Some(task) = self.loaded_tasks.get(&os_task_name) {
+        if let Some(task) = self.tasks.get(&os_task_name) {
             if task.is_private() {
                 return None;
             }
-            return Some(Arc::clone(task));
-        } else if let Some(task) = self.loaded_tasks.get(task_name) {
+            return Some(task.clone());
+        } else if let Some(task) = self.tasks.get(task_name) {
             if task.is_private() {
                 return None;
             }
-            return Some(Arc::clone(task));
+            return Some(task.clone());
         }
         None
     }
@@ -509,17 +511,17 @@ impl ConfigFile {
     pub fn has_task(&self, task_name: &str) -> bool {
         let os_task_name = to_os_task_name(task_name);
 
-        self.loaded_tasks.contains_key(&os_task_name) || self.loaded_tasks.contains_key(task_name)
+        self.tasks.contains_key(&os_task_name) || self.tasks.contains_key(task_name)
     }
 
     /// Returns the list of names of tasks in this config file
     pub fn get_task_names(&self) -> Vec<&String> {
-        self.loaded_tasks.keys().collect()
+        self.tasks.keys().collect()
     }
 
     /// Returns the list of names of tasks that are not private in this config file
     pub fn get_public_task_names(&self) -> Vec<&str> {
-        self.loaded_tasks
+        self.tasks
             .values()
             .filter(|t| !t.is_private())
             .map(|t| t.get_name())

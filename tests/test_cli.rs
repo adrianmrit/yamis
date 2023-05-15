@@ -258,103 +258,62 @@ fn test_run_program() -> Result<(), Box<dyn std::error::Error>> {
 #[test]
 fn test_run_cmds() -> Result<(), Box<dyn std::error::Error>> {
     let tmp_dir = TempDir::new().unwrap();
-    let (program, param, batch_file_name, batch_file_content) = if cfg!(target_os = "windows") {
-        ("cmd", "/C", "echo_args.cmd", "echo %1 %2".as_bytes())
-    } else {
-        ("bash", "", "echo_args.sh", "echo $1 $2".as_bytes())
-    };
-    let mut batch_file = File::create(tmp_dir.join(batch_file_name))?;
-    batch_file.write_all(batch_file_content).unwrap();
-
     let mut file = File::create(tmp_dir.join("yamis.root.yml"))?;
+
     file.write_all(
-        format!(
-            r#"
+        r#"
     env:
         greeting: "hello world"
 
     tasks:
+        task_1:
+            cmds:
+                - some command
+                - some other command
+        
+        task_2:
+            script: "some script"
+        
+        task_3:
+            program: program
+            args: "{{ env.GREETING }}"
+            env:
+                GREETING: "hi world"
+
         testing:
             cmds:
-                - {p} {pms} {bf} hello world
-                - {p} {pms} {bf} "hello world" hello
-                - {p} {pms} {bf} "hello\" world" hello
-                - {p} {pms} {bf} "{{{{args.0}}}} {{{{ kwargs.name.0 }}}}" "{{{{ env.greeting }}}}"
-                - {p} {pms} {bf} {{{{ TASK.name }}}} "{{{{ FILE.env.greeting }}}}"
-            "#,
-            p = program,
-            pms = param,
-            bf = batch_file_name
-        )
+                - some command
+                - cmd: some other command
+                - task: task_1
+                - task: task_3
+                - task:
+                    bases: [ task_3  ]
+                    env:
+                        GREETING: "hello"
+            "#
         .as_bytes(),
     )?;
 
     let mut cmd = Command::cargo_bin("yamis")?;
     cmd.current_dir(tmp_dir.path());
+    cmd.arg("--dry");
     cmd.arg("testing");
     cmd.arg("hi");
     cmd.arg("--name=world");
-    cmd.assert()
-        .success()
-        .stdout(predicate::str::contains(format!(
-            r#"[YAMIS] testing.cmds.0: {p} {pms} {bf} hello world
-hello world
-[YAMIS] testing.cmds.1: {p} {pms} {bf} "hello world" hello
-hello world hello
-[YAMIS] testing.cmds.2: {p} {pms} {bf} "hello\" world" hello
-hello" world hello
-[YAMIS] testing.cmds.3: {p} {pms} {bf} "hi world" "hello world"
-hi world hello world
-[YAMIS] testing.cmds.4: {p} {pms} {bf} testing "hello world"
-testing hello world
-"#,
-            p = program,
-            pms = param,
-            bf = batch_file_name
-        )));
-    Ok(())
-}
-
-#[test]
-fn test_run_serial() -> Result<(), Box<dyn std::error::Error>> {
-    let tmp_dir = TempDir::new().unwrap();
-    let (program, param, batch_file_name, batch_file_content) = if cfg!(target_os = "windows") {
-        ("cmd", "/C", "echo_args.cmd", "echo Hello %*".as_bytes())
-    } else {
-        ("bash", "", "echo_args.bash", "echo Hello $*".as_bytes())
-    };
-    let mut batch_file = File::create(tmp_dir.join(batch_file_name))?;
-    batch_file.write_all(batch_file_content).unwrap();
-
-    let mut file = File::create(tmp_dir.join("yamis.root.yml"))?;
-    file.write_all(
-        format!(
-            r#"
-    tasks:
-        hello:
-            program: "{}"
-            args: {} {} {{{{args.0}}}}
-
-        bye:
-            script: "echo Bye {{{{args.1}}}}"
-
-        greet:
-            serial: ["hello", "bye"]
-            "#,
-            program, param, batch_file_name
-        )
-        .as_bytes(),
-    )?;
-
-    let mut cmd = Command::cargo_bin("yamis")?;
-    cmd.current_dir(tmp_dir.path());
-    cmd.arg("greet");
-    cmd.args(vec!["world", "everyone"]);
-    cmd.assert()
-        .success()
-        .stdout(predicate::str::contains("Hello world"))
-        .stdout(predicate::str::contains("Bye everyone"));
-
+    cmd.assert().success().stdout(predicate::str::contains(
+        r#"[YAMIS] testing.cmds.0: some command
+[YAMIS] Dry run mode, nothing executed.
+[YAMIS] testing.cmds.1: some other command
+[YAMIS] Dry run mode, nothing executed.
+[YAMIS] testing.cmds.2.task_1.cmds.0: some command
+[YAMIS] Dry run mode, nothing executed.
+[YAMIS] testing.cmds.2.task_1.cmds.1: some other command
+[YAMIS] Dry run mode, nothing executed.
+[YAMIS] testing.cmds.3.task_3: program hi world
+[YAMIS] Dry run mode, nothing executed.
+[YAMIS] testing.cmds.4: program hello
+[YAMIS] Dry run mode, nothing executed."#,
+    ));
     Ok(())
 }
 
