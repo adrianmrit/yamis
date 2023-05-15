@@ -468,22 +468,36 @@ fn test_extend_args() -> Result<(), Box<dyn std::error::Error>> {
             r#"
 version: 2
 tasks:
-  echo_program:
-    program: "bash"
-    args: "{b}"
-    private: true
+    echo_program:
+        program: "bash"
+        args: "{b}"
+        private: true
 
     windows:
-      program: "cmd.exe"
-      args: "/C {b}"
+        program: "cmd.exe"
+        args: "/C {b}"
 
-  hello:
-    bases: ["echo_program"]
-    args_extend: "hello world"
+    hello:
+        bases: ["echo_program"]
+        args_extend: "hello world"
 
     windows:
-      bases: ["echo_program"]
-      args+: "hello world"
+        bases: ["echo_program"]
+        args+: "hello world"
+
+    other:
+        linux:
+            cmds:
+                - echo hello linux
+        windows:
+            cmds:
+                - echo hello windows
+        macos:
+            cmds:
+                - echo hello macos
+    
+    hello_os:
+        bases: ["other"]
 "#,
             b = batch_file_name
         )
@@ -496,6 +510,22 @@ tasks:
     cmd.assert()
         .success()
         .stdout(predicate::str::contains("hello world"));
+
+    let mut cmd = Command::cargo_bin("yamis")?;
+    cmd.current_dir(tmp_dir.path());
+    cmd.arg("hello_os");
+
+    let expected = if cfg!(target_os = "windows") {
+        "hello windows"
+    } else if cfg!(target_os = "macos") {
+        "hello macos"
+    } else {
+        "hello linux"
+    };
+
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains(expected));
 
     Ok(())
 }

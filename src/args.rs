@@ -8,13 +8,13 @@ use std::ffi::OsString;
 /// Represents the context of the arguments passed to task.
 #[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(deny_unknown_fields)]
-pub struct ArgsContext {
+pub(crate) struct ArgsContext {
     ///Holds a list of positional arguments
-    pub args: Vec<String>,
+    pub(crate) args: Vec<String>,
     ///Holds keyword argument, the value is the last passed value
-    pub kwargs: HashMap<String, String>,
+    pub(crate) kwargs: HashMap<String, String>,
     ///Holds a list of keyword arguments, the value is a list of all passed values
-    pub pkwargs: HashMap<String, Vec<String>>,
+    pub(crate) pkwargs: HashMap<String, Vec<String>>,
 }
 
 impl ArgsContext {

@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::{env, fs};
 
 /// To uniquely identify the temporary folder. Constant so that the scripts are cached.
-pub const TMP_FOLDER_NAMESPACE: &str = "adrianmrit.yamis";
+pub(crate) const TMP_FOLDER_NAMESPACE: &str = "adrianmrit.yamis";
 /// Returns the task name as per the current OS.
 ///
 /// # Arguments
@@ -23,7 +23,7 @@ pub const TMP_FOLDER_NAMESPACE: &str = "adrianmrit.yamis";
 /// // Assuming it is a linux system
 /// assert_eq!(to_os_task_name("sample"), "sample.linux");
 /// ```
-pub fn to_os_task_name(task_name: &str) -> String {
+pub(crate) fn to_os_task_name(task_name: &str) -> String {
     format!("{}.{}", task_name, env::consts::OS)
 }
 
@@ -37,7 +37,7 @@ pub fn to_os_task_name(task_name: &str) -> String {
 /// * `tasks`: Hashmap of name to task
 ///
 /// returns: Result<GraphMap<&str, (), Directed>, Box<dyn Error, Global>>
-pub fn get_task_dependency_graph<'a>(
+pub(crate) fn get_task_dependency_graph<'a>(
     tasks: &'a HashMap<String, Task>,
 ) -> DynErrResult<DiGraphMap<&'a str, ()>> {
     let mut graph: DiGraphMap<&'a str, ()> = DiGraphMap::new();
@@ -98,7 +98,7 @@ pub fn get_task_dependency_graph<'a>(
 /// * `path`: Path to make relative to the base
 ///
 /// returns: PathBuf
-pub fn get_path_relative_to_base<B: AsRef<OsStr> + ?Sized, P: AsRef<OsStr> + ?Sized>(
+pub(crate) fn get_path_relative_to_base<B: AsRef<OsStr> + ?Sized, P: AsRef<OsStr> + ?Sized>(
     base: &B,
     path: &P,
 ) -> PathBuf {
@@ -116,7 +116,9 @@ pub fn get_path_relative_to_base<B: AsRef<OsStr> + ?Sized, P: AsRef<OsStr> + ?Si
 /// * `path`: Path of the environment file
 ///
 /// returns: DynErrResult<BTreeMap<String, String>>
-pub fn read_env_file<S: AsRef<OsStr> + ?Sized>(path: &S) -> DynErrResult<BTreeMap<String, String>> {
+pub(crate) fn read_env_file<S: AsRef<OsStr> + ?Sized>(
+    path: &S,
+) -> DynErrResult<BTreeMap<String, String>> {
     let path = Path::new(path);
     let result = match fs::read_to_string(path) {
         Ok(content) => parse_dotenv(&content),

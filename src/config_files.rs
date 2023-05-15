@@ -1,3 +1,4 @@
+use crate::cli::Version;
 use crate::tasks::Task;
 use crate::types::DynErrResult;
 use crate::utils::{
@@ -196,7 +197,7 @@ pub(crate) struct ConfigFilesContainer {
 
 impl ConfigFilesContainer {
     /// Initializes ConfigFilesContainer.
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         ConfigFilesContainer {
             cached: IndexMap::new(),
         }
@@ -209,7 +210,7 @@ impl ConfigFilesContainer {
     /// * `path`: Path to read the config file from
     ///
     /// returns: Result<Arc<Mutex<ConfigFile>>, Box<dyn Error, Global>>
-    pub fn read_config_file(&mut self, path: PathBuf) -> DynErrResult<ConfigFileSharedPtr> {
+    pub(crate) fn read_config_file(&mut self, path: PathBuf) -> DynErrResult<ConfigFileSharedPtr> {
         let config_file = ConfigFile::load(path.clone());
         match config_file {
             Ok(config_file) => {
@@ -224,7 +225,7 @@ impl ConfigFilesContainer {
 
     #[cfg(test)] // Used in tests only for now, but still leaving it here just in case
     /// Returns whether the given task exists in the config files.
-    pub fn has_task<S: AsRef<str>>(&mut self, name: S) -> bool {
+    pub(crate) fn has_task<S: AsRef<str>>(&mut self, name: S) -> bool {
         for config_file in self.cached.values() {
             let config_file_ptr = config_file.as_ref();
             let handle = config_file_ptr.lock().unwrap();
@@ -243,11 +244,11 @@ impl Default for ConfigFilesContainer {
 }
 
 /// Represents a config file.
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub struct ConfigFile {
+pub(crate) struct ConfigFile {
     /// Version of the config file.
-    version: String,
+    version: Version,
     /// Path of the file.
     #[serde(skip_deserializing)]
     pub(crate) filepath: PathBuf,
@@ -279,7 +280,7 @@ impl ConfigFile {
     /// # Arguments
     ///
     /// * path - path of the toml file to load
-    pub fn load(path: PathBuf) -> DynErrResult<ConfigFile> {
+    pub(crate) fn load(path: PathBuf) -> DynErrResult<ConfigFile> {
         let mut conf: ConfigFile = ConfigFile::extract(path.as_path())?;
         conf.filepath = path;
 
@@ -344,12 +345,12 @@ impl ConfigFile {
     }
 
     /// Returns the directory where the config file
-    pub fn directory(&self) -> &Path {
+    pub(crate) fn directory(&self) -> &Path {
         self.filepath.parent().unwrap()
     }
 
     /// If set in the config file, returns the working directory as an absolute path.
-    pub fn working_directory(&self) -> Option<PathBuf> {
+    pub(crate) fn working_directory(&self) -> Option<PathBuf> {
         // Some sort of cache would make it faster, but keeping it
         // simple until it is really needed
         self.wd
@@ -408,11 +409,11 @@ impl ConfigFile {
     /// # Arguments
     ///
     /// * task_name - Name of the task to search for
-    pub fn get_task(&self, task_name: &str) -> Option<Task> {
+    pub(crate) fn get_task(&self, task_name: &str) -> Option<Task> {
         self.get_task_ref(task_name).cloned()
     }
 
-    pub fn get_task_ref(&self, task_name: &str) -> Option<&Task> {
+    pub(crate) fn get_task_ref(&self, task_name: &str) -> Option<&Task> {
         let os_task_name = to_os_task_name(task_name);
 
         if let Some(task) = self.tasks.get(&os_task_name) {
@@ -430,21 +431,22 @@ impl ConfigFile {
     /// # Arguments
     ///
     /// * task_name - Name of the task to search for
-    pub fn get_public_task(&self, task_name: &str) -> Option<Task> {
+    pub(crate) fn get_public_task(&self, task_name: &str) -> Option<Task> {
         let os_task_name = to_os_task_name(task_name);
 
-        if let Some(task) = self.tasks.get(&os_task_name) {
+        let task = self
+            .tasks
+            .get(&os_task_name)
+            .or_else(|| self.tasks.get(task_name));
+
+        if let Some(task) = task {
             if task.is_private() {
                 return None;
             }
-            return Some(task.clone());
-        } else if let Some(task) = self.tasks.get(task_name) {
-            if task.is_private() {
-                return None;
-            }
-            return Some(task.clone());
+            Some(task.clone())
+        } else {
+            None
         }
-        None
     }
 
     /// Returns whether the config file has a task with the given name. This also
@@ -456,19 +458,14 @@ impl ConfigFile {
     ///
     /// returns: bool
     #[cfg(test)]
-    pub fn has_task(&self, task_name: &str) -> bool {
+    pub(crate) fn has_task(&self, task_name: &str) -> bool {
         let os_task_name = to_os_task_name(task_name);
 
         self.tasks.contains_key(&os_task_name) || self.tasks.contains_key(task_name)
     }
 
-    /// Returns the list of names of tasks in this config file
-    pub fn get_task_names(&self) -> Vec<&String> {
-        self.tasks.keys().collect()
-    }
-
     /// Returns the list of names of tasks that are not private in this config file
-    pub fn get_public_task_names(&self) -> Vec<&str> {
+    pub(crate) fn get_public_task_names(&self) -> Vec<&str> {
         self.tasks
             .values()
             .filter(|t| !t.is_private())
@@ -650,41 +647,6 @@ tasks:
     }
 
     #[test]
-    fn test_config_file_get_task_names() {
-        let tmp_dir = TempDir::new().unwrap();
-
-        let project_config_path = tmp_dir.path().join("yamis.root.yaml");
-        let mut project_config_file = File::create(project_config_path.as_path()).unwrap();
-        project_config_file
-            .write_all(
-                r#"
-version: 2
-
-tasks:
-  task_1:
-    script: echo hello
-
-  task_2:
-    script: echo hello again
-
-  task_3:
-    script: echo hello again
-    private: true
-
-        "#
-                .as_bytes(),
-            )
-            .unwrap();
-        let config_file = ConfigFile::load(project_config_path).unwrap();
-        let mut task_names = config_file.get_task_names();
-        task_names.sort();
-        assert_eq!(task_names, vec!["task_1", "task_2", "task_3"]);
-        let mut task_names = config_file.get_public_task_names();
-        task_names.sort();
-        assert_eq!(task_names, vec!["task_1", "task_2"]);
-    }
-
-    #[test]
     fn test_config_file_get_task() {
         let tmp_dir = TempDir::new().unwrap();
 
@@ -795,9 +757,10 @@ tasks:
         assert!(config_file.is_err());
 
         let err = config_file.err().unwrap();
-        assert_eq!(
-            err.to_string(),
-            "Found a cyclic dependency for task: task_1"
-        );
+
+        // Can be either task_1 or task_2
+        assert!(err
+            .to_string()
+            .starts_with("Found a cyclic dependency for task: task_"));
     }
 }

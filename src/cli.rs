@@ -1,15 +1,15 @@
 use clap::ArgAction;
 use colored::{ColoredString, Colorize};
-use serde_derive::Deserialize;
-use std::collections::HashMap;
+use serde_derive::{Deserialize, Serialize};
 use std::error::Error;
-use std::fs::File;
-use std::path::Path;
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 use std::{env, fmt};
 
 use crate::args::ArgsContext;
 use crate::config_files::{
-    ConfigFilePaths, ConfigFilesContainer, GlobalConfigFilePath, PathIterator, SingleConfigFilePath,
+    ConfigFile, ConfigFilePaths, ConfigFilesContainer, GlobalConfigFilePath, PathIterator,
+    SingleConfigFilePath,
 };
 use crate::print_utils::YamisOutput;
 use crate::types::DynErrResult;
@@ -20,33 +20,17 @@ const HELP: &str = "For documentation check https://github.com/adrianmrit/yamis.
 /// Holds the data for running the given task.
 struct TaskSubcommand {
     /// Task to run, if given
-    pub task: String,
+    pub(crate) task: String,
     /// Args to run the command with
-    pub args_context: ArgsContext,
-}
-
-/// Enum of config file containers by version
-enum ConfigFileContainerVersion {
-    V2(ConfigFilesContainer),
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ConfigFileVersionSerializer {
-    version: Version,
+    pub(crate) args_context: ArgsContext,
 }
 
 /// Enum of available config file versions
-#[derive(Hash, Eq, PartialEq, Debug, Deserialize)]
-enum Version {
+#[derive(Deserialize, Serialize)]
+pub(crate) enum Version {
     #[serde(alias = "v2")]
     #[serde(rename = "2")]
     V2,
-}
-
-/// Holds all the config file containers, regardless of the version they are supposed to handle
-struct ConfigFileContainers {
-    /// Holds the config file containers for each version
-    containers: HashMap<Version, ConfigFileContainerVersion>,
 }
 
 /// Argument errors
@@ -86,33 +70,27 @@ fn colorize_config_file_path(val: &str) -> ColoredString {
     val.bright_blue()
 }
 
-impl ConfigFileContainers {
-    /// Creates a new instance of `ConfigFileContainers`
+struct Yamis {
+    config_files: ConfigFilesContainer,
+}
+
+impl Yamis {
+    /// Creates a new instance of `Yamis`
     fn new() -> Self {
-        let mut containers = HashMap::new();
-        containers.insert(
-            Version::V2,
-            ConfigFileContainerVersion::V2(ConfigFilesContainer::new()),
-        );
-        Self { containers }
+        Self {
+            config_files: ConfigFilesContainer::new(),
+        }
     }
 
-    /// Peeks at the file and returns the version of the config file.
-    ///
-    /// # Arguments
-    ///
-    /// * `path`: path to the file to extract the version from
-    ///
-    /// returns: Result<String, Box<dyn Error, Global>>
-    pub(crate) fn get_file_version(path: &Path) -> DynErrResult<Version> {
-        let file = match File::open(path) {
-            Ok(file_contents) => file_contents,
-            Err(e) => return Err(format!("There was an error reading the file:\n{}", e).into()),
+    fn get_config_file_lock(&mut self, path: PathBuf) -> DynErrResult<Arc<Mutex<ConfigFile>>> {
+        let config_file_ptr = match self.config_files.read_config_file(path.clone()) {
+            Ok(val) => val,
+            Err(e) => {
+                let e = format!("{}:\n{}", &path.to_string_lossy().red(), e);
+                return Err(e.into());
+            }
         };
-
-        let result: ConfigFileVersionSerializer = serde_yaml::from_reader(file)?;
-
-        Ok(result.version)
+        Ok(config_file_ptr)
     }
 
     /// prints config file paths and their tasks
@@ -120,22 +98,17 @@ impl ConfigFileContainers {
         let mut found = false;
         for path in paths {
             found = true;
-            let version = ConfigFileContainers::get_file_version(&path)?;
-            match version {
-                Version::V2 => {
-                    println!("{}:", colorize_config_file_path(&path.to_string_lossy()));
-                    let container = self.containers.get_mut(&Version::V2).unwrap();
-                    let ConfigFileContainerVersion::V2(container) = container;
-                    let config_file_ptr = container.read_config_file(path.clone())?;
-                    let config_file_lock = config_file_ptr.lock().unwrap();
-                    let task_names = config_file_lock.get_public_task_names();
-                    if task_names.is_empty() {
-                        println!("  {}", "No tasks found.".red());
-                    } else {
-                        for task in task_names {
-                            println!(" - {}", colorize_task_name(task));
-                        }
-                    }
+            let config_file_ptr = self.get_config_file_lock(path.clone())?;
+            let config_file_lock = config_file_ptr.lock().unwrap();
+
+            println!("{}:", colorize_config_file_path(&path.to_string_lossy()));
+
+            let task_names = config_file_lock.get_public_task_names();
+            if task_names.is_empty() {
+                println!("  {}", "No tasks found.".red());
+            } else {
+                for task in task_names {
+                    println!(" - {}", colorize_task_name(task));
                 }
             }
         }
@@ -148,40 +121,35 @@ impl ConfigFileContainers {
     /// Prints help for the given task
     fn print_task_info(&mut self, paths: PathIterator, task: &str) -> DynErrResult<()> {
         for path in paths {
-            let version = ConfigFileContainers::get_file_version(&path)?;
-            match version {
-                Version::V2 => {
-                    let container = self.containers.get_mut(&Version::V2).unwrap();
-                    let ConfigFileContainerVersion::V2(container) = container;
-                    let config_file_ptr = container.read_config_file(path.clone())?;
-                    let config_file_lock = config_file_ptr.lock().unwrap();
-                    let task = config_file_lock.get_task(task);
-                    match task {
-                        Some(task) => {
-                            println!("{}:", colorize_config_file_path(&path.to_string_lossy()));
-                            print!(" - {}", colorize_task_name(task.get_name()));
-                            if task.is_private() {
-                                print!(" {}", "(private)".red());
-                            }
-                            println!();
-                            let prefix = "     ";
-                            match task.get_help().trim() {
-                                "" => println!("{}{}", prefix, "No help to display".yellow()),
-                                help => {
-                                    //                 " -   "  Two spaces after the dash
-                                    let help_lines: Vec<&str> = help.lines().collect();
-                                    println!(
-                                        "{}{}",
-                                        prefix,
-                                        help_lines.join(&format!("\n{}", prefix)).green()
-                                    )
-                                }
-                            }
-                            return Ok(());
-                        }
-                        None => continue,
+            let config_file_ptr = self.get_config_file_lock(path.clone())?;
+            let config_file_lock = config_file_ptr.lock().unwrap();
+
+            let task = config_file_lock.get_task(task);
+
+            match task {
+                Some(task) => {
+                    println!("{}:", colorize_config_file_path(&path.to_string_lossy()));
+                    print!(" - {}", colorize_task_name(task.get_name()));
+                    if task.is_private() {
+                        print!(" {}", "(private)".red());
                     }
+                    println!();
+                    let prefix = "     ";
+                    match task.get_help().trim() {
+                        "" => println!("{}{}", prefix, "No help to display".yellow()),
+                        help => {
+                            //                 " -   "  Two spaces after the dash
+                            let help_lines: Vec<&str> = help.lines().collect();
+                            println!(
+                                "{}{}",
+                                prefix,
+                                help_lines.join(&format!("\n{}", prefix)).green()
+                            )
+                        }
+                    }
+                    return Ok(());
                 }
+                None => continue,
             }
         }
         Err(format!("Task {} not found", task).into())
@@ -196,41 +164,23 @@ impl ConfigFileContainers {
         dry_run: bool,
     ) -> DynErrResult<()> {
         for path in paths {
-            let version = match ConfigFileContainers::get_file_version(&path) {
-                Ok(version) => version,
-                Err(e) => {
-                    // So the user knows where the error occurred
-                    let e = format!("{}:\n{}", &path.to_string_lossy().red(), e);
-                    return Err(e.into());
-                }
-            };
-            match version {
-                Version::V2 => {
-                    let container = self.containers.get_mut(&Version::V2).unwrap();
-                    let ConfigFileContainerVersion::V2(container) = container;
-                    let config_file_ptr = match container.read_config_file(path.clone()) {
-                        Ok(val) => val,
+            let config_file_ptr = self.get_config_file_lock(path.clone())?;
+            let config_file_lock = config_file_ptr.lock().unwrap();
+
+            let task = config_file_lock.get_public_task(task);
+
+            match task {
+                Some(task) => {
+                    println!("{}", &path.to_string_lossy().yamis_info());
+                    return match task.run(args, &config_file_lock, dry_run) {
+                        Ok(val) => Ok(val),
                         Err(e) => {
                             let e = format!("{}:\n{}", &path.to_string_lossy().red(), e);
-                            return Err(e.into());
+                            Err(e.into())
                         }
                     };
-                    let config_file_lock = config_file_ptr.lock().unwrap();
-                    let task = config_file_lock.get_public_task(task);
-                    match task {
-                        Some(task) => {
-                            println!("{}", &path.to_string_lossy().yamis_info());
-                            return match task.run(args, &config_file_lock, dry_run) {
-                                Ok(val) => Ok(val),
-                                Err(e) => {
-                                    let e = format!("{}:\n{}", &path.to_string_lossy().red(), e);
-                                    Err(e.into())
-                                }
-                            };
-                        }
-                        None => continue,
-                    }
                 }
+                None => continue,
             }
         }
         Err(format!("Task {} not found", task).into())
@@ -335,7 +285,7 @@ pub fn exec() -> DynErrResult<()> {
     }
 
     let current_dir = env::current_dir()?;
-    let mut file_containers = ConfigFileContainers::new();
+    let mut yamis = Yamis::new();
 
     let config_file_paths: PathIterator = match matches.get_one::<String>("file") {
         None => match matches.get_one::<bool>("global").cloned().unwrap_or(false) {
@@ -352,12 +302,12 @@ pub fn exec() -> DynErrResult<()> {
         .cloned()
         .unwrap_or(false)
     {
-        file_containers.print_tasks_list(config_file_paths)?;
+        yamis.print_tasks_list(config_file_paths)?;
         return Ok(());
     };
 
     if let Some(task_name) = matches.get_one::<String>("task-info") {
-        file_containers.print_task_info(config_file_paths, task_name)?;
+        yamis.print_task_info(config_file_paths, task_name)?;
         return Ok(());
     };
 
@@ -370,7 +320,7 @@ pub fn exec() -> DynErrResult<()> {
 
     let task_command = TaskSubcommand::new(&matches)?;
 
-    file_containers.run_task(
+    yamis.run_task(
         config_file_paths,
         &task_command.task,
         &task_command.args_context,

@@ -36,7 +36,7 @@ cfg_if::cfg_if! {
 
 /// Task errors
 #[derive(Debug, PartialEq, Eq)]
-pub enum TaskError {
+pub(crate) enum TaskError {
     /// Raised when there is an error running a task
     RuntimeError(String, String),
     /// Raised when the task is improperly configured
@@ -131,19 +131,19 @@ macro_rules! inherit_value {
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(deny_unknown_fields)]
-pub struct TaskNameOption {
+pub(crate) struct TaskNameOption {
     task: String,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
-pub struct CmdOption {
+pub(crate) struct CmdOption {
     #[serde(flatten)]
     command: String,
 }
 
 #[derive(Debug, Serialize, Clone)]
 #[serde(untagged)]
-pub enum Cmd {
+pub(crate) enum Cmd {
     #[serde(rename = "task_name")]
     TaskName(String),
     #[serde(rename = "task")]
@@ -154,7 +154,7 @@ pub enum Cmd {
 
 #[derive(Debug, Deserialize, Clone)]
 #[serde(untagged)]
-pub enum StringOrTask {
+pub(crate) enum StringOrTask {
     String(String),
     Task(Box<Task>),
 }
@@ -216,7 +216,7 @@ impl<'de> de::Deserialize<'de> for Cmd {
 /// Represents a Task
 #[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(deny_unknown_fields)]
-pub struct Task {
+pub(crate) struct Task {
     /// Name of the task
     #[serde(skip_deserializing)]
     name: String,
@@ -319,17 +319,17 @@ impl Task {
     }
 
     /// Returns the name of the task
-    pub fn get_name(&self) -> &str {
+    pub(crate) fn get_name(&self) -> &str {
         &self.name
     }
 
     /// Returns weather the task is private or not
-    pub fn is_private(&self) -> bool {
+    pub(crate) fn is_private(&self) -> bool {
         self.private
     }
 
     /// Returns the help for the task
-    pub fn get_help(&self) -> &str {
+    pub(crate) fn get_help(&self) -> &str {
         match self.help {
             Some(ref help) => help.trim(),
             None => "",
@@ -711,7 +711,7 @@ impl Task {
 
     /// Helper function for running a task. Accepts the environment variables as a HashMap.
     /// So that we can reuse the environment variables for multiple tasks.
-    pub fn run(
+    pub(crate) fn run(
         &self,
         args: &ArgsContext,
         config_file: &ConfigFile,
@@ -747,7 +747,7 @@ mod tests {
     use std::io::Write;
     use std::path::Path;
 
-    pub fn get_task(
+    pub(crate) fn get_task(
         name: &str,
         definition: &str,
         base_path: Option<&Path>,
