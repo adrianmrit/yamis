@@ -227,8 +227,8 @@ pub struct Task {
     /// Interpreter program to use
     script_runner: Option<String>,
     /// Script extension
-    #[serde(alias = "script_extension")]
-    script_ext: Option<String>,
+    #[serde(alias = "script_ext")]
+    script_extension: Option<String>,
     /// A program to run
     program: Option<String>,
     /// Args to pass to a command
@@ -287,7 +287,7 @@ impl Task {
         inherit_value!(self.help, base_task.help);
         inherit_value!(self.script, base_task.script);
         inherit_value!(self.script_runner, base_task.script_runner);
-        inherit_value!(self.script_ext, base_task.script_ext);
+        inherit_value!(self.script_extension, base_task.script_extension);
         inherit_value!(self.program, base_task.program);
         inherit_value!(self.args, base_task.args);
         inherit_value!(self.cmds, base_task.cmds);
@@ -655,7 +655,7 @@ impl Task {
         let script = tera.render(&template_name, &context)?;
         let default_script_extension = String::from(DEFAULT_SCRIPT_EXTENSION);
         let script_extension = self
-            .script_ext
+            .script_extension
             .as_ref()
             .unwrap_or(&default_script_extension);
 
