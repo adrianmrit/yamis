@@ -666,6 +666,17 @@ impl Task {
             config_file.filepath.as_path(),
         )?;
 
+        cfg_if::cfg_if! {
+            if #[cfg(target_os = "windows")]
+            {
+                let script_path = script_path.to_str().unwrap();
+                let script_path = script_path.replace("\\", "\\\\");
+                context.insert("script_path", &script_path);
+            } else {
+                context.insert("script_path", &script_path);
+            }
+        }
+
         // Interpreter is a list, because sometimes there is need to pass extra arguments to the
         // interpreter, such as the /C option in the batch case
         let script_runner = if let Some(script_runner) = &self.script_runner {
@@ -675,7 +686,6 @@ impl Task {
         };
 
         let script_runner_template_name = format!("tasks.{task_name}.script_runner");
-        context.insert("script_path", &script_path);
         tera.add_raw_template(&script_runner_template_name, script_runner)?;
 
         let script_runner = tera.render(&script_runner_template_name, &context)?;
