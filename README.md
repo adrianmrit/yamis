@@ -18,7 +18,8 @@
     * [wd](#wd)
     * [env](#env)
     * [env_file](#env_file)
-  * [Task File Properties](#task-file-properties)
+  * [Tasks File Properties](#tasks-file-properties)
+    * [version](#version)
     * [tasks](#tasks)
   * [Task Properties](#task-properties)
     * [help](#help): The help message.
@@ -91,16 +92,18 @@ Create a file named `yamis.root.yml` in the root of your project.
 Here is a very basic example of a task file:
 ```yaml
 # yamis.root.yml
-env:
-  DOCKER_CONTAINER: sample_docker_container
+version: 2
+
+vars:
+  greeting: Hello World
 
 tasks:
   hi:
     cmds:
-      - echo Hello World
+      - echo {{ greeting }}
   
   hi.windows:
-    script: echo Hello World from Windows
+    script: echo {{ greeting }} from Windows
   
   sum:
     cmds:
@@ -208,11 +211,39 @@ The value defined in the executed task takes precedence over the value defined i
 defined in the `env` property take precedence over the values defined in the file.
 
 
-<a name="task-file-properties"></a>
+<a name="vars"></a>
+##### vars
+
+The `vars` property is used to define variables that will be available to all tasks in the file.
+This behaves like the [env](#env) property, but the variables are not exported to the environment,
+and can be more complex than strings.
+
+For example, you can define a variable like this:
+
+```yaml
+vars:
+  user:
+    age: 20
+    name: John
+```
+
+And then use it in a task like this:
+
+```yaml
+tasks:
+  say_hi:
+    cmd: echo "Hi, {{ user.name }}!"
+```
+
+
+<a name="tasks-file-properties"></a>
 ### Tasks File Properties
 
 Besides the [common properties](#common-properties), the following properties can be defined in the task file:
 - [tasks](#tasks): The tasks defined in the file.
+- version: The version of the file. Although not used at the moment, it is required for future compatibility. The version
+  can be a number or string. At the moment backward compatibility with version 1 was not implemented. Therefore, at the
+  moment of writing this, the version should be `2` or `v2`.
 
 
 <a name="tasks"></a>
@@ -227,10 +258,7 @@ Private tasks should start with an underscore, i.e. `_private-task`.
 <a name="task-properties"></a>
 ### Task Properties
 
-The task definition can have the following properties:
-- [wd](#wd): The default working directory. Same as the file property.
-- [env](#env): Environment variables. Same as the file property.
-- [env_file](#env_file): File containing environment variables. Same as the file property.
+Besides the common properties, the task can have the following properties:
 - [help](#help): The help message.
 - [bases](#bases): The bases to execute.
 - [script_runner](#script_runner): A template to parse the script program and arguments.
@@ -427,26 +455,22 @@ The exported variables are:
   then `kwargs` will be `{"name": "John"}`. If the same named argument is passed multiple times, the value will be
   the last one.
 - `pkwargs`: Same as `kwargs`, but the value is a list of all the values passed for the same named argument.
-- `env`: The environment variables of the system. If the system has an environment variable `NAME` with
-  value `John`, then `env.NAME` will be `John`.
-- `TASK`: The task object and its properties.
-- `FILE`: The file object and its properties.
+- `env`: The [environment variables](#env) defined in the task. Note that this does not includes the environment variables
+  defined in the system. To access those, use `{{ get_env(name=<value>, default=<default>) }}`.
+- `vars`: The [variables](#vars) defined in the task.
+- `TASK`: The [task](#task-properties) object and its properties.
+- `FILE`: The [file](#tasks-file-properties) object and its properties.
 
 Named arguments are also treated as positional arguments, i.e. if `--name John --surname=Doe` is passed,
 `{{ args.0 }}` will be `--name`, `{{ args.1 }}` will be `John`, and `{{ args.2 }}` will be `--surname="Doe"`.
 Thus, it is recommended to pass positional arguments first.
 
-Because the same named value can be passed multiple times, the value of the named argument is a list. I.e. if you want
-to access the first value, you can use `{{ kwargs.name.0 }}`. If you want to access all the values, you can use
-`{{ kwargs.name | join(sep=" ") }}`.
-
 In you want to pass all the command line arguments, you can use `{{ args | join(sep=" ") }}`, or `{% for arg in args %} "{{ arg }}" {% %}`
-if you want to quote them. You can check the [Tera documentation](https://tera.netlify.app/docs/) for more information.
+if you want to quote them.
+
+You can check the [Tera documentation](https://tera.netlify.app/docs/#introduction) for more information. Just ignore the Rust specific parts.
 
 
 <a name="Contributing"></a>
 ## Contributing
-Feel free to create issues to report bugs, ask questions or request changes.
-
-You can also fork the repository to make pull requests, just make sure the code is well tested.
-Signed commits are preferred.
+Contributions welcome! Please read the [contributing guidelines](CONTRIBUTING.md) first.

@@ -8,6 +8,7 @@ to improve the usability of the tool.
 ### Added
 - Add `--dry` option to print the commands that would be run without actually running them.
 - Add `cmds` option to tasks to run multiple commands in a single task.
+- Add `vars` options.
 
 ### Changed
 - Drop the custom parser in favor of the [tera](https://tera.netlify.app/) template engine.
