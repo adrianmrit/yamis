@@ -144,10 +144,11 @@ pub(crate) fn split_command(val: &str) -> Vec<String> {
             escaped = false;
             continue;
         }
+        let is_space_like = c == ' ' || c == '\t' || c == '\n' || c == '\r';
         match c {
             '\\' => escaped = true,
             '"' => in_quotes = !in_quotes,
-            ' ' if !in_quotes => {
+            _ if !in_quotes && is_space_like => {
                 if !current.is_empty() {
                     result.push(current.clone());
                     current.clear();
@@ -156,6 +157,9 @@ pub(crate) fn split_command(val: &str) -> Vec<String> {
             _ => current.push(c),
         }
     }
+
+    // TODO: Return error if in_quotes is true
+
     if !current.is_empty() {
         result.push(current);
     }
@@ -244,5 +248,12 @@ mod tests {
         let command = "echo Hello\\ World \"Hello \\\"World\"";
         let args = split_command(command);
         assert_eq!(args, vec!["echo", "Hello World", "Hello \"World"]);
+
+        let command = "echo Hello \"World\" \"--param\" \"--param=something\"\n";
+        let args = split_command(command);
+        assert_eq!(
+            args,
+            vec!["echo", "Hello", "World", "--param", "--param=something"]
+        );
     }
 }

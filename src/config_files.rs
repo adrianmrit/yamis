@@ -9,10 +9,9 @@ use petgraph::algo::toposort;
 use serde_derive::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::ffi::OsStr;
-use std::fmt::{Display, Formatter};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::{env, error, fmt, fs};
+use std::{env, fs};
 
 pub(crate) type ConfigFileSharedPtr = Arc<Mutex<ConfigFile>>;
 
@@ -33,34 +32,6 @@ const GLOBAL_CONFIG_FILES_PRIO: &[&str] = &["yamis/yamis.global.yml", "yamis/yam
 
 pub(crate) type PathIteratorItem = PathBuf;
 pub(crate) type PathIterator = Box<dyn Iterator<Item = PathIteratorItem>>;
-
-/// Errors related to config files and tasks
-#[derive(Debug)]
-pub(crate) enum ConfigError {
-    // /// Raised when a config file is not found for a given path
-    // FileNotFound(String), // Given config file not found
-    // /// Raised when no config file is found during auto-discovery
-    // NoConfigFile, // No config file was discovered
-    /// Bad Config error
-    BadConfigFile(PathBuf, String),
-}
-
-impl Display for ConfigError {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        match *self {
-            // ConfigError::FileNotFound(ref s) => write!(f, "File {} not found.", s),
-            // ConfigError::NoConfigFile => write!(f, "No config file found."),
-            ConfigError::BadConfigFile(ref path, ref reason) => write!(
-                f,
-                "Bad config file `{}`:\n    {}",
-                path.to_string_lossy(),
-                reason
-            ),
-        }
-    }
-}
-
-impl error::Error for ConfigError {}
 
 /// Iterates over existing config file paths, in order of priority.
 pub(crate) struct ConfigFilePaths {
@@ -276,9 +247,7 @@ impl Default for ConfigFilesContainer {
 #[serde(deny_unknown_fields)]
 pub struct ConfigFile {
     /// Version of the config file.
-    #[allow(dead_code)] // to avoid lint errors
-    #[serde(default, skip_serializing)]
-    version: serde::de::IgnoredAny,
+    version: String,
     /// Path of the file.
     #[serde(skip_deserializing)]
     pub(crate) filepath: PathBuf,
@@ -298,33 +267,11 @@ pub struct ConfigFile {
 impl ConfigFile {
     /// Reads the file from the path and constructs a config file
     fn extract(path: &Path) -> DynErrResult<ConfigFile> {
-        let extension = path
-            .extension()
-            .unwrap_or_else(|| OsStr::new(""))
-            .to_string_lossy()
-            .to_string();
-
-        let is_yaml = match extension.as_str() {
-            "yaml" => true,
-            "yml" => true,
-            "toml" => false,
-            _ => {
-                return Err(ConfigError::BadConfigFile(
-                    path.to_path_buf(),
-                    String::from("Extension must be either `.toml`, `.yaml` or `.yml`"),
-                )
-                .into());
-            }
-        };
         let contents = match fs::read_to_string(path) {
             Ok(file_contents) => file_contents,
             Err(e) => return Err(format!("There was an error reading the file:\n{}", e).into()),
         };
-        if is_yaml {
-            Ok(serde_yaml::from_str(&contents)?)
-        } else {
-            Ok(toml::from_str(&contents)?)
-        }
+        Ok(serde_yaml::from_str(&contents)?)
     }
 
     /// Loads a config file
@@ -355,11 +302,12 @@ impl ConfigFile {
         let mut tasks = conf.get_flat_tasks()?;
 
         let dep_graph = get_task_dependency_graph(&tasks)?;
+        // TODO: Return the cycle. Could use petgraph::visit::DfsPostOrder instead of toposort
         let dependencies = toposort(&dep_graph, None);
         let dependencies = match dependencies {
             Ok(dependencies) => dependencies,
             Err(e) => {
-                return Err(format!("Found a cyclic dependency for Task:\n{}", e.node_id()).into());
+                return Err(format!("Found a cyclic dependency for task: {}", e.node_id()).into());
             }
         };
         let dependencies: Vec<String> = dependencies
@@ -544,6 +492,8 @@ mod tests {
         project_config_file
             .write_all(
                 r#"
+    version: 2
+
     tasks:
         hello_project:
             script: "echo hello project"
@@ -557,6 +507,8 @@ mod tests {
         config_file
             .write_all(
                 r#"
+    version: 2
+
     tasks:
         hello:
             script: echo hello
@@ -570,6 +522,8 @@ mod tests {
         local_file
             .write_all(
                 r#"
+    version: 2
+
     tasks:
         hello_local:
             script: echo hello local
@@ -604,6 +558,8 @@ mod tests {
         sample_config_file
             .write_all(
                 r#"
+version: 2
+
 tasks:
     hello_project:
         script: echo hello project
@@ -674,6 +630,8 @@ OTHER_VALUE=HELLO
         project_config_file
             .write_all(
                 r#"
+version: 2
+
 env_file: ".env"
 env:
   VALUE_OVERRIDE: NEW_VALUE
@@ -700,6 +658,8 @@ tasks:
         project_config_file
             .write_all(
                 r#"
+version: 2
+
 tasks:
   task_1:
     script: echo hello
@@ -733,6 +693,8 @@ tasks:
         project_config_file
             .write_all(
                 r#"
+version: 2
+
 tasks:
   task_1:
     script: echo hello
@@ -772,6 +734,8 @@ tasks:
         project_config_file
             .write_all(
                 r#"
+version: 2
+
 tasks:
   task_1:
     script: echo hello
@@ -802,16 +766,38 @@ tasks:
     }
 
     #[test]
-    fn test_wrong_config_file_extension() {
+    fn test_circular_dependencies_return_error() {
         let tmp_dir = TempDir::new().unwrap();
 
-        let project_config_path = tmp_dir.path().join("yamis.root.wrong");
-        File::create(project_config_path.as_path()).unwrap();
+        let project_config_path = tmp_dir.path().join("yamis.root.yaml");
+        let mut project_config_file = File::create(project_config_path.as_path()).unwrap();
+        project_config_file
+            .write_all(
+                r#"
+version: 2
+
+tasks:
+    task_1:
+        script: echo hello
+        bases:
+            - task_2
+    
+    task_2:
+        script: echo hello again
+        bases:
+            - task_1
+        "#
+                .as_bytes(),
+            )
+            .unwrap();
+
         let config_file = ConfigFile::load(project_config_path);
         assert!(config_file.is_err());
-        assert!(config_file
-            .unwrap_err()
-            .to_string()
-            .contains("Bad config file"));
+
+        let err = config_file.err().unwrap();
+        assert_eq!(
+            err.to_string(),
+            "Found a cyclic dependency for task: task_1"
+        );
     }
 }

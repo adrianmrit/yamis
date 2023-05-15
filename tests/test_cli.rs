@@ -22,6 +22,7 @@ fn test_run_simple_task() -> Result<(), Box<dyn std::error::Error>> {
     let mut file = File::create(tmp_dir.join("yamis.root.yml"))?;
     file.write_all(
         r#"
+    version: 2
     tasks:
         hello:
             script: echo "hello world"
@@ -45,6 +46,7 @@ fn test_args() -> Result<(), Box<dyn std::error::Error>> {
     let mut file = File::create(tmp_dir.join("yamis.root.yml"))?;
     file.write_all(
         r#"
+    version: 2
     tasks:
         hello:
             script: echo {{ args.0 }} {{ args.1 }} {{ args }}
@@ -71,6 +73,7 @@ fn test_kwargs() -> Result<(), Box<dyn std::error::Error>> {
     let mut file = File::create(tmp_dir.join("yamis.root.yml"))?;
     file.write_all(
         r#"
+    version: 2
     tasks:
         hello:
             script: echo {{ kwargs.k1 }} {{ kwargs.k2 }}
@@ -99,6 +102,8 @@ fn test_pkwargs() -> Result<(), Box<dyn std::error::Error>> {
     let mut file = File::create(tmp_dir.join("yamis.root.yml"))?;
     file.write_all(
         r#"
+    version: 2
+
     tasks:
         hello:
             script: echo {{ pkwargs.k1.0 }} {{ pkwargs.k1.1 }} {{ pkwargs.k2.0 }}
@@ -127,6 +132,8 @@ fn test_file_option() -> Result<(), Box<dyn std::error::Error>> {
     let mut file = File::create(tmp_dir.join("sample.yamis.yml"))?;
     file.write_all(
         r#"
+    version: 2
+
     tasks:
         hello:
             script: "ls"
@@ -154,6 +161,8 @@ fn test_run_os_task() -> Result<(), Box<dyn std::error::Error>> {
     let mut file = File::create(tmp_dir.join("yamis.root.yml"))?;
     file.write_all(
         r#"
+    version: 2
+
     tasks:
         hello.windows:
             script: echo hello windows
@@ -206,6 +215,8 @@ fn test_set_env() -> Result<(), Box<dyn std::error::Error>> {
     let mut file = File::create(tmp_dir.join("yamis.root.yml"))?;
     file.write_all(
         r#"
+version: 2
+
 env:
     greeting: "hello world"
     one_plus_one: "two"
@@ -262,6 +273,7 @@ fn test_env_file() -> Result<(), Box<dyn std::error::Error>> {
     let mut file = File::create(tmp_dir.join("yamis.root.yml"))?;
     file.write_all(
         r#"
+version: 2
 env_file: ".env"
 
 tasks:
@@ -317,6 +329,8 @@ fn test_run_program() -> Result<(), Box<dyn std::error::Error>> {
     file.write_all(
         format!(
             r#"
+    version: 2
+
     tasks:
         hello:
             program: {}
@@ -344,6 +358,8 @@ fn test_run_cmds() -> Result<(), Box<dyn std::error::Error>> {
 
     file.write_all(
         r#"
+    version: 2
+
     env:
         greeting: "hello world"
 
@@ -405,6 +421,7 @@ fn test_env_inheritance() -> Result<(), Box<dyn std::error::Error>> {
     let mut file = File::create(tmp_dir.join("yamis.root.yml"))?;
     file.write_all(
         r#"
+version: 2
 tasks:
     hello_base:
         env:
@@ -449,6 +466,7 @@ fn test_extend_args() -> Result<(), Box<dyn std::error::Error>> {
     file.write_all(
         format!(
             r#"
+version: 2
 tasks:
   echo_program:
     program: "bash"
@@ -489,6 +507,7 @@ fn test_specify_script_runner() -> Result<(), Box<dyn std::error::Error>> {
     let mut file = File::create(tmp_dir.join("yamis.root.yml"))?;
     file.write_all(
         r#"
+version: 2
 tasks:
     hello:
         script_runner: "python -m {{ script_path }}"

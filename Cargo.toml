@@ -1,6 +1,6 @@
 [package]
 name = "yamis"
-version = "1.2.0"
+version = "2.0.0"
 edition = "2021"
 license = "GPL-3.0-only"
 authors = ["Adrian Martinez <adrianmrit@gmail.com>"]
@@ -21,7 +21,6 @@ categories = [
 regex = "1"
 cfg-if = "1.0"
 colored = "2"
-toml = "0.7.3"
 serde_yaml = "0.9"
 lazy_static = "1.4"
 serde_derive = "1.0"
@@ -39,9 +38,6 @@ directories = { version = "5.0.1" }
 md-5 = "0.10"  # Used for caching
 tera = "1.18" # Used for templating
 
-# Example for adding another version as dependency. Need to remove the runtime feature, and make it optional
-# yamis_v2 = { package="yamis",  version = "2.0", default-features = false, optional = true }
-
 [dev-dependencies]
 assert_cmd = "2.0"
 predicates = "3.0.3"
@@ -53,5 +49,4 @@ path = "src/main.rs"
 
 [features]
 default = ["runtime"]
-# Only add other versions as dependencies if the runtime feature is enabled
 runtime = []

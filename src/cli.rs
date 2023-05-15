@@ -3,10 +3,9 @@ use colored::{ColoredString, Colorize};
 use serde_derive::Deserialize;
 use std::collections::HashMap;
 use std::error::Error;
-use std::ffi::OsStr;
 use std::fs::File;
 use std::path::Path;
-use std::{env, fmt, fs};
+use std::{env, fmt};
 
 use crate::args::ArgsContext;
 use crate::config_files::{
@@ -28,25 +27,20 @@ struct TaskSubcommand {
 
 /// Enum of config file containers by version
 enum ConfigFileContainerVersion {
-    V1(ConfigFilesContainer),
-}
-
-fn default_version() -> Version {
-    Version::V1
+    V2(ConfigFilesContainer),
 }
 
 #[derive(Debug, Deserialize)]
 pub struct ConfigFileVersionSerializer {
-    #[serde(default = "default_version")]
     version: Version,
 }
 
 /// Enum of available config file versions
 #[derive(Hash, Eq, PartialEq, Debug, Deserialize)]
 enum Version {
-    #[serde(alias = "v1")]
-    #[serde(rename = "1")]
-    V1,
+    #[serde(alias = "v2")]
+    #[serde(rename = "2")]
+    V2,
 }
 
 /// Holds all the config file containers, regardless of the version they are supposed to handle
@@ -97,8 +91,8 @@ impl ConfigFileContainers {
     fn new() -> Self {
         let mut containers = HashMap::new();
         containers.insert(
-            Version::V1,
-            ConfigFileContainerVersion::V1(ConfigFilesContainer::new()),
+            Version::V2,
+            ConfigFileContainerVersion::V2(ConfigFilesContainer::new()),
         );
         Self { containers }
     }
@@ -111,31 +105,12 @@ impl ConfigFileContainers {
     ///
     /// returns: Result<String, Box<dyn Error, Global>>
     pub(crate) fn get_file_version(path: &Path) -> DynErrResult<Version> {
-        let extension = path
-            .extension()
-            .unwrap_or_else(|| OsStr::new(""))
-            .to_string_lossy()
-            .to_string();
-
-        let is_yaml = match extension.as_str() {
-            "yaml" => true,
-            "yml" => true,
-            "toml" => false,
-            _ => {
-                panic!("Unknown file extension: {}", extension);
-            }
-        };
-
         let file = match File::open(path) {
             Ok(file_contents) => file_contents,
             Err(e) => return Err(format!("There was an error reading the file:\n{}", e).into()),
         };
 
-        let result: ConfigFileVersionSerializer = if is_yaml {
-            serde_yaml::from_reader(file)?
-        } else {
-            toml::from_str(&fs::read_to_string(path)?)?
-        };
+        let result: ConfigFileVersionSerializer = serde_yaml::from_reader(file)?;
 
         Ok(result.version)
     }
@@ -147,10 +122,10 @@ impl ConfigFileContainers {
             found = true;
             let version = ConfigFileContainers::get_file_version(&path)?;
             match version {
-                Version::V1 => {
+                Version::V2 => {
                     println!("{}:", colorize_config_file_path(&path.to_string_lossy()));
-                    let container = self.containers.get_mut(&Version::V1).unwrap();
-                    let ConfigFileContainerVersion::V1(container) = container;
+                    let container = self.containers.get_mut(&Version::V2).unwrap();
+                    let ConfigFileContainerVersion::V2(container) = container;
                     let config_file_ptr = container.read_config_file(path.clone())?;
                     let config_file_lock = config_file_ptr.lock().unwrap();
                     let task_names = config_file_lock.get_public_task_names();
@@ -175,9 +150,9 @@ impl ConfigFileContainers {
         for path in paths {
             let version = ConfigFileContainers::get_file_version(&path)?;
             match version {
-                Version::V1 => {
-                    let container = self.containers.get_mut(&Version::V1).unwrap();
-                    let ConfigFileContainerVersion::V1(container) = container;
+                Version::V2 => {
+                    let container = self.containers.get_mut(&Version::V2).unwrap();
+                    let ConfigFileContainerVersion::V2(container) = container;
                     let config_file_ptr = container.read_config_file(path.clone())?;
                     let config_file_lock = config_file_ptr.lock().unwrap();
                     let task = config_file_lock.get_task(task);
@@ -230,9 +205,9 @@ impl ConfigFileContainers {
                 }
             };
             match version {
-                Version::V1 => {
-                    let container = self.containers.get_mut(&Version::V1).unwrap();
-                    let ConfigFileContainerVersion::V1(container) = container;
+                Version::V2 => {
+                    let container = self.containers.get_mut(&Version::V2).unwrap();
+                    let ConfigFileContainerVersion::V2(container) = container;
                     let config_file_ptr = match container.read_config_file(path.clone()) {
                         Ok(val) => val,
                         Err(e) => {

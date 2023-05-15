@@ -519,6 +519,7 @@ impl Task {
 
             let rendered_args = tera.render(&template_name, &context)?;
             let rendered_args_list = split_command(&rendered_args);
+            dbg!(&rendered_args_list);
             println!(
                 "{}",
                 format!("{}: {} {}", self.name, program, rendered_args).yamis_info()
@@ -670,7 +671,7 @@ impl Task {
             if #[cfg(target_os = "windows")]
             {
                 let script_path = script_path.to_str().unwrap();
-                let script_path = script_path.replace("\\", "\\\\");
+                let script_path = script_path.replace('\\', "\\\\");
                 context.insert("script_path", &script_path);
             } else {
                 context.insert("script_path", &script_path);
@@ -751,7 +752,7 @@ mod tests {
         definition: &str,
         base_path: Option<&Path>,
     ) -> Result<Task, Box<dyn std::error::Error>> {
-        let mut task: Task = toml::from_str(definition).unwrap();
+        let mut task: Task = serde_yaml::from_str(definition).unwrap();
         task.setup(name, base_path.unwrap_or_else(|| Path::new("")))?;
         Ok(task)
     }
@@ -763,6 +764,8 @@ mod tests {
         let mut file = File::create(&config_file_path).unwrap();
         file.write_all(
             r#"
+version: 2
+
 tasks:
     hello_base:
         env:
@@ -802,6 +805,8 @@ tasks:
         let mut file = File::create(&config_file_path).unwrap();
         file.write_all(
             r#"
+    version: 2
+
     tasks:
         bash:
             program: "bash"
@@ -838,6 +843,8 @@ tasks:
         let mut file = File::create(&config_file_path).unwrap();
         file.write_all(
             r#"
+version: 2
+
 tasks:
     base:
         help: >
@@ -894,6 +901,8 @@ tasks:
             .write_all(
                 r#"
 env_file: ".env"
+
+version: 2
 
 tasks:
     test.windows:
@@ -968,8 +977,8 @@ tasks:
         let task = get_task(
             "sample",
             r#"
-        script = "hello world"
-        program = "some_program"
+        script: "hello world"
+        program: "some_program"
     "#,
             None,
         );
@@ -982,7 +991,7 @@ tasks:
         let task = get_task(
             "sample",
             r#"
-        script_runner = ""
+        script_runner: ""
     "#,
             None,
         );
@@ -995,8 +1004,8 @@ tasks:
         let task = get_task(
             "sample",
             r#"
-        script = "sample script"
-        args = "some args"
+        script: "sample script"
+        args: "some args"
     "#,
             None,
         );
