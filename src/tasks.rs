@@ -574,6 +574,7 @@ impl Task {
         self.spawn_command(&mut command, dry_mode)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn run_cmds_cmd(
         &self,
         cmd: &str,
