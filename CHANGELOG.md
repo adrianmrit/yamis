@@ -1,6 +1,30 @@
 # Changelog
 
+## [2.0.0] - 
+
+Because the usage is still low, I have decided to introduce some breaking changes
+to improve the usability of the tool.
+
+### Added
+- Add `--dry` option to print the commands that would be run without actually running them.
+- Add `cmds` option to tasks to run multiple commands in a single task.
+
+### Changed
+- Drop the custom parser in favor of the [tera](https://tera.netlify.app/) template engine.
+- Look for files in the following order: `yamis.private.yml`, `yamis.private.yaml`, `yamis.yml`, `yamis.yaml`, `yamis.root.yml`, `yamis.root.yaml`.
+- Change the user config file to `~/yamis/yamis.global.yml` or `~/yamis/yamis.global.yaml`, in priority order.
+- Can only run global task by using the `--global` or `-g` option.
+- `script_runner` now takes a string instead of a list of strings.
+
+### Removed
+- Drop support for Toml files.
+- Drop the guarantee of backward compatibility across mayor versions.
+- Removed the `serial` task option.
+- Removed the debug options.
+- Removed the `script_runner_args` option.
+
 ## [1.2.0] - 2023-01-14
+
 ### Added
 - Add option to print task name and config file path when running tasks.
 
