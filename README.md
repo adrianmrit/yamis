@@ -199,6 +199,10 @@ and the value is the value of the environment variable.
 
 The value defined in the executed task takes precedence over the value defined in the file.
 
+See also:
+- [env_file](#env_file)
+- [env and vars inheritance](#env-and-vars-inheritance)
+
 
 <a name="env_file"></a>
 ##### env_file
@@ -469,6 +473,107 @@ In you want to pass all the command line arguments, you can use `{{ args | join(
 if you want to quote them.
 
 You can check the [Tera documentation](https://tera.netlify.app/docs/#introduction) for more information. Just ignore the Rust specific parts.
+
+
+<a name="env-and-vars-inheritance"></a>
+### Env and vars inheritance
+
+Environment variables ([env](#env)) and variables ([vars](#vars)) follow this priority order:
+- Defined in [env](#env)/[vars](#vars) in the subtask.
+- Defined in [env_file](#env_file) in the subtask.
+- Values inherited from [bases](#bases) in the subtask.
+- Defined in [env](#env)/[vars](#vars) in the parent task.
+- Defined in [env_file](#env_file) in the parent task.
+- Values inherited from [bases](#bases) in the parent task.
+- Defined [env](#env)/[vars](#vars) in the file.
+- Defined in [env_file](#env_file) in the file.
+
+For example, if you have the following file:
+```yaml
+version: 2
+
+# Default values. The tasks can override these values.
+env:
+  ENV1: "env1"
+  ENV2: "env2"
+
+vars:
+  VAR1: "var1"
+  VAR2: "var2"
+
+tasks:
+  test1:
+    env:
+      ENV2: "test1_env2"
+      ENV3: "test1_env3"
+    vars:
+      VAR2: "test1_var2"
+      VAR3: "test1_var3"
+    cmds:
+      - echo "{{ env.ENV1 }} {{ env.ENV2 }} {{ env.ENV3 }}"
+      - echo "{{ vars.VAR1 }} {{ vars.VAR2 }} {{ vars.VAR3 }}"
+      
+      # env and vars from the parent will take precedence
+      - task: test2
+      
+      # This subtask will inherit the env and vars from the parent
+      # but its own bases, envs and vars will take precedence
+      - task:
+          # Bases will take precedence over the parent task
+          bases: [test2]
+
+          # env and vars take precedence over the parent task and the bases
+          env:
+            ENV2: "subtask_env2"
+          vars:
+            VAR2: "subtask_var2"
+  
+  test2:
+    env:
+      ENV2: "test2_env2"
+      ENV3: "test2_env3"
+    vars:
+      VAR2: "test2_var2"
+      VAR3: "test2_var3"
+    cmds:
+      - echo "{{ env.VAR1 }} {{ env.VAR2 }} {{ env.VAR3 }}"
+      - echo "{{ vars.VAR1 }} {{ vars.VAR2 }} {{ vars.VAR3 }}"
+```
+
+The output will be (excluding debug output):
+```console
+$ yamis test1
+env1 test1_env2 test1_env3
+var1 test1_var2 test1_var3
+env1 test1_env2 test1_env3
+var1 test1_var2 test1_var3
+env1 subtask_env2 test2_env3
+var1 subtask_var2 test2_var3
+```
+
+This might be a bit confusing, so let's explain the output:
+
+```console
+env1 test1_env2 test1_env3
+var1 test1_var2 test1_var3
+```
+This is the output of the first two commands in the `test1` task. `ENV1` and `VAR1` are only defined in the file, while the
+task overrides `ENV2`, `ENV3`, `VAR2` and `VAR3`.
+
+```console
+env1 test1_env2 test1_env3
+var1 test1_var2 test1_var3
+```
+This is the output of the third command in the `test1` task, which calls `test2`. Again, `ENV1` and `VAR1` are only defined in the file.
+Even though `test2` overrides `ENV2`, `ENV3`, `VAR2` and `VAR3`, the values defined in `test1`, the parent task, take precedence.
+
+```console
+env1 subtask_env2 test2_env3
+var1 subtask_var2 test2_var3
+```
+This is the output of the fourth command in the `test1` task, which calls a subtask. `ENV1` and `VAR1` are only defined in the file.
+While it might seem like we are calling `task2`, we actually defined a new task that inherits from `task2` and overrides `ENV2` and `VAR2`.
+Therefore, the values inherited from `task2` will take precedence over the parent task.
 
 
 <a name="Contributing"></a>

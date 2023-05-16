@@ -18,6 +18,8 @@ use crate::types::DynErrResult;
 use crate::utils::{get_path_relative_to_base, read_env_file, split_command, TMP_FOLDER_NAMESPACE};
 use md5::{Digest, Md5};
 
+pub const DRY_RUN_MESSAGE: &str = "Dry run mode, nothing executed.";
+
 cfg_if::cfg_if! {
     if #[cfg(target_os = "windows")] {
         // Will run the actual script in CMD, but we don't need to specify /C option
@@ -506,7 +508,7 @@ impl Task {
     /// * `command` - Command to spawn
     fn spawn_command(&self, command: &mut Command, dry_run: bool) -> DynErrResult<()> {
         if dry_run {
-            println!("{}", "Dry run mode, nothing executed.".yamis_info());
+            println!("{}", DRY_RUN_MESSAGE.yamis_info());
             return Ok(());
         }
         let mut child = match command.spawn() {
@@ -561,7 +563,6 @@ impl Task {
 
             let rendered_args = tera.render(&template_name, &context)?;
             let rendered_args_list = split_command(&rendered_args);
-            dbg!(&rendered_args_list);
             println!(
                 "{}",
                 format!("{}: {} {}", self.name, program, rendered_args).yamis_info()
@@ -615,11 +616,13 @@ impl Task {
     ) -> DynErrResult<()> {
         let display_task_name = format!("{}.cmds.{}.{}", self.name, cmd_index, task_name);
         if let Some(mut task) = config_file.get_task(task_name) {
-            task.name = display_task_name;
-            let new_env = task.get_env(&self.env);
-            let new_vars = task.get_vars(&self.vars);
-            task.env = new_env;
-            task.vars = new_vars;
+            // The env and vars of the parent take precedence in this case.
+            task.env = self.get_env(&task.env);
+            task.vars = self.get_vars(&task.vars);
+
+            // Should setup first, to load the env_file.
+            task.setup(&display_task_name, config_file.directory())?;
+
             task.run(args, config_file, dry_run)
         } else {
             Err(TaskError::RuntimeError(
@@ -640,7 +643,12 @@ impl Task {
     ) -> DynErrResult<()> {
         let mut task = task.clone();
         let task_name = format!("{}.cmds.{}", self.name, cmd_index);
+
         task.setup(&task_name, config_file.directory())?;
+
+        // Should setup first, to load the env_file. This way the child task inherits from the parent,
+        // but can override specific values
+
         let base_task_names = task.bases.clone();
         for base_name in base_task_names.iter() {
             // Because the bases have been loaded already, there cannot be any circular dependencies
@@ -657,10 +665,12 @@ impl Task {
                 }
             }
         }
-        let new_env = task.get_env(&self.env);
-        let new_vars = task.get_vars(&self.vars);
-        task.env = new_env;
-        task.vars = new_vars;
+
+        // Done after setup and bases, so that the env and vars specified directly in the child take precedence
+        task.env = task.get_env(&self.env);
+        task.vars = task.get_vars(&self.vars);
+
+        // This should load the config file env and vars
         task.run(args, config_file, dry_run)
     }
 

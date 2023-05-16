@@ -4,6 +4,8 @@ use predicates::prelude::*;
 use std::fs::File;
 use std::io::Write;
 use std::process::Command;
+use yamis::print_utils::YamisOutput;
+use yamis::tasks::DRY_RUN_MESSAGE;
 
 #[test]
 fn test_no_config_file_discovered() {
@@ -399,18 +401,21 @@ fn test_run_cmds() -> Result<(), Box<dyn std::error::Error>> {
     cmd.arg("hi");
     cmd.arg("--name=world");
     cmd.assert().success().stdout(predicate::str::contains(
-        r#"[YAMIS] testing.cmds.0: some command
-[YAMIS] Dry run mode, nothing executed.
-[YAMIS] testing.cmds.1: some other command
-[YAMIS] Dry run mode, nothing executed.
-[YAMIS] testing.cmds.2.task_1.cmds.0: some command
-[YAMIS] Dry run mode, nothing executed.
-[YAMIS] testing.cmds.2.task_1.cmds.1: some other command
-[YAMIS] Dry run mode, nothing executed.
-[YAMIS] testing.cmds.3.task_3: program hi world
-[YAMIS] Dry run mode, nothing executed.
-[YAMIS] testing.cmds.4: program hello
-[YAMIS] Dry run mode, nothing executed."#,
+        format!(
+            r#"testing.cmds.0: some command
+{DRY_RUN_MESSAGE}
+testing.cmds.1: some other command
+{DRY_RUN_MESSAGE}
+testing.cmds.2.task_1.cmds.0: some command
+{DRY_RUN_MESSAGE}
+testing.cmds.2.task_1.cmds.1: some other command
+{DRY_RUN_MESSAGE}
+testing.cmds.3.task_3: program hi world
+{DRY_RUN_MESSAGE}
+testing.cmds.4: program hello
+{DRY_RUN_MESSAGE}"#,
+        )
+        .yamis_just_prefix(),
     ));
     Ok(())
 }
@@ -422,32 +427,86 @@ fn test_env_inheritance() -> Result<(), Box<dyn std::error::Error>> {
     file.write_all(
         r#"
 version: 2
+
+env:
+    VAR1: VAL1
+    VAR2: VAL2
+    VAR3: VAL3
+
 tasks:
-    hello_base:
+    test1:
         env:
-            greeting: "hello world"
+            VAR1: VAL1.2
 
-    calc_base:
+    test2:
         env:
-            one_plus_one: "2"
+            VAR2: VAL2.2
 
-    hello:
-        bases: ["hello_base", "calc_base"]
-        script: "echo $greeting, 1+1=$one_plus_one"
+    test3:
+        bases: ["test1", "test2"]
+        env:
+            # Env should inherit from test1 and test2 and take precedence over the child env
+            VAR1: VAL1.3
+        cmds:
+            - "echo VAR1: {{ env.VAR1 }}"
+            - "echo VAR2: {{ env.VAR2 }}"
+            - "echo VAR3: {{ env.VAR3 }}"
+            - task: test4
+            - task:
+                # Because we used bases, the env should be inherited from test4, not test3
+                bases: ["test4"]
+                env:
+                    VAR4: VAL4.3
 
-    hello.windows:
-        bases: ["hello_base", "calc_base"]
-        script: "echo %greeting%, 1+1=%one_plus_one%"
+            
+
+    test4:
+        env:
+            VAR1: VAL1.4
+            VAR2: VAL2.4
+            VAR3: VAL3.4
+            VAR4: VAL4
+        cmds:
+            - "echo VAR1: {{ env.VAR1 }}"
+            - "echo VAR2: {{ env.VAR2 }}"
+            - "echo VAR3: {{ env.VAR3 }}"
+            - "echo VAR4: {{ env.VAR4 }}"
     "#
         .as_bytes(),
     )?;
 
     let mut cmd = Command::cargo_bin("yamis")?;
     cmd.current_dir(tmp_dir.path());
-    cmd.arg("hello");
-    cmd.assert()
-        .success()
-        .stdout(predicate::str::contains("hello world, 1+1=2"));
+    cmd.arg("--dry");
+    cmd.arg("test3");
+    cmd.assert().success().stdout(predicate::str::contains(
+        format!(
+            r#"test3.cmds.0: echo VAR1: VAL1.3
+{DRY_RUN_MESSAGE}
+test3.cmds.1: echo VAR2: VAL2.2
+{DRY_RUN_MESSAGE}
+test3.cmds.2: echo VAR3: VAL3
+{DRY_RUN_MESSAGE}
+test3.cmds.3.test4.cmds.0: echo VAR1: VAL1.3
+{DRY_RUN_MESSAGE}
+test3.cmds.3.test4.cmds.1: echo VAR2: VAL2.2
+{DRY_RUN_MESSAGE}
+test3.cmds.3.test4.cmds.2: echo VAR3: VAL3.4
+{DRY_RUN_MESSAGE}
+test3.cmds.3.test4.cmds.3: echo VAR4: VAL4
+{DRY_RUN_MESSAGE}
+test3.cmds.4.cmds.0: echo VAR1: VAL1.4
+{DRY_RUN_MESSAGE}
+test3.cmds.4.cmds.1: echo VAR2: VAL2.4
+{DRY_RUN_MESSAGE}
+test3.cmds.4.cmds.2: echo VAR3: VAL3.4
+{DRY_RUN_MESSAGE}
+test3.cmds.4.cmds.3: echo VAR4: VAL4.3
+{DRY_RUN_MESSAGE}
+"#
+        )
+        .yamis_just_prefix(),
+    ));
     Ok(())
 }
 
@@ -558,18 +617,42 @@ fn test_vars() -> Result<(), Box<dyn std::error::Error>> {
 version: 2
 
 vars:
-    arg: val1
-    other: [1, 2, 3]
+    var1: val1
+    var2: val2
+    var3: [1, 2, 3]
     user:
         name: "user1"
         age: 18
 
 tasks:
     test:
+        vars:
+            # override var2 from root.vars, applies to children
+            var2: val2.1
+            # override var3 from root.vars, applies to children
+            var3: [4, 5, 6]
         cmds:
-            - "echo arg: {{ vars.arg }}"
-            - "echo other: {{ vars.other[0] }} {{ vars.other[1] }} {{ vars.other[2] }}"
+            - "echo var1: {{ vars.var1 }}"
+            - "echo var2: {{ vars.var2 }}"
+            - "echo var3: {{ vars.var3[0] }} {{ vars.var3[1] }} {{ vars.var3[2] }}"
             - "echo user: {{ vars.user.name }} {{ vars.user.age }}"
+            - task:
+                vars:
+                    # override var1 from test.vars
+                    var1: val1.1
+                cmds:
+                    - "echo var1: {{ vars.var1 }}"
+                    - "echo var2: {{ vars.var2 }}"
+                    - "echo var3: {{ vars.var3[0] }} {{ vars.var3[1] }} {{ vars.var3[2] }}"
+                    - "echo user: {{ vars.user.name }} {{ vars.user.age }}"
+            # Because the parent task takes precedence, should override var2 from other-test.vars
+            - task: other-test
+    
+    other-test:
+        vars:
+            var2: val2.2
+        cmds:
+            - "echo var2: {{ vars.var2 }}"
     "#
         .as_bytes(),
     )?;
@@ -578,13 +661,37 @@ tasks:
     cmd.current_dir(tmp_dir.path());
     cmd.arg("--dry");
     cmd.arg("test");
-    cmd.assert()
-        .success()
-        .stdout(
-            predicate::str::contains("arg: val1").and(
-                predicate::str::contains("other: 1 2 3")
-                    .and(predicate::str::contains("user: user1 18")),
-            ),
-        );
+    cmd.assert().success().stdout(predicate::str::contains(
+        format!(
+            r#"test.cmds.0: echo var1: val1
+{DRY_RUN_MESSAGE}
+test.cmds.1: echo var2: val2.1
+{DRY_RUN_MESSAGE}
+test.cmds.2: echo var3: 4 5 6
+{DRY_RUN_MESSAGE}
+test.cmds.3: echo user: user1 18
+{DRY_RUN_MESSAGE}
+test.cmds.4.cmds.0: echo var1: val1.1
+{DRY_RUN_MESSAGE}
+test.cmds.4.cmds.1: echo var2: val2.1
+{DRY_RUN_MESSAGE}
+test.cmds.4.cmds.2: echo var3: 4 5 6
+{DRY_RUN_MESSAGE}
+test.cmds.4.cmds.3: echo user: user1 18
+{DRY_RUN_MESSAGE}
+test.cmds.5.other-test.cmds.0: echo var2: val2.1
+{DRY_RUN_MESSAGE}
+"#
+        )
+        .yamis_just_prefix(),
+    ));
+
+    let mut cmd = Command::cargo_bin("yamis")?;
+    cmd.current_dir(tmp_dir.path());
+    cmd.arg("--dry");
+    cmd.arg("other-test");
+    cmd.assert().success().stdout(predicate::str::contains(
+        "other-test.cmds.0: echo var2: val2.2",
+    ));
     Ok(())
 }

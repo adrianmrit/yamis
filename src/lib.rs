@@ -7,7 +7,7 @@ pub(crate) mod args;
 pub(crate) mod config_files;
 mod defaults;
 pub mod print_utils;
-pub(crate) mod tasks;
+pub mod tasks;
 pub(crate) mod types;
 pub(crate) mod updater;
 mod utils;
