@@ -28,7 +28,6 @@ struct TaskSubcommand {
 /// Enum of available config file versions
 #[derive(Deserialize, Serialize)]
 pub(crate) enum Version {
-    #[serde(alias = "v2")]
     #[serde(rename = "2")]
     V2,
 }
