@@ -257,15 +257,23 @@ pub(crate) struct ConfigFile {
     #[serde(default)]
     /// Working directory. Defaults to the folder where the script runs.
     wd: Option<String>,
+
     /// Tasks inside the config file.
     #[serde(default)]
     pub(crate) tasks: HashMap<String, Task>,
+
     /// Env variables for all the tasks.
     pub(crate) env: Option<HashMap<String, String>>,
+
     /// Env file to read environment variables from
     pub(crate) env_file: Option<String>,
+
     /// Variables to be used around in the config file
     pub(crate) vars: Option<HashMap<String, Value>>,
+
+    /// Adds the given text to Tera, so that they can be included in templates
+    #[serde(default)]
+    pub(crate) templates: HashMap<String, String>,
 }
 
 impl ConfigFile {

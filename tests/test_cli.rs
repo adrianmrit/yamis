@@ -695,3 +695,51 @@ test.cmds.5.other-test.cmds.0: echo var2: val2.1
     ));
     Ok(())
 }
+
+#[test]
+fn test_templates() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp_dir = TempDir::new().unwrap();
+    let mut file = File::create(tmp_dir.join("yamis.root.yml"))?;
+    file.write_all(
+        r#"
+version: 2
+
+templates: 
+    echo: >
+        {% macro echo(msg, type="text") %}echo {{ msg }}{% endmacro %}
+    echo2: >
+        echo {{ args[0] }}
+
+tasks:
+    test:
+        templates:
+            echo2: >
+                echo {{ args.0 | upper }}
+            bye: >
+                and bye
+        cmds:
+            - |
+                {% import "templates.echo" as macros %}{{ macros::echo(msg="hello") }} world
+            - |
+                {% include "templates.echo2" %} {% include "templates.bye" %}
+"#
+        .as_bytes(),
+    )?;
+
+    let mut cmd = Command::cargo_bin("yamis")?;
+    cmd.current_dir(tmp_dir.path());
+    cmd.arg("--dry");
+    cmd.arg("test");
+    cmd.arg("hello");
+    cmd.assert().success().stdout(predicate::str::contains(
+        format!(
+            r#"test.cmds.0: echo hello world
+{DRY_RUN_MESSAGE}
+test.cmds.1: echo HELLO and bye
+{DRY_RUN_MESSAGE}
+"#
+        )
+        .yamis_just_prefix(),
+    ));
+    Ok(())
+}

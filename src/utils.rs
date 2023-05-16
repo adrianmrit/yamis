@@ -168,6 +168,32 @@ pub(crate) fn split_command(val: &str) -> Vec<String> {
     result
 }
 
+// Joins the commands, quoting those with spaces and escaping quotes and backslashes.
+pub(crate) fn join_commands(commands: &[String]) -> String {
+    let mut result = String::new();
+    for (i, command) in commands.iter().enumerate() {
+        if i > 0 {
+            result.push(' ');
+        }
+        if command.contains(' ') {
+            result.push('"');
+            for c in command.chars() {
+                match c {
+                    '"' | '\\' => {
+                        result.push('\\');
+                        result.push(c);
+                    }
+                    _ => result.push(c),
+                }
+            }
+            result.push('"');
+        } else {
+            result.push_str(command);
+        }
+    }
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -257,5 +283,36 @@ mod tests {
             args,
             vec!["echo", "Hello", "World", "--param", "--param=something"]
         );
+    }
+
+    #[test]
+    fn test_join_commands() {
+        let commands: Vec<String> = vec!["echo", "Hello World"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let command = join_commands(&commands);
+        assert_eq!(command, "echo \"Hello World\"");
+
+        let commands: Vec<String> = vec!["echo", "Hello World", "Hello World"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let command = join_commands(&commands);
+        assert_eq!(command, "echo \"Hello World\" \"Hello World\"");
+
+        let commands: Vec<String> = vec!["echo", "Hello World", "Hello \"World"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let command = join_commands(&commands);
+        assert_eq!(command, "echo \"Hello World\" \"Hello \\\"World\"");
+
+        let commands: Vec<String> = vec!["echo", "Hello", "World", "--param", "--param=something"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let command = join_commands(&commands);
+        assert_eq!(command, "echo Hello World --param --param=something");
     }
 }

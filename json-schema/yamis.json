@@ -25,6 +25,13 @@
                 "description": "The working directory when running a task",
                 "type": "string"
             },
+            "templates": {
+                "description": "Templates that can be used by the Tera template engine.",
+                "type": "object",
+                "additionalProperties": {
+                    "type": "string"
+                }
+            },
             "args": {
                 "description": "The arguments to pass to the program",
                 "type": "string"
@@ -59,6 +66,9 @@
                         "help": {
                             "description": "Help for the task",
                             "type": "string"
+                        },
+                        "templates": {
+                            "$ref": "#/$defs/v2/templates"
                         },
                         "script": {
                             "description": "The script to run for the task",
@@ -161,6 +171,9 @@
                     "enum": ["2"]
                 }
             ]
+        },
+        "templates": {
+            "$ref": "#/$defs/v2/templates"
         },
         "wd": {
             "$ref": "#/$defs/v2/wd"

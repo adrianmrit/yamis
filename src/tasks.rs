@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::env::temp_dir;
+use std::error::Error;
 use std::fs::File;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -12,10 +13,12 @@ use crate::defaults::default_false;
 use crate::print_utils::{YamisOutput, INFO_COLOR};
 use colored::Colorize;
 use serde::{de, Deserialize, Serialize};
-use tera::{Context, Tera};
+use tera;
 
 use crate::types::DynErrResult;
-use crate::utils::{get_path_relative_to_base, read_env_file, split_command, TMP_FOLDER_NAMESPACE};
+use crate::utils::{
+    get_path_relative_to_base, join_commands, read_env_file, split_command, TMP_FOLDER_NAMESPACE,
+};
 use md5::{Digest, Md5};
 
 pub const DRY_RUN_MESSAGE: &str = "Dry run mode, nothing executed.";
@@ -40,25 +43,47 @@ cfg_if::cfg_if! {
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum TaskError {
     /// Raised when there is an error running a task
-    RuntimeError(String, String),
+    RuntimeError(String),
     /// Raised when the task is improperly configured
-    ImproperlyConfigured(String, String),
+    ImproperlyConfigured(String),
+    NotFound(String),
 }
 
 impl fmt::Display for TaskError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
-            TaskError::RuntimeError(ref name, ref reason) => {
-                write!(f, "Error running tasks.{}:\n{}", name, reason)
+            TaskError::RuntimeError(ref reason) => {
+                write!(f, "Runtime error:\n{}", reason)
             }
-            TaskError::ImproperlyConfigured(ref name, ref reason) => {
-                write!(f, "Improperly configured tasks.{}:\n{}", name, reason)
+            TaskError::ImproperlyConfigured(ref reason) => {
+                write!(f, "Improperly configured tasks.\n{}", reason)
+            }
+            TaskError::NotFound(ref name) => {
+                write!(f, "Task `{}` not found.", name)
             }
         }
     }
 }
 
 impl error::Error for TaskError {}
+
+impl From<tera::Error> for TaskError {
+    fn from(err: tera::Error) -> TaskError {
+        let mut full_error = err.to_string();
+        let mut source = err.source();
+        while let Some(inner) = source {
+            full_error.push_str(&format!("\nCaused by: {}", inner));
+            source = inner.source();
+        }
+        TaskError::ImproperlyConfigured(full_error)
+    }
+}
+
+impl From<std::io::Error> for TaskError {
+    fn from(err: std::io::Error) -> TaskError {
+        TaskError::RuntimeError(err.to_string())
+    }
+}
 
 cfg_if::cfg_if! {
     if #[cfg(target_os = "windows")] {
@@ -223,6 +248,10 @@ pub(crate) struct Task {
     #[serde(skip_deserializing)]
     name: String,
 
+    /// Adds the given text to Tera, so that they can be included in templates
+    #[serde(default)]
+    templates: HashMap<String, String>,
+
     /// Help of the task
     help: Option<String>,
 
@@ -291,10 +320,10 @@ impl Task {
     ///
     /// returns: Result<(), Box<dyn Error, Global>>
     ///
-    pub(crate) fn setup(&mut self, name: &str, base_path: &Path) -> DynErrResult<()> {
+    pub(crate) fn setup(&mut self, name: &str, base_path: &Path) -> Result<(), TaskError> {
         self.name = String::from(name);
         self.load_env_file(base_path)?;
-        Ok(self.validate()?)
+        self.validate()
     }
 
     /// Extends from the given task.
@@ -365,14 +394,25 @@ impl Task {
     /// * `base_path`: path to use as a reference to resolve relative paths
     ///
     /// returns: Result<(), Box<dyn Error, Global>>
-    fn load_env_file(&mut self, base_path: &Path) -> DynErrResult<()> {
+    fn load_env_file(&mut self, base_path: &Path) -> Result<(), TaskError> {
         // removes the env_file as we won't need it again
         let env_file = mem::replace(&mut self.env_file, None);
         if let Some(env_file) = env_file {
             let env_file = get_path_relative_to_base(base_path, &env_file);
-            let env_variables = read_env_file(env_file.as_path())?;
-            for (key, val) in env_variables {
-                self.env.entry(key).or_insert(val);
+            let env_variables = read_env_file(env_file.as_path());
+            match env_variables {
+                Ok(env_variables) => {
+                    for (key, val) in env_variables {
+                        self.env.entry(key).or_insert(val);
+                    }
+                }
+                Err(err) => {
+                    return Err(TaskError::ImproperlyConfigured(format!(
+                        "Error reading env file `{}`: {}",
+                        env_file.display(),
+                        err
+                    )));
+                }
             }
         }
         Ok(())
@@ -413,6 +453,17 @@ impl Task {
         new_vars
     }
 
+    /// Same as `get_env` but for the tera templates
+    fn get_templates(&self, tera_templates: &HashMap<String, String>) -> HashMap<String, String> {
+        let mut new_templates: HashMap<String, String> = self.templates.clone();
+        for (key, val) in tera_templates {
+            new_templates
+                .entry(key.clone())
+                .or_insert_with(|| val.clone());
+        }
+        new_templates
+    }
+
     /// Validates the task configuration.
     ///
     /// # Arguments
@@ -420,32 +471,36 @@ impl Task {
     /// * `name` - Name of the task
     fn validate(&self) -> Result<(), TaskError> {
         if self.script.is_some() && self.program.is_some() {
-            return Err(TaskError::ImproperlyConfigured(
-                self.name.clone(),
-                String::from("Cannot specify `script` and `program` at the same time."),
-            ));
+            return Err(TaskError::ImproperlyConfigured(String::from(
+                "Cannot specify `script` and `program` at the same time.",
+            )));
         }
 
         if self.script_runner.is_some() && self.script_runner.as_ref().unwrap().is_empty() {
-            return Err(TaskError::ImproperlyConfigured(
-                self.name.clone(),
-                String::from("`script_runner` parameter cannot be an empty string."),
-            ));
+            return Err(TaskError::ImproperlyConfigured(String::from(
+                "`script_runner` parameter cannot be an empty string.",
+            )));
         }
 
         if self.script.is_some() && self.args.is_some() {
-            return Err(TaskError::ImproperlyConfigured(
-                self.name.clone(),
-                String::from("Cannot specify `args` on scripts."),
-            ));
+            return Err(TaskError::ImproperlyConfigured(String::from(
+                "Cannot specify `args` on scripts.",
+            )));
         }
 
         Ok(())
     }
 
     // Returns the Tera instance for the Tera template engine.
-    fn get_tera_instance(&self) -> Tera {
-        Tera::default()
+    fn get_tera_instance(&self, config_file: &ConfigFile) -> Result<tera::Tera, TaskError> {
+        let mut tera = tera::Tera::default();
+        for (name, template) in config_file.templates.iter() {
+            tera.add_raw_template(&format!("templates.{name}"), template)?;
+        }
+        for (name, template) in self.templates.iter() {
+            tera.add_raw_template(&format!("templates.{name}"), template)?;
+        }
+        Ok(tera)
     }
 
     /// Returns the context for the Tera template engine.
@@ -455,8 +510,8 @@ impl Task {
         config_file: &ConfigFile,
         env: &HashMap<String, String>,
         vars: &HashMap<String, serde_yaml::Value>,
-    ) -> Context {
-        let mut context = Context::new();
+    ) -> tera::Context {
+        let mut context = tera::Context::new();
 
         context.insert("args", &args.args);
         context.insert("kwargs", &args.kwargs);
@@ -481,7 +536,7 @@ impl Task {
         command: &mut Command,
         config_file: &ConfigFile,
         env: &HashMap<String, String>,
-    ) -> DynErrResult<()> {
+    ) -> Result<(), TaskError> {
         command.envs(env);
         command.stdout(Stdio::inherit());
         command.stderr(Stdio::inherit());
@@ -506,7 +561,7 @@ impl Task {
     /// # Arguments
     ///
     /// * `command` - Command to spawn
-    fn spawn_command(&self, command: &mut Command, dry_run: bool) -> DynErrResult<()> {
+    fn spawn_command(&self, command: &mut Command, dry_run: bool) -> Result<(), TaskError> {
         if dry_run {
             println!("{}", DRY_RUN_MESSAGE.yamis_info());
             return Ok(());
@@ -514,7 +569,7 @@ impl Task {
         let mut child = match command.spawn() {
             Ok(child) => child,
             Err(e) => {
-                return Err(TaskError::RuntimeError(self.name.clone(), format!("{}", e)).into());
+                return Err(TaskError::RuntimeError(format!("{}", e)));
             }
         };
 
@@ -525,16 +580,13 @@ impl Task {
         match result.success() {
             true => Ok(()),
             false => match result.code() {
-                None => Err(TaskError::RuntimeError(
-                    self.name.clone(),
-                    String::from("Process did not terminate correctly"),
-                )
-                .into()),
-                Some(code) => Err(TaskError::RuntimeError(
-                    self.name.clone(),
-                    format!("Process terminated with exit code {}", code),
-                )
-                .into()),
+                None => Err(TaskError::RuntimeError(String::from(
+                    "Process did not terminate correctly",
+                ))),
+                Some(code) => Err(TaskError::RuntimeError(format!(
+                    "Process terminated with exit code {}",
+                    code
+                ))),
             },
         }
     }
@@ -547,29 +599,34 @@ impl Task {
         env: &HashMap<String, String>,
         vars: &HashMap<String, serde_yaml::Value>,
         dry_mode: bool,
-    ) -> DynErrResult<()> {
+    ) -> Result<(), TaskError> {
         let program = self.program.as_ref().unwrap();
         let mut command = Command::new(program);
         self.set_command_basics(&mut command, config_file, env)?;
 
-        let mut tera = self.get_tera_instance();
+        let mut tera = self.get_tera_instance(config_file)?;
         let context = self.get_tera_context(args, config_file, env, vars);
 
-        if let Some(task_args) = &self.args {
-            let task_name = &self.name;
-            let template_name = format!("tasks.{task_name}.args");
+        let args_list = match &self.args {
+            None => vec![],
+            Some(args) => {
+                let task_name = &self.name;
+                let template_name = format!("tasks.{task_name}.args");
+                tera.add_raw_template(&template_name, args)?;
+                let rendered_args = tera.render(&template_name, &context)?;
+                split_command(&rendered_args)
+            }
+        };
+        if args_list.is_empty() {
+            println!("{}", format!("{}: {}", self.name, program).yamis_info());
+        } else {
+            let display_args = join_commands(&args_list);
+            command.args(args_list);
 
-            tera.add_raw_template(&template_name, task_args)?;
-
-            let rendered_args = tera.render(&template_name, &context)?;
-            let rendered_args_list = split_command(&rendered_args);
             println!(
                 "{}",
-                format!("{}: {} {}", self.name, program, rendered_args).yamis_info()
+                format!("{}: {} {}", self.name, program, display_args).yamis_info()
             );
-            command.args(rendered_args_list);
-        } else {
-            println!("{}", format!("{}: {}", self.name, program).yamis_info());
         }
 
         self.spawn_command(&mut command, dry_mode)
@@ -585,8 +642,8 @@ impl Task {
         env: &HashMap<String, String>,
         vars: &HashMap<String, serde_yaml::Value>,
         dry_run: bool,
-    ) -> DynErrResult<()> {
-        let mut tera = Tera::default();
+    ) -> Result<(), TaskError> {
+        let mut tera = self.get_tera_instance(config_file)?;
         let context = self.get_tera_context(args, config_file, env, vars);
 
         let task_name = &self.name;
@@ -594,15 +651,20 @@ impl Task {
         let template_name = &format!("tasks.{task_name}");
         tera.add_raw_template(template_name, cmd)?;
 
-        let cmd = tera.render(template_name, &context)?;
+        let cmd = tera.render(template_name, &context);
+        let cmd = cmd?;
         let cmd_args = split_command(&cmd);
         let program = &cmd_args[0];
-        let cmd_args = &cmd_args[1..];
+        let program_args = &cmd_args[1..];
         let mut command: Command = Command::new(program);
         self.set_command_basics(&mut command, config_file, env)?;
-        command.args(cmd_args.iter());
+        command.args(program_args.iter());
 
-        println!("{}", format!("{task_name}: {cmd}").yamis_info());
+        println!(
+            "{}",
+            // We print the clean commands, not the rendered ones. For a nicer output.
+            format!("{task_name}: {}", join_commands(&cmd_args)).yamis_info()
+        );
         self.spawn_command(&mut command, dry_run)
     }
 
@@ -613,23 +675,27 @@ impl Task {
         args: &ArgsContext,
         config_file: &ConfigFile,
         dry_run: bool,
-    ) -> DynErrResult<()> {
+    ) -> Result<(), TaskError> {
         let display_task_name = format!("{}.cmds.{}.{}", self.name, cmd_index, task_name);
         if let Some(mut task) = config_file.get_task(task_name) {
             // The env and vars of the parent take precedence in this case.
             task.env = self.get_env(&task.env);
             task.vars = self.get_vars(&task.vars);
+            task.templates = self.get_templates(&task.templates);
 
             // Should setup first, to load the env_file.
             task.setup(&display_task_name, config_file.directory())?;
 
-            task.run(args, config_file, dry_run)
+            if let Err(e) = task.run(args, config_file, dry_run) {
+                Err(TaskError::RuntimeError(format!(
+                    "Error running task: {}",
+                    e
+                )))
+            } else {
+                Ok(())
+            }
         } else {
-            Err(TaskError::RuntimeError(
-                self.name.clone(),
-                format!("Task `{}` not found.", task_name),
-            )
-            .into())
+            Err(TaskError::NotFound(task_name.to_string()))
         }
     }
 
@@ -640,7 +706,7 @@ impl Task {
         args: &ArgsContext,
         config_file: &ConfigFile,
         dry_run: bool,
-    ) -> DynErrResult<()> {
+    ) -> Result<(), TaskError> {
         let mut task = task.clone();
         let task_name = format!("{}.cmds.{}", self.name, cmd_index);
 
@@ -657,11 +723,7 @@ impl Task {
             match base_task {
                 Some(base_task) => task.extend_task(&base_task),
                 None => {
-                    return Err(TaskError::RuntimeError(
-                        self.name.clone(),
-                        format!("Task `{}` not found.", base_name),
-                    )
-                    .into())
+                    return Err(TaskError::NotFound(base_name.to_string()));
                 }
             }
         }
@@ -669,9 +731,16 @@ impl Task {
         // Done after setup and bases, so that the env and vars specified directly in the child take precedence
         task.env = task.get_env(&self.env);
         task.vars = task.get_vars(&self.vars);
+        task.templates = task.get_templates(&self.templates);
 
         // This should load the config file env and vars
-        task.run(args, config_file, dry_run)
+        match task.run(args, config_file, dry_run) {
+            Ok(_) => Ok(()),
+            Err(e) => Err(TaskError::RuntimeError(format!(
+                "Error running task: {}",
+                e
+            ))),
+        }
     }
 
     /// Runs the commands specified with the cmds option.
@@ -682,7 +751,7 @@ impl Task {
         env: &HashMap<String, String>,
         vars: &HashMap<String, serde_yaml::Value>,
         dry_run: bool,
-    ) -> DynErrResult<()> {
+    ) -> Result<(), TaskError> {
         for (i, cmd) in self.cmds.as_ref().unwrap().iter().enumerate() {
             match cmd {
                 Cmd::Cmd(cmd) => {
@@ -707,10 +776,10 @@ impl Task {
         env: &HashMap<String, String>,
         vars: &HashMap<String, serde_yaml::Value>,
         dry_run: bool,
-    ) -> DynErrResult<()> {
+    ) -> Result<(), TaskError> {
         let script = self.script.as_ref().unwrap();
 
-        let mut tera = Tera::default();
+        let mut tera = self.get_tera_instance(config_file)?;
         let mut context = self.get_tera_context(args, config_file, env, vars);
         let task_name = &self.name;
         let template_name = format!("tasks.{task_name}.script");
@@ -727,7 +796,17 @@ impl Task {
             script_extension,
             &self.name,
             config_file.filepath.as_path(),
-        )?;
+        );
+
+        let script_path = match script_path {
+            Ok(path) => path,
+            Err(e) => {
+                return Err(TaskError::RuntimeError(format!(
+                    "Error creating script file: {}",
+                    e
+                )))
+            }
+        };
 
         cfg_if::cfg_if! {
             if #[cfg(target_os = "windows")]
@@ -787,18 +866,25 @@ impl Task {
             Some(vars) => self.get_vars(vars),
             None => self.vars.clone(),
         };
-        return if self.script.is_some() {
+        let result = if self.script.is_some() {
             self.run_script(args, config_file, &env, &vars, dry_run)
         } else if self.program.is_some() {
             self.run_program(args, config_file, &env, &vars, dry_run)
         } else if self.cmds.is_some() {
             self.run_cmds(args, config_file, &env, &vars, dry_run)
         } else {
-            Err(
-                TaskError::ImproperlyConfigured(self.name.clone(), String::from("Nothing to run."))
-                    .into(),
-            )
+            Err(TaskError::ImproperlyConfigured(String::from(
+                "Nothing to run.",
+            )))
         };
+
+        match result {
+            Ok(_) => Ok(()),
+            Err(e) => {
+                let msg = format!("Error running task `{}`: {}", self.name, e);
+                Err(msg.into())
+            }
+        }
     }
 }
 
@@ -1048,10 +1134,9 @@ tasks:
     "#,
             None,
         );
-        let expected_error = TaskError::ImproperlyConfigured(
-            String::from("sample"),
-            String::from("Cannot specify `script` and `program` at the same time."),
-        );
+        let expected_error = TaskError::ImproperlyConfigured(String::from(
+            "Cannot specify `script` and `program` at the same time.",
+        ));
         assert_eq!(task.unwrap_err().to_string(), expected_error.to_string());
 
         let task = get_task(
@@ -1061,10 +1146,9 @@ tasks:
     "#,
             None,
         );
-        let expected_error = TaskError::ImproperlyConfigured(
-            String::from("sample"),
-            String::from("`script_runner` parameter cannot be an empty string."),
-        );
+        let expected_error = TaskError::ImproperlyConfigured(String::from(
+            "`script_runner` parameter cannot be an empty string.",
+        ));
         assert_eq!(task.unwrap_err().to_string(), expected_error.to_string());
 
         let task = get_task(
@@ -1076,10 +1160,8 @@ tasks:
             None,
         );
 
-        let expected_error = TaskError::ImproperlyConfigured(
-            String::from("sample"),
-            String::from("Cannot specify `args` on scripts."),
-        );
+        let expected_error =
+            TaskError::ImproperlyConfigured(String::from("Cannot specify `args` on scripts."));
         assert_eq!(task.unwrap_err().to_string(), expected_error.to_string());
     }
 
