@@ -454,36 +454,24 @@ tasks:
 #[test]
 fn test_extend_args() -> Result<(), Box<dyn std::error::Error>> {
     let tmp_dir = TempDir::new().unwrap();
-    let (batch_file_name, batch_file_content) = if cfg!(target_os = "windows") {
-        ("echo_args.cmd", "echo %*".as_bytes())
-    } else {
-        ("echo_args.sh", "echo $*".as_bytes())
-    };
-    let mut batch_file = File::create(tmp_dir.join(batch_file_name))?;
-    batch_file.write_all(batch_file_content).unwrap();
 
     let mut file = File::create(tmp_dir.join("yamis.root.yml"))?;
     file.write_all(
-        format!(
-            r#"
+        r#"
 version: 2
 tasks:
-    echo_program:
-        program: "bash"
-        args: "{b}"
+    echo-program:
+        program: "echo"
+        args: "hello"
         private: true
 
-    windows:
-        program: "cmd.exe"
-        args: "/C {b}"
-
     hello:
-        bases: ["echo_program"]
-        args_extend: "hello world"
+        bases: ["echo-program"]
+        args_extend: "world"
 
-    windows:
-        bases: ["echo_program"]
-        args+: "hello world"
+    hello-and-bye:
+        bases: ["hello"]
+        args+: "and bye world"
 
     other:
         linux:
@@ -496,24 +484,24 @@ tasks:
             cmds:
                 - echo hello macos
     
-    hello_os:
+    hello-os:
         bases: ["other"]
-"#,
-            b = batch_file_name
-        )
+"#
         .as_bytes(),
     )?;
 
     let mut cmd = Command::cargo_bin("yamis")?;
     cmd.current_dir(tmp_dir.path());
-    cmd.arg("hello");
+    cmd.arg("--dry");
+    cmd.arg("hello-and-bye");
     cmd.assert()
         .success()
-        .stdout(predicate::str::contains("hello world"));
+        .stdout(predicate::str::contains("echo hello world and bye world"));
 
     let mut cmd = Command::cargo_bin("yamis")?;
     cmd.current_dir(tmp_dir.path());
-    cmd.arg("hello_os");
+    cmd.arg("--dry");
+    cmd.arg("hello-os");
 
     let expected = if cfg!(target_os = "windows") {
         "hello windows"
