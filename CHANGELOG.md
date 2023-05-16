@@ -3,12 +3,14 @@
 ## [2.0.0] - 
 
 Because the usage is still low, I have decided to introduce some breaking changes
-to improve the usability of the tool.
+to improve the usability of the tool. Since the name of the binary has changed from
+`yamis` to `mom`, it should be possible to keep using the old version.
 
 ### Added
 - Add `--dry` option to print the commands that would be run without actually running them.
 - Add `cmds` option to tasks to run multiple commands in a single task.
-- Add `vars` options.
+- Add `vars` option.
+- Add `templates` option.
 
 ### Changed
 - Drop the custom parser in favor of the [tera](https://tera.netlify.app/) template engine.

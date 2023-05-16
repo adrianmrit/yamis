@@ -18,6 +18,7 @@
     * [wd](#wd)
     * [env](#env)
     * [env_file](#env_file)
+    * [templates](#templates)
   * [Tasks File Properties](#tasks-file-properties)
     * [version](#version)
     * [tasks](#tasks)
@@ -174,6 +175,8 @@ precedence over the value defined in the file.
 - [wd](#wd): The default working directory.
 - [env](#env): Environment variables.
 - [env_file](#env_file): File containing environment variables.
+- [vars](#vars): Variables.
+- [templates](#templates): Templates.
 
 
 <a name="wd"></a>
@@ -240,6 +243,34 @@ tasks:
 ```
 
 
+<a name="templates"></a>
+##### templates
+
+The `templates` property is used to define Tera templates that will be available to all tasks in the file.
+The value of the property is a map of key-value pairs, where the key is the name of the template,
+and the value is the template itself. The template can then be accessed in a task with the name `templates.<name>`.
+
+For example, you can define a template like this:
+
+```yaml
+templates:
+  say_hi: "Hi from {{ TASK.name }}!"
+```
+
+And then use it in a task like this:
+
+```yaml
+tasks:
+  hi:
+    cmd: echo {% include "templates.say_hi" %}
+```
+
+Templates can also be defined in the task, and they will take precedence over the templates defined in the file.
+
+This also allows you to define [macros](https://tera.netlify.app/docs/#macros). See the also the [include](https://tera.netlify.app/docs/#include)
+documentation for Tera for more information.
+
+
 <a name="tasks-file-properties"></a>
 ### Tasks File Properties
 
@@ -247,7 +278,7 @@ Besides the [common properties](#common-properties), the following properties ca
 - [tasks](#tasks): The tasks defined in the file.
 - version: The version of the file. Although not used at the moment, it is required for future compatibility. The version
   can be a number or string. At the moment backward compatibility with version 1 was not implemented. Therefore, at the
-  moment of writing this, the version should be `2` or `v2`.
+  moment of writing this, the version should be `2`.
 
 
 <a name="tasks"></a>
