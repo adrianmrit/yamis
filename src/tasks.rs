@@ -45,7 +45,7 @@ pub(crate) enum TaskError {
     /// Raised when there is an error running a task
     RuntimeError(String),
     /// Raised when the task is improperly configured
-    ImproperlyConfigured(String),
+    ConfigError(String),
     NotFound(String),
 }
 
@@ -55,8 +55,8 @@ impl fmt::Display for TaskError {
             TaskError::RuntimeError(ref reason) => {
                 write!(f, "Runtime error:\n{}", reason)
             }
-            TaskError::ImproperlyConfigured(ref reason) => {
-                write!(f, "Improperly configured tasks.\n{}", reason)
+            TaskError::ConfigError(ref reason) => {
+                write!(f, "Improperly configured:\n{}", reason)
             }
             TaskError::NotFound(ref name) => {
                 write!(f, "Task `{}` not found.", name)
@@ -75,13 +75,55 @@ impl From<tera::Error> for TaskError {
             full_error.push_str(&format!("\nCaused by: {}", inner));
             source = inner.source();
         }
-        TaskError::ImproperlyConfigured(full_error)
+        TaskError::ConfigError(full_error)
     }
 }
 
 impl From<std::io::Error> for TaskError {
     fn from(err: std::io::Error) -> TaskError {
         TaskError::RuntimeError(err.to_string())
+    }
+}
+
+// We convert back to TaskError in case a subtask fails
+// TODO: Use source() instead
+impl From<AwareTaskError> for TaskError {
+    fn from(err: AwareTaskError) -> TaskError {
+        TaskError::RuntimeError(err.to_string())
+    }
+}
+
+/// Task error aware of the task name
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct AwareTaskError {
+    /// Name of the task that failed
+    pub(crate) task_name: String,
+    /// The error that caused the task to fail
+    pub(crate) error: TaskError,
+}
+
+impl fmt::Display for AwareTaskError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Task `{}` failed:\n{}", self.task_name, self.error)
+    }
+}
+
+impl error::Error for AwareTaskError {
+    fn source(&self) -> Option<&(dyn error::Error + 'static)> {
+        Some(&self.error)
+    }
+}
+
+impl AwareTaskError {
+    /// Creates a new AwareTaskError
+    /// # Arguments
+    /// * `task_name` - Name of the task that failed
+    /// * `error` - The error that caused the task to fail
+    pub(crate) fn new(task_name: &str, error: TaskError) -> AwareTaskError {
+        AwareTaskError {
+            task_name: task_name.to_string(),
+            error,
+        }
     }
 }
 
@@ -320,10 +362,48 @@ impl Task {
     ///
     /// returns: Result<(), Box<dyn Error, Global>>
     ///
-    pub(crate) fn setup(&mut self, name: &str, base_path: &Path) -> Result<(), TaskError> {
+    pub(crate) fn setup(&mut self, name: &str, base_path: &Path) -> Result<(), AwareTaskError> {
         self.name = String::from(name);
-        self.load_env_file(base_path)?;
-        self.validate()
+        match self.load_env_file(base_path) {
+            Ok(_) => {}
+            Err(e) => return Err(AwareTaskError::new(name, e)),
+        }
+        match self.validate() {
+            Ok(_) => Ok(()),
+            Err(e) => Err(AwareTaskError::new(name, e)),
+        }
+    }
+
+    /// Helper function for running a task. Accepts the environment variables as a HashMap.
+    /// So that we can reuse the environment variables for multiple tasks.
+    pub(crate) fn run(
+        &self,
+        args: &ArgsContext,
+        config_file: &ConfigFile,
+        dry_run: bool,
+    ) -> Result<(), AwareTaskError> {
+        let env = match config_file.env.as_ref() {
+            Some(env) => self.get_env(env),
+            None => self.env.clone(),
+        };
+        let vars = match config_file.vars.as_ref() {
+            Some(vars) => self.get_vars(vars),
+            None => self.vars.clone(),
+        };
+        let result = if self.script.is_some() {
+            self.run_script(args, config_file, &env, &vars, dry_run)
+        } else if self.program.is_some() {
+            self.run_program(args, config_file, &env, &vars, dry_run)
+        } else if self.cmds.is_some() {
+            self.run_cmds(args, config_file, &env, &vars, dry_run)
+        } else {
+            Err(TaskError::ConfigError(String::from("Nothing to run.")))
+        };
+
+        match result {
+            Ok(_) => Ok(()),
+            Err(e) => Err(AwareTaskError::new(&self.name, e)),
+        }
     }
 
     /// Extends from the given task.
@@ -407,7 +487,7 @@ impl Task {
                     }
                 }
                 Err(err) => {
-                    return Err(TaskError::ImproperlyConfigured(format!(
+                    return Err(TaskError::ConfigError(format!(
                         "Error reading env file `{}`: {}",
                         env_file.display(),
                         err
@@ -471,20 +551,20 @@ impl Task {
     /// * `name` - Name of the task
     fn validate(&self) -> Result<(), TaskError> {
         if self.script.is_some() && self.program.is_some() {
-            return Err(TaskError::ImproperlyConfigured(String::from(
-                "Cannot specify `script` and `program` at the same time.",
+            return Err(TaskError::ConfigError(String::from(
+                "Cannot set both `script` and `program`.",
             )));
         }
 
-        if self.script_runner.is_some() && self.script_runner.as_ref().unwrap().is_empty() {
-            return Err(TaskError::ImproperlyConfigured(String::from(
-                "`script_runner` parameter cannot be an empty string.",
+        if self.script.is_some() && self.cmds.is_some() {
+            return Err(TaskError::ConfigError(String::from(
+                "Cannot set both `cmds` and `script`.",
             )));
         }
 
-        if self.script.is_some() && self.args.is_some() {
-            return Err(TaskError::ImproperlyConfigured(String::from(
-                "Cannot specify `args` on scripts.",
+        if self.program.is_some() && self.cmds.is_some() {
+            return Err(TaskError::ConfigError(String::from(
+                "Cannot set both `cmds` and `program`.",
             )));
         }
 
@@ -734,13 +814,7 @@ impl Task {
         task.templates = task.get_templates(&self.templates);
 
         // This should load the config file env and vars
-        match task.run(args, config_file, dry_run) {
-            Ok(_) => Ok(()),
-            Err(e) => Err(TaskError::RuntimeError(format!(
-                "Error running task: {}",
-                e
-            ))),
-        }
+        task.run(args, config_file, dry_run).map_err(|e| e.into())
     }
 
     /// Runs the commands specified with the cmds option.
@@ -848,43 +922,6 @@ impl Task {
         println!("{}", "Script End.".yamis_info());
 
         self.spawn_command(&mut command, dry_run)
-    }
-
-    /// Helper function for running a task. Accepts the environment variables as a HashMap.
-    /// So that we can reuse the environment variables for multiple tasks.
-    pub(crate) fn run(
-        &self,
-        args: &ArgsContext,
-        config_file: &ConfigFile,
-        dry_run: bool,
-    ) -> DynErrResult<()> {
-        let env = match config_file.env.as_ref() {
-            Some(env) => self.get_env(env),
-            None => self.env.clone(),
-        };
-        let vars = match config_file.vars.as_ref() {
-            Some(vars) => self.get_vars(vars),
-            None => self.vars.clone(),
-        };
-        let result = if self.script.is_some() {
-            self.run_script(args, config_file, &env, &vars, dry_run)
-        } else if self.program.is_some() {
-            self.run_program(args, config_file, &env, &vars, dry_run)
-        } else if self.cmds.is_some() {
-            self.run_cmds(args, config_file, &env, &vars, dry_run)
-        } else {
-            Err(TaskError::ImproperlyConfigured(String::from(
-                "Nothing to run.",
-            )))
-        };
-
-        match result {
-            Ok(_) => Ok(()),
-            Err(e) => {
-                let msg = format!("Error running task `{}`: {}", self.name, e);
-                Err(msg.into())
-            }
-        }
     }
 }
 
@@ -1134,34 +1171,39 @@ tasks:
     "#,
             None,
         );
-        let expected_error = TaskError::ImproperlyConfigured(String::from(
-            "Cannot specify `script` and `program` at the same time.",
-        ));
+        let expected_error = AwareTaskError::new(
+            "sample",
+            TaskError::ConfigError(String::from("Cannot set both `script` and `program`.")),
+        );
         assert_eq!(task.unwrap_err().to_string(), expected_error.to_string());
 
         let task = get_task(
             "sample",
             r#"
-        script_runner: ""
+        script: "something"
+        cmds: ["cmd1", "cmd2"]
     "#,
             None,
         );
-        let expected_error = TaskError::ImproperlyConfigured(String::from(
-            "`script_runner` parameter cannot be an empty string.",
-        ));
+        let expected_error = AwareTaskError::new(
+            "sample",
+            TaskError::ConfigError(String::from("Cannot set both `cmds` and `script`.")),
+        );
         assert_eq!(task.unwrap_err().to_string(), expected_error.to_string());
 
         let task = get_task(
             "sample",
             r#"
-        script: "sample script"
-        args: "some args"
+        program: "sample script"
+        cmds: ["some command"]
     "#,
             None,
         );
 
-        let expected_error =
-            TaskError::ImproperlyConfigured(String::from("Cannot specify `args` on scripts."));
+        let expected_error = AwareTaskError::new(
+            "sample",
+            TaskError::ConfigError(String::from("Cannot set both `cmds` and `program`.")),
+        );
         assert_eq!(task.unwrap_err().to_string(), expected_error.to_string());
     }
 
