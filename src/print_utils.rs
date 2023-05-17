@@ -1,11 +1,13 @@
 use colored::{Color, ColoredString, Colorize};
 
 const PREFIX: &str = "[YAMIS]";
-const INFO_COLOR: Color = Color::BrightBlue;
-const WARN_COLOR: Color = Color::BrightYellow;
-const ERROR_COLOR: Color = Color::BrightRed;
+pub(crate) const INFO_COLOR: Color = Color::BrightBlue;
+pub(crate) const WARN_COLOR: Color = Color::BrightYellow;
+pub(crate) const ERROR_COLOR: Color = Color::BrightRed;
 
 pub trait YamisOutput {
+    /// Just adds the `[YAMIS]` prefix to the given string, with no color.
+    fn yamis_just_prefix(&self) -> String;
     /// Returns the given string with the `[YAMIS]` prefix in each line. The prefix will also take the given color.
     fn yamis_prefix<S: Into<Color> + Clone>(&self, color: S) -> String;
     /// Adds the `[YAMIS]` prefix to the given string. The whole string will have the given color.
@@ -25,6 +27,17 @@ pub trait YamisOutput {
 }
 
 impl YamisOutput for str {
+    fn yamis_just_prefix(&self) -> String {
+        let lines = self.split_inclusive('\n');
+
+        let mut result = String::new();
+        for line in lines {
+            result.push_str(PREFIX);
+            result.push(' ');
+            result.push_str(line);
+        }
+        result
+    }
     fn yamis_prefix<S: Into<Color> + Clone>(&self, color: S) -> String {
         let lines = self.split_inclusive('\n');
         let prefix = PREFIX.color(color).to_string();
@@ -78,6 +91,10 @@ impl YamisOutput for str {
 // Calling the function in a ColoredString instance removes the color from it,
 // so we need to transform it to a string first to keep it.
 impl YamisOutput for ColoredString {
+    fn yamis_just_prefix(&self) -> String {
+        self.to_string().yamis_just_prefix()
+    }
+
     fn yamis_prefix<S: Into<Color> + Clone>(&self, color: S) -> String {
         self.to_string().yamis_prefix(color)
     }
@@ -116,6 +133,13 @@ fn test_yamis_prefix() {
     let info_prefix = PREFIX.color(INFO_COLOR);
     let warn_prefix = PREFIX.color(WARN_COLOR);
     let error_prefix = PREFIX.color(ERROR_COLOR);
+
+    let output = "\nThis is a test\n\nThis is another test\n\n".to_string();
+    let prefix_output = output.yamis_just_prefix();
+    let expected_output = format!(
+        "{PREFIX} \n{PREFIX} This is a test\n{PREFIX} \n{PREFIX} This is another test\n{PREFIX} \n"
+    );
+    assert_eq!(prefix_output, expected_output);
 
     let output = "\nThis is a test\n\nThis is another test\n\n".to_string();
     let colored_output = output.yamis_prefix_error();

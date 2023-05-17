@@ -6,78 +6,57 @@
 > Task runner for teams and individuals. Written in [Rust](https://www.rust-lang.org/).
 
 ## Index
-* [Motivation](#motivation)
-* [Backward compatibility](#backward-compatibility)
+* [Inspiration](#inspiration)
 * [Installation](#installation)
   * [Binary releases](#binary-releases)
   * [Updates](#updates)
 * [Quick start](#quick-start)
-* [Note about YAML and TOML files](#note-about-yaml-and-toml-files)
 * [Usage](#usage)
   * [Command line options](#command-line-options)
   * [Task files](#task-files)
-  * [Script](#script)
-    * [Auto quoting](#auto-quoting)
-    * [Replacing the script runner](#replacing-the-script-runner)
-  * [Program](#program)
-  * [Running tasks serially](#running-tasks-serially)
-  * [Script vs Program](#script-vs-program)
-  * [Task arguments in the command line](#task-arguments-in-the-command-line)
-  * [Tags](#tags)
-  * [Expressions](#expressions)
-    * [Positional parameters](#positional-parameters)
-    * [Named parameters](#named-parameters)
-    * [All parameters](#all-parameters)
-    * [Environment variables](#environment-variables)
-    * [String parameters](#string-parameters)
-    * [Format strings](#format-strings)
-    * [Functions](#functions)
-  * [Optional expressions](#optional-expressions)
-  * [Index and slice](#index-and-slice)
-  * [Unpacking](#unpacking)
-  * [Setting environment variables](#setting-environment-variables)
+  * [Common Properties](#common-properties)
+    * [wd](#wd)
+    * [env](#env)
+    * [env_file](#env_file)
+    * [templates](#templates)
+  * [Tasks File Properties](#tasks-file-properties)
+    * [version](#version)
+    * [tasks](#tasks)
+  * [Task Properties](#task-properties)
+    * [help](#help): The help message.
+    * [bases](#bases): The bases to execute.
+    * [script_runner](#script_runner)
+    * [script_extension](#script_extension)
+    * [script_ext](#script_ext)
+    * [script](#script)
+    * [cmds](#cmds)
+    * [program](#program)
+    * [args](#args)
+    * [args_extend](#args_extend)
+    * [args+](#args_extend)
+    * [linux](#os-specific-tasks)
+    * [windows](#os-specific-tasks)
+    * [mac](#os-specific-tasks)
+    * [private](#private)
   * [OS specific tasks](#os-specific-tasks)
-  * [Working directory](#working-directory)
-  * [Documenting tasks](#documenting-tasks)
-  * [Task inheritance](#task-inheritance)
-    * [Extending program arguments](#extending-program-arguments)
-    * [Private tasks](#private-tasks)
-  * [Debug Options](#debug-options)
-  * [List of functions](#list-of-functions)
-    * [map](#map-function)
-    * [join](#join-function)
-    * [jmap](#jmap-function)
-    * [fmt](#fmt-function)
-    * [trim](#trim-function)
-    * [split](#split-function)
-* [FAQ](#faq) 
+  * [Passing arguments](#passing-arguments)
 * [Contributing](#contributing)
 
-<a name="motivation"></a>
-## Motivation
-This project started out of the frustration with existing tools and as a desire of learning Rust.
-It aims to be easy to use, and for both individuals and teams, specially those working on different platforms.
-To allow for future improvements in the syntax without breaking the workflow of teams (at least not much, lets be real),
-it aims to be [backward compatible](#backward-compatibility), both between the same mayor release, and with previous
-mayor releases.
 
-Inspired on different tools like [cargo-make](https://github.com/sagiegurari/cargo-make),
+<a name="inspiration"></a>
+## Inspiration
+
+Inspired by different tools like [cargo-make](https://github.com/sagiegurari/cargo-make),
+[go-task](https://taskfile.dev/)
 [doskey](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/doskey),
 [bash](https://www.gnu.org/savannah-checkouts/gnu/bash/manual/bash.html)
 and
 [docker-compose](https://docs.docker.com/compose/).
 
 
-<a name="backward-compatibility"></a>
-## Backward compatibility
-Starting from version 1.0.0, the goal is to be backward compatible with mayor versions and follow
-[Semantic Versioning](https://semver.org/).
-When a mayor version is released, the plan is to support config files from the latest versions by setting
-the mayor version in the TOML or YAML file with the `version` key, i.e. `version: "1"`.
-If the version is not set, the least mayor version supported will be used.
-
 <a name="installation"></a>
 ## Installation
+
 If you have [Rust](https://www.rust-lang.org/) and [Cargo](https://doc.rust-lang.org/cargo/) installed ([rust installation instructions](https://www.rust-lang.org/tools/install)). Then run:
 ```bash
 cargo install --force yamis
@@ -85,8 +64,10 @@ cargo install --force yamis
 
 Pro-tip: make sure `~/.cargo/bin` directory is in your `PATH` environment variable.
 
+
 <a name="binary-releases"></a>
 ### Binary releases:
+
 Binaries are also available for Windows, Linux and macOS under
 [releases](https://github.com/adrianmrit/yamis/releases/). To install, download the zip for your system, extract,
 and copy the binary to the desired location. You will need to ensure the folder that contains the binary is available
@@ -95,6 +76,7 @@ in the `PATH`.
 
 <a name="updates"></a>
 ### Updates
+
 When running, if a new version is available, a message will be displayed with the command. The update can be performed
 by running `yamis --update`, which will download and replace the binary. Alternatively it can be updated by following
 the installation instructions again at [Installation](#installation) or [Binary releases](#binary-releases).
@@ -102,83 +84,36 @@ the installation instructions again at [Installation](#installation) or [Binary 
 Note that the program will cache the update information for 24 hours, so no need to panic about
 it performing a request every time you run it.
 
+
 <a name="quick-start"></a>
 ## Quick start
-The first step is to add a YAML or TOML file in the project root, i.e. `project.yamis.yaml`.
- 
-Here is a sample YAML file to demonstrate some features:
+
+Create a file named `yamis.root.yml` in the root of your project.
+
+Here is a very basic example of a task file:
 ```yaml
-# project.yamis.yaml
-env:  # global env variables
-  DEBUG: "FALSE"
-  DOCKER_CONTAINER: sample_docker_container
+# yamis.root.yml
+version: 2
+
+vars:
+  greeting: Hello World
 
 tasks:
-  _debuggable_task:
-    private: true   # cannot be invoked directly
-    env:
-      DEBUG: "TRUE"  # Add env variables per task
-
-  say_hi:
-    help: "Just say hi"  # help message, printend when running `yamis -i say_hi`
-    script: "echo Hello {name}"  # takes a name argument, i.e. `--name John`
+  hi:
+    cmds:
+      - echo {{ greeting }}
   
-  say_hi.windows:
-    script: "echo Hello {name} from Windows"  # Task version for windows systems
+  hi.windows:
+    script: echo {{ greeting }} from Windows
   
-  folder_content:  # Default for linux and macOS, can be individually specified like for windows.
-    script: "ls {$1?}"  # Takes a single optional argument
-    
-    windows:  # Another way of specifying OS specific tasks
-      script: "dir {$1?}"
-
-  compose-run:
-    wd: ""  # Working dir is the dir containing the config file
-    program: "docker-compose"
-    # `{$DOCKER_CONTAINER}` 
-    args: [
-      "run",
-      "{$DOCKER_CONTAINER}",  # passes an environment variable into the program arguments
-      "{ $@ }"  # passes all extra given arguments 
-    ]
-
-  compose-debug:
-    bases: ["compose-run", "_debuggable_task"]  # Inherit from other tasks
-    args+: ["{$DEBUG?}"]  # Extends args from base task. Here DEBUG is an optional environment variable
+  sum:
+    cmds:
+      - echo "{{ args.0 }} + {{ args.1 }} = {{ args.0 | int + args.1 | int }}"
 ```
 
 After having a config file, you can run a task by calling `yamis`, the name of the task, and any arguments, i.e.
-`yamis say_hi --name "world"`. Passing the same argument multiple times will also add it multiple times, i.e.
-`yamis say_hi --name "person 1" --name="person 2"` is equivalent to `echo Hello person 1 person 2`
+`yamis hi`. Arguments can be passed right after the task name, either by name or position, i.e. `yamis sum 1 2`.
 
-
-<a name="note-about-yaml-and-toml-files"></a>
-## Note about YAML and TOML files:
-The parser used to process YAML files treats values as strings if a string is expected.
-
-For example, the following examples are equivalent
-```yaml
-env:
-  DEBUG: Yes  # Normally becomes true
-  AGENT: 007  # Normally becomes 7
-```
-```yaml
-env:
-  DEBUG: "Yes"
-  AGENT: "007"
-```
-
-However, in the case of TOML files, the parser returns the appropriate type, and therefore it will result
-in errors.
-
-I.e. the following is not valid
-```toml
-[env]
-    AGENT = 007
-```
-
-We do not implicitly perform this conversion because we would need to modify the TOML parser.
-If we performed the conversion after parsing the file we would get `AGENT=7` which might be undesired.
 
 <a name="usage"></a>
 ## Usage
@@ -195,346 +130,315 @@ Options:
   -l, --list              Lists configuration files that can be reached from the current directory
   -t, --list-tasks        Lists tasks
   -i, --task-info <TASK>  Displays information about the given task
+      --dry               Runs the task in dry mode, i.e. without executing any commands
   -f, --file <FILE>       Search for tasks in the given file
+  -g, --global            Search for tasks in ~/yamis/yamis.global.{yml,yaml}
       --update            Checks for updates and updates the binary if necessary
-  -h, --help              Print help information
-  -V, --version           Print version information
+  -h, --help              Print help
+  -V, --version           Print version
 ```
 
-You can either call a task directly by passing the name of the task and its arguments, i.e. `yamis say_hi --name John`,
-or you can specify the configuration file to use with the -f option, i.e. `yamis -f project.yamis.yaml say_hi --name John`.
-Note that the -f option is set before the task name, otherwise it would be interpreted as an argument for the task.
-
-The next sections talks about how task files are auto-discovered.
 
 <a name="task-files"></a>
 ### Task files
-The task files must be either a TOML or YAML file with the appropriate extension, i.e. `project.yamis.toml`, or
-`project.yamis.yml`. Note that across this document examples are given in either version, but the conversion between
-them is straightforward.
+
+The tasks are defined using the YAML format.
 
 When invoking a task, starting in the working directory and continuing to the root directory, the program will
-look configuration files in a certain order until either a task is found, a `project.yamis` (either TOML or YAML)
-task file is found, or there are no more parent folders (reached root directory). The name of these files is
-case-sensitive in case-sensitive systems, i.e. `PROJECT.yamis.toml` will not work in linux.
+look configuration files in a certain order until either a task is found, a `yamis.root.{yml,yaml}` file is found,
+or there are no more parent folders (reached root directory). The name of these files is case-sensitive in case-sensitive
+systems, i.e. `yamis.root.yml` will not work in linux.
 
-The configuration files (in order of precedence, with extension omitted) are named as following:
-- `local.yamis`: Should hold private tasks and should not be committed to the repository.
-- `yamis`: Should be used in sub-folders of a project for tasks specific to that folder and sub-folders.
-- `project.yamis`: Should hold tasks for the entire project.
+The priority order is as follows:
+- `yamis.private.yml`: Should hold private tasks and should not be committed to the repository.
+- `yamis.private.yaml`: Same as above but for yaml format.
+- `yamis.yml`: Should be used in sub-folders of a project for tasks specific to that folder and sub-folders.
+- `yamis.yaml`: Same as above but for yaml format.
+- `yamis.root.yml`: Should hold tasks for the entire project.
+- `yamis.root.yaml`: Same as above but for yaml format.
 
-If the task is still not found, it will look at `~/.yamis/user.yamis.toml` or `~/.yamis/user.yamis.yaml` or
-`~/.yamis/user.yamis.yml` for user-wide tasks. This is useful for everyday tasks not related to a specific project.
+An especial task file can be defined at `~/yamis/yamis.global.yml` or `~/yamis/yamis.global.yaml` for global tasks.
+To run a global task, you need to pass the `--global` or `-g` flag, i.e. `yamis -g say_hi`. This is useful for
+personal tasks that are not related to a specific project.
+
+Tasks can also be defined in a different file by passing the `--file` or `-f` flag, i.e. `yamis -f my_tasks.yml say_hi`.
+
+While you can add any of the two formats, i.e. `yamis.root.yml` and `yamis.root.yaml`, it is recommended to use
+only one format for consistency and to avoid confusion.
+
+
+<a name="common-properties"></a>
+### Common Properties
+The following properties can be defined in the task file or in the task itself. The value defined in the task takes
+precedence over the value defined in the file.
+
+- [wd](#wd): The default working directory.
+- [env](#env): Environment variables.
+- [env_file](#env_file): File containing environment variables.
+- [vars](#vars): Variables.
+- [templates](#templates): Templates.
+
+
+<a name="wd"></a>
+##### wd
+
+The `wd` property is used to define the default working directory for the tasks in the file. The value of the
+property is a string containing the path to the working directory. The path can be absolute or relative to the
+location of the file.
+
+If not defined in the file or task, it defaults to the directory where the command was
+executed. To set the working directory relative to the location of the file, use `wd: ""`. Note that
+`wd: "/"` will not work, as it will be interpreted as an absolute path.
+
+The value defined in the executed task takes precedence over the value defined in the file.
+
+
+<a name="env"></a>
+##### env
+
+The `env` property is used to define environment variables that will be available to all tasks in the file.
+The value of the property is a map of key-value pairs, where the key is the name of the environment variable,
+and the value is the value of the environment variable.
+
+The value defined in the executed task takes precedence over the value defined in the file.
+
+See also:
+- [env_file](#env_file)
+- [env and vars inheritance](#env-and-vars-inheritance)
+
+
+<a name="env_file"></a>
+##### env_file
+
+The `env_file` property is used to define environment variables that will be available to all tasks in the file.
+The value of the property is a string containing the path to the file containing the environment variables.
+The path can be absolute or relative to the location of the file.
+
+The value defined in the executed task takes precedence over the value defined in the file. Also, the values
+defined in the `env` property take precedence over the values defined in the file.
+
+
+<a name="vars"></a>
+##### vars
+
+The `vars` property is used to define variables that will be available to all tasks in the file.
+This behaves like the [env](#env) property, but the variables are not exported to the environment,
+and can be more complex than strings.
+
+For example, you can define a variable like this:
+
+```yaml
+vars:
+  user:
+    age: 20
+    name: John
+```
+
+And then use it in a task like this:
+
+```yaml
+tasks:
+  say_hi:
+    cmd: echo "Hi, {{ user.name }}!"
+```
+
+
+<a name="templates"></a>
+##### templates
+
+The `templates` property is used to define Tera templates that will be available to all tasks in the file.
+The value of the property is a map of key-value pairs, where the key is the name of the template,
+and the value is the template itself. The template can then be accessed in a task with the name `templates.<name>`.
+
+For example, you can define a template like this:
+
+```yaml
+templates:
+  say_hi: "Hi from {{ TASK.name }}!"
+```
+
+And then use it in a task like this:
+
+```yaml
+tasks:
+  hi:
+    cmd: echo {% include "templates.say_hi" %}
+```
+
+Templates can also be defined in the task, and they will take precedence over the templates defined in the file.
+
+This also allows you to define [macros](https://tera.netlify.app/docs/#macros). See the also the [include](https://tera.netlify.app/docs/#include)
+documentation for Tera for more information.
+
+
+<a name="tasks-file-properties"></a>
+### Tasks File Properties
+
+Besides the [common properties](#common-properties), the following properties can be defined in the task file:
+- [tasks](#tasks): The tasks defined in the file.
+- version: The version of the file. Although not used at the moment, it is required for future compatibility. The version
+  can be a number or string. At the moment backward compatibility with version 1 was not implemented. Therefore, at the
+  moment of writing this, the version should be `2`.
+
+
+<a name="tasks"></a>
+##### tasks
+The `tasks` property is used to define the tasks in the file. The value of the property is a map of key-value
+pairs, where the key is the name of the task, and the value is the task definition.
+
+The name of the task can be any string, but it is recommended to use only alphanumeric characters and dashes.
+Private tasks should start with an underscore, i.e. `_private-task`.
+
+
+<a name="task-properties"></a>
+### Task Properties
+
+Besides the common properties, the task can have the following properties:
+- [help](#help): The help message.
+- [bases](#bases): The bases to execute.
+- [script_runner](#script_runner): A template to parse the script program and arguments.
+- [script_extension](#script_extension): The extension of the script file.
+- [script_ext](#script_ext): Alias for `script_extension`.
+- [script](#script): The script to execute.
+- [cmds](#cmds): The commands to execute.
+- [program](#program): The program to execute.
+- [args](#args): The arguments to pass to the program.
+- [args_extend](#args_extend): The arguments to pass to the program, appended to the arguments from the base task, if any.
+- [args+](#args_extend): Alias for `args_extend`.
+- [linux](#os-specific-tasks): A version of the task to execute in linux.
+- [windows](#os-specific-tasks): A version of the task to execute in windows.
+- [mac](#os-specific-tasks): A version of the task to execute in mac.
+- [private](#private): Whether the task is private or not.
+
+
+<a name="help"></a>
+##### help
+
+The `help` property is used to define the help message for the task. The value of the property is a string
+containing the help message.
+
+Unlike comments, help will be printed when running `yamis -i <TASK>`.
+
+
+<a name="bases"></a>
+##### bases
+
+The `bases` property is used to define the tasks to inherit from.
+
+The inherited values are:
+- `wd`
+- `help`
+- `script_runner`
+- `script_extension`
+- `script_ext` (alias for `script_extension`)
+- `script`
+- `program`
+- `args`
+- `cmds`
+
+Values merged (with the task values taking precedence) are:
+- `env`
+- `env_file` (loaded and merged with the inherited `env` and `env_file`)
+
+Values not inherited are:
+- `args_extend` (appended to the inherited `args`)
+- `args+` (alias for `args_extend`)
+- `private`
+
+
+<a name="script_runner"></a>
+##### script_runner
+
+The `script_runner` property is used to define the template to parse the script program and arguments. Must contain
+a program and a `{{ script_path }}` template, i.e. `python {{ script_path }}`. Arguments are separated in the same way
+as [args](#args).
+
+
+<a name="script_extension"></a>
+##### script_extension
+
+The `script_extension` property is used to define the extension of the script file. I.e. `py` or `.py` for python scripts.
 
 
 <a name="script"></a>
-### Script
+#### Script
+
 **⚠️Warning:**
 DO NOT PASS SENSITIVE INFORMATION AS PARAMETERS IN SCRIPTS. Scripts are stored in a file in the temporal
-directory of the system and is the job of the OS to delete it, however it is not guaranteed that that will
-be the case. So any argument passed will be persisted indefinitely.
+directory of the system and is the job of the OS to delete it, however it is not guaranteed that when or if that would
+be the case. So any sensitive argument passed could be persisted indefinitely.
 
 The `script` value inside a task will be executed in the command line (defaults to cmd in Windows
-and bash in Unix). Scripts can spawn multiple lines, and contain shell built-ins and programs. When
-passing multiple arguments, they will be expanded by default, the common example would be the `"{ $@ }"`
-tag which expands to all the passed arguments.
+and bash in Unix). Scripts can spawn multiple lines, and contain shell built-ins and programs.
 
 The generated scripts are stored in the temporal directory, and the filename will be a hash so that if the
 script was previously called with the same parameters, we can reuse the previous file, essentially working
 as a cache.
 
-<a name="auto-quoting"></a>
-#### Auto quoting
-By default, all passed arguments are quoted (with double quotes).
-This can be changed at the task or file level by specifying the
-`quote` param, which can be either:
-- `always`: Always quote arguments (default)
-- `spaces`: Quote arguments if they contain spaces
-- `never`: Never quote arguments
+<a name="program"></a>
+#### Program
 
-Although quoting prevents common errors like things breaking because an argument with a space was passed,
-it might fail in certain edge cases.
+The `program` value inside a task will be executed as a separate process, with the arguments passed
+on `args`, if any.
 
-<a name="replacing-the-script-runner"></a>
-#### Replacing the script runner
-By default, the script runner in windows is CMD, and bash in unix systems. To use another program you can
-set the `script_runner` option in a task. Additionally, you can set `script_runner_args` which should be a list
-of extra arguments to pass to the runner before the generated script, i.e. `["-x"]` to run the script in bash
-in debug mode.
+<a name="args"></a>
+#### Args
 
-You might also want to override the `script_ext` (or `script_extension`) option, which is a string containing the
-extension for the script file, and can be prepended with a dot or not. For some interpreter the extension does not
-matter, but for others it does. In windows the extension defaults to `cmd`, and `sh` in unix.
+The `args` values inside a task will be passed as arguments to the program, if any. The value is a string
+containing the arguments separated by spaces. Values with spaces can be quoted to be treated as one, i.e.
+`"hello world"`. Quotes can be escaped with a backslash, i.e. `\"`.
+
+<a name="args_extend"></a>
+#### Args Extend
+The `args_extend` values will be appended to `args` (with a space in between), if any. The value is a string
+in the same form as `args`.
+
+<a name="cmds"></a>
+#### Cmds
+
+The `cmds` value is a list of commands to execute. Each command can be either a string, or a map with a `task` key.
+
+If the command is a string, it will be executed as a program, with the first value being the program, and the
+rest being the arguments. Arguments are separated in the same way as [args](#args).
+
+If the command is a map, the value of `task` can be either the name of a task to execute, or the definition of a
+task to execute.
 
 Example:
-```toml
-# Python script that prints the date and time
-[tasks.hello_world]
-script_runner = "python"
-script_ext = "py"  # or .py
-script = """
-from datetime import datetime
+```yaml
+tasks:
+  say_hi:
+    script: echo "hi"
 
-print(datetime.now())
-"""
+  say_bye:
+    script: echo "bye"
+  
+  greet:
+    cmds:
+      - python -c "print('hello')"
+      - task: say_hi
+      - task:
+          bases: [say_bye]
 ```
 
-If using this feature frequently it would be useful to use inheritance to shorten the task. The above can become:
-```toml
-[tasks._py_script]
-script_runner = "python"
-script_ext = "py"  # or .py
-private = true
-
-[tasks.hello_world]
-bases = ["_py_script"]
-script = """
-from datetime import datetime
-
-print(datetime.now())
-"""
-```
-
-<a name="program"></a>
-### Program
-The `program` value inside a task will be executed as a separate process, with the arguments passed
-on `args`. Note that each argument can contain at most one tag, that is, `{$1}{$2}` is not valid. When
-passing multiple values, they are unpacked into the program arguments, i.e. `"{$@}"` will result in
-all arguments passed down to the program.
-
-When using inheritance, the arguments for the base can be extended by using `args_extend` instead of `args`.
-This is useful for adding extra parameters without rewriting them.
-
-
-<a name="running-tasks-serially"></a>
-### Running tasks serially
-One obvious option to run tasks one after the other is to create a script, i.e. with the following:
-```
-yamis say_hi
-yamis say_bye
-```
-
-The other option is to use `serial`, which should take a list of tasks to run in order, i.e.:
-```toml
-[tasks.greet]
-serial = ["say_hi", "say_bye"]
-```
-Note that any argument passed will be passed to both tasks equally. 
-
-It is possible to execute the same task or end with infinite loops. 
-This is not prevented since it can be bypassed by using a script.
-
-
-<a name="script-vs-program"></a>
-### Script vs Program:
-Because escaping arguments properly can get really complex quickly, scripts are prone to fail if certain
-arguments are passed. To prevent classic errors, arguments are quoted by default (see
-[__Auto quoting__](https://github.com/adrianmrit/yamis#auto-quoting)), but this is not completely safe.
-Also, scripts are saved in the temporal directory, and might be persisted indefinitely.
-
-On the other hand, programs run in their own process with arguments passed directly to it, so there is no
-need to escape them. These can also be extended more easily, like by extending the arguments.
-The downside however, is that we cannot execute builtin shell commands such as `echo`,
-and we need to define the arguments as a list.
-
-
-<a name="task-arguments-in-the-command-line"></a>
-### Task arguments in the command line
-Arguments for tasks can be either passed as a key-value pair, i.e. `--name "John Doe"`, or as a positional argument, i.e.
-`"John Doe"`.
-
-Named arguments must start with one or two dashes, followed by an ascii alpha character or underscore, followed by any number
-of letters, digits, `-` or `_`. The value will be either the next argument or the value after the equals sign, i.e.
-`--name "John Doe"`, `--name-person1="John Doe"`, `-name_person1 John` are all valid. Note that `"--name John"` is not
-a named argument because it is surrounded by quotes and contains a space, however `"--name=John"` is valid named argument.
-
-Named arguments are also treated as positional arguments, i.e. if `--name John --surname=Doe` is passed,
-`$1` will be `--name`, `$2` will be `John`, and `$3` will be `--surname="Doe"`. Thus, it is recommended to pass positional
-arguments first.
-
-In you want to pass the arguments as they are to a program, it doesn't matter how they are formatted, you can use the `{$@}`
-tag, which will expand to all the arguments.
-
-You can read more about the usage of arguments in tasks in the [Tags](#tags) and [Expressions](#expressions) sections.
-
-
-<a name="tags"></a>
-### Tags
-Tags are used to insert dynamic values into the scripts and arguments of program we want to call. Tags can be
-used to insert positional and named arguments, environment variables (with a cross-platform syntax) and invoke
-functions.
-
-The expressions inside tags (including functions) can return either a string, or a list of strings.
-These are in fact the only two data types that can be used directly in tags. Note that empty lists and lists
-with a single string will not be coerced into a string to avoid ambiguity, check the [Expressions](#expressions)
-section for more info.
-
-The integer is only allowed when slicing, i.e. `{values[0]}` is valid, but `{1}` is not.
-
-In the case of optional expressions, there is no null value, they will simply return an empty string/list. For example
-`{$1?}` will return an empty string if `$1` is not passed.
-
-Why aren't more data types supported, like integers? Because parsing makes sense only for returning the body of a script
-or the arguments for a program, and both are always strings or list of strings. Furthermore, it would make more sense to call
-an external script for more complex operations.
-
-<a name="expressions"></a>
-### Expressions
-
-<a name="positional-parameters"></a>
-#### Positional parameters
-1-indexed, start with `$` and followed by a number, i.e. `{$1}`, `{$2}`. These return a single string, so slices of them
-will return a substring.
-
-<a name="named-parameters"></a>
-#### Named parameters
-Case-sensitive and passed by name, i.e. `{out}`, `{file}`, etc. Note that any dash before the argument
-is removed, i.e. if `--file out.txt` is passed, `{file}` will accept it. You can see the
-[Task arguments in the command line](#task-arguments-in-the-command-line) section for more info.
-
-These will always return a list of strings, so an index slice will return a string, while a range slice will return
-a subarray. I.e. `{ file[0][0] }` returns the first character of the first passed `file` argument, while `file[0]`
-will return the first file argument.
-
-<a name="all-parameters"></a>
-#### All parameters
-With `{ $@ }` a list of all arguments will be passed as they are. I.e. if calling a tasks with arguments
-`hello -o file.txt -o=file2.txt`, it will return a list with `["hello", "-o", "file.txt", "-o=file2.txt"]`.
-They can be accessed by index and sliced, i.e. `{ $@[0] }` and `{ $@[0..2] }` are valid. Can also be optional,
-i.e. `{ $@? }`.
-
-
-<a name="environment-variables"></a>
-#### Environment variables
-Prefixed with `$`, i.e. `{ $HOME }`, `{ $PATH }`, etc. These are represented as strings, so slices will return
-a substring. Do not confuse with positional arguments, which are numeric, i.e. `$1`, or with the all parameters
-syntax `$@`.
-
-Note that with this syntax environment variables are loaded when the script or program arguments are parsed, unlike
-the native syntax that will not work in arguments of programs, and in the case of scripts, will be loaded by the shell.
-This is intentional to avoid ambiguities and can keep them separate, or use env variables with a different interpreter
-like python.
-
-
-<a name="string-parameters"></a>
-#### String parameters
-Strings are another type of valid expressions, but they are more relevant in the
-function's context. Strings are defined by single or double quotes, cannot contain unescaped new lines.
-I.e. `{ "\"hello\" \n 'world'" }` is a valid string. Strings can also be sliced, but this is side effect of trying
-to keep the parser simple rather than a useful feature.
-
-
-<a name="format-strings"></a>
-#### Format strings
-These are just regular strings that are treated specially in some functions. I.e. [fmt](#fmt-function) takes a format string
-and multiple arguments. Each `%s` occurrence in the string will be replaced with an argument of the same index. Note that in
-format strings `%` needs to be escaped with another `%`, i.e. `%%s` will be replaced with `%s`.
-
-For example ```{ fmt("hello %s", $1) }``` will return `hello <first argument>`.
-
-
-<a name="functions"></a>
-#### Functions
-For a list of available functions, check the [Functions](#functions) section.
-
-Predefined functions can be used to transform arguments in different ways. They can take values and can be
-nested. I.e. `{ join(" ", split(",", $1)) }` will split the first argument by `","`, and join them back with a space.
-
-At the moment it is not possible to define custom functions as this would require either using an external language such as python,
-an embedded language such as lua, or implementing a new programming language. One of the goals of this program is to have a simple
-and clear syntax, so adding support for defining functions breaks this. In most cases where
-complex operations need to be performed, it would be better and cleaner to have a separate script (i.e. bash or python) that performs
-the desired operation and then call it from a task with the appropriate arguments. Still, new functions might be added in the future
-to support flexible argument parsing operations. Feel free to request a new function by submitting a new issue in the repo.
-
-
-<a name="optional-expressions"></a>
-### Optional expressions
-By default, expressions must return a non-empty string or non-empty array of strings, otherwise an error will be raised.
-Expressions can be made optional by adding `?`, i.e. `{ $1? }`, `{ map("hello %s", person?)? }`, `{ $@? }`, `{ output? }`.
-
-
-<a name="index-and-slice"></a>
-### Index and slice
-[Expressions](#expressions), including the output of [functions](#list-of-functions) can be sliced for more flexibility.
-The slices are 0 indexed, and accept positive and negative indexes. The whole expression can be either mandatory
-or optional, i.e. `exp[1][0]?` does not fail and returns nothing if `exp` is not set or `exp[1]` is out of bounds, note that something like
-`exp?[1]?[0]?` is invalid.
-
-Here are some examples for parameters `hello world -p=1 -p=2 -p=3`:
-
-| Expression                 | Result                               |
-|----------------------------|--------------------------------------|
-| `echo { $@[0] }`           | `echo hello`                         |
-| `echo { $@[0][0] }`        | `echo h`                             |
-| `echo { p[0] }`            | `echo 1`                             |
-| `echo { p[:2] }`           | `echo 1 2`                           |
-| `echo { p[1:] }`           | `echo 2 3`                           |
-| `echo { $@[0:999] }`       | `echo hello world --p=1 --p=2 --p=3` |
-| `echo { $@[:-1] }`         | `echo --p=3`                         |
-| `echo { $@[-3:-1] }`       | `echo --p=1 --p=2`                   |
-| `echo { $@[990:999][0]? }` | `echo `                              |
-| `echo { $@[-999]? }`       | `echo `                              |
-
-<a name="unpacking"></a>
-### Unpacking
-Expressions that return an array will be unpacked. For example, given the following tasks:
-
-```toml
-[tasks.say-hi]
-script = "echo hello {person}"
-
-[tasks.something]
-program = "imaginary-program"
-args = ["{ map('-o %s', f) }"]  # map returns an array of strings
-```
-
-If we call `yamis hello --person John1 --person John2`, it will run `echo hello John1 John2`.
-Similarly, `yamis something -f out1.txt -f out2.txt` will call `imaginary-program` with
-`["-o", "out1.txt", "-o", "out2.txt""]` parameters. Note that in the last case we call a [function](#functions)
-called [map](#map-function).
-
-
-<a name="setting-environment-variables"></a>
-### Setting environment variables
-Environment variables can be defined at the task level. These two forms are equivalent:
-```toml
-[tasks.echo]
-env = {"DEBUG" = "TRUE"}
-
-[tasks.echo.env]
-DEBUG = "TRUE"
-  ```
-They can also be passed globally
-```toml
-[env]
-DEBUG = "TRUE"
-```
-Also, an env file can be specified at the task or global level. The path will be relative to the config file unless it is
-an absolute path.
-```toml
-env_file = ".env"
-
-[tasks.some]
-env_file = ".env_2"
-```
-
-If both `env_file` and `env` options are set at the same level, both will be loaded, if there are duplicate keys, `env` will
-take precedence. Similarly, the global env variables and env file will be loaded at the task level even if these options
-are also set there, with the env variables defined on the task taking precedence over the global ones.
+<a name="private"></a>
+#### Private
+The `private` value is a boolean that indicates if the task is private or not. Private tasks cannot be executed
+directly, but can be inherited from.
 
 
 <a name="os-specific-tasks"></a>
 ### OS specific tasks
+
 You can have a different OS version for each task. If a task for the current OS is not found, it will
 fall back to the non os-specific task if it exists. I.e.
 ```yaml
 tasks:
-  ls: # Runs if not in windows 
-    script: "ls {$@?}"
+  ls:
+    script: "ls {{ args.0 }}"
 
-  windows:  # Other options are linux and macOS
-    script: "dir {$@?}"
+  ls.windows:
+    script: "dir {{ args.0 }}"
 ```
 
 Os tasks can also be specified in a single key, i.e. the following is equivalent to the example above.
@@ -542,10 +446,10 @@ Os tasks can also be specified in a single key, i.e. the following is equivalent
 ```yaml
 tasks:
   ls: 
-    script: "ls {$@?}"
+    script: "ls {{ args.0 }}"
 
   ls.windows:
-    script: "dir {$@?}"
+    script: "dir {{ args.0 }}"
 ```
 
 Note that os-specific tasks do not inherit from the non-os specific task implicitly, if you want to do so, you will have
@@ -556,308 +460,153 @@ tasks:
   ls:
     env:
       DIR: "."
-    script: "ls {$DIR}"
+    script: "ls {{ env.DIR }}"
 
   ls.windows:
     bases: [ls]
-    script: "dir {$DIR}"
+    script: "dir {{ env.DIR }}"
 ```
 
 
-<a name="working-directory"></a>
-### Working directory
-By default, the working directory of the task is one where it was executed. This can be changed at the task level
-or root level, with `wd`. The path can be relative or absolute, with relative paths being resolved against the
-configuration file and not the directory where the task was executed, this means `""` can be used to make the
-working directory the same one as the directory for the configuration file.
+<a name="passing-arguments"></a>
+### Passing arguments
+
+Arguments for tasks can be either passed as a key-value pair, i.e. `--name "John Doe"`, or as a positional argument, i.e.
+`"John Doe"`.
+
+Named arguments must start with one or two dashes, followed by an ascii alpha character or underscore, followed by any number
+of letters, digits, `-` or `_`. The value will be either the next argument or the value after the equals sign, i.e.
+`--name "John Doe"`, `--name-person1="John Doe"`, `-name_person1 John` are all valid. Note that `"--name John"` is not
+a named argument because it is surrounded by quotes and contains a space, however `"--name=John"` is valid named argument.
+
+The first versions used a custom parser, but it takes a lot of work to maintain and it is not as powerful.
+So now the template engine used is [Tera](https://tera.netlify.app/docs/). The syntax is
+based on Jinja2 and Django templates. The syntax is very easy and powerful.
+
+The exported variables are:
+- `args`: The arguments passed to the task. If the task is called with `yamis say_hi arg1 --name "John"`, then
+  `args` will be `["arg1", "--name", "John"]`.
+- `kwargs`: The keyword arguments passed to the task. If the task is called with `yamis say_hi --name "John"`,
+  then `kwargs` will be `{"name": "John"}`. If the same named argument is passed multiple times, the value will be
+  the last one.
+- `pkwargs`: Same as `kwargs`, but the value is a list of all the values passed for the same named argument.
+- `env`: The [environment variables](#env) defined in the task. Note that this does not includes the environment variables
+  defined in the system. To access those, use `{{ get_env(name=<value>, default=<default>) }}`.
+- `vars`: The [variables](#vars) defined in the task.
+- `TASK`: The [task](#task-properties) object and its properties.
+- `FILE`: The [file](#tasks-file-properties) object and its properties.
+
+Named arguments are also treated as positional arguments, i.e. if `--name John --surname=Doe` is passed,
+`{{ args.0 }}` will be `--name`, `{{ args.1 }}` will be `John`, and `{{ args.2 }}` will be `--surname="Doe"`.
+Thus, it is recommended to pass positional arguments first.
+
+In you want to pass all the command line arguments, you can use `{{ args | join(sep=" ") }}`, or `{% for arg in args %} "{{ arg }}" {% %}`
+if you want to quote them.
+
+You can check the [Tera documentation](https://tera.netlify.app/docs/#introduction) for more information. Just ignore the Rust specific parts.
 
 
-<a name="documenting-tasks"></a>
-### Documenting tasks
-Tasks can be documented using the `help` key. Unlike comments, help will be printed when running `yamis -i <TASK>`.
-Note that help is inherited. If you wish to remove it, you can set it to `""`.
+<a name="env-and-vars-inheritance"></a>
+### Env and vars inheritance
 
+Environment variables ([env](#env)) and variables ([vars](#vars)) follow this priority order:
+- Defined in [env](#env)/[vars](#vars) in the subtask.
+- Defined in [env_file](#env_file) in the subtask.
+- Values inherited from [bases](#bases) in the subtask.
+- Defined in [env](#env)/[vars](#vars) in the parent task.
+- Defined in [env_file](#env_file) in the parent task.
+- Values inherited from [bases](#bases) in the parent task.
+- Defined [env](#env)/[vars](#vars) in the file.
+- Defined in [env_file](#env_file) in the file.
 
-<a name="task-inheritance"></a>
-### Task inheritance
-A task can inherit from multiple tasks by adding a `bases` property, which should be a list names of tasks in
-the same file. This works like class inheritance in common languages like Python, but not all values are 
-inherited.
-
-The inherited values are:
-- `wd`
-- `help`
-- `quote`
-- `script`
-- `script_runner`
-- `script_runner_args`
-- `script_ext`
-- `script_extension` (alias for `script_ext`)
-- `program`
-- `args`
-- `serial`
-- `env` (the values are merged instead of overwriting)
-- `env_file` (the values are merged instead of overwriting)
-
-Values not inherited are:
-- `args_extend` (added to the inherited `args` and destroyed afterwards)
-- `args+` (alias for `args_extend`)
-- `private`
-
-The inheritance works from bottom to top, with childs being processed before the parents. Circular dependencies
-are not allowed and will result in an error.
-
-It will attempt to find and the **os-specific** task first and inherit from it, if not found, it will use the regular task.
-For example:
-
+For example, if you have the following file:
 ```yaml
+version: 2
+
+# Default values. The tasks can override these values.
+env:
+  ENV1: "env1"
+  ENV2: "env2"
+
+vars:
+  VAR1: "var1"
+  VAR2: "var2"
+
 tasks:
-  sample.windows:
-    script: "echo hello"
+  test1:
+    env:
+      ENV2: "test1_env2"
+      ENV3: "test1_env3"
+    vars:
+      VAR2: "test1_var2"
+      VAR3: "test1_var3"
+    cmds:
+      - echo "{{ env.ENV1 }} {{ env.ENV2 }} {{ env.ENV3 }}"
+      - echo "{{ vars.VAR1 }} {{ vars.VAR2 }} {{ vars.VAR3 }}"
+      
+      # env and vars from the parent will take precedence
+      - task: test2
+      
+      # This subtask will inherit the env and vars from the parent
+      # but its own bases, envs and vars will take precedence
+      - task:
+          # Bases will take precedence over the parent task
+          bases: [test2]
+
+          # env and vars take precedence over the parent task and the bases
+          env:
+            ENV2: "subtask_env2"
+          vars:
+            VAR2: "subtask_var2"
   
-  sample:
-    script: "echo hi"
-  
-  inherit:
-    bases: [sample]
+  test2:
+    env:
+      ENV2: "test2_env2"
+      ENV3: "test2_env3"
+    vars:
+      VAR2: "test2_var2"
+      VAR3: "test2_var3"
+    cmds:
+      - echo "{{ env.VAR1 }} {{ env.VAR2 }} {{ env.VAR3 }}"
+      - echo "{{ vars.VAR1 }} {{ vars.VAR2 }} {{ vars.VAR3 }}"
 ```
 
-Is equivalent to:
-
-```yaml
-tasks:
-  sample.windows:
-    script: "echo hello windows"
-  
-  sample:
-    script: "echo unix"
-  
-  inherit:
-   script: "echo hello windows"
+The output will be (excluding debug output):
+```console
+$ yamis test1
+env1 test1_env2 test1_env3
+var1 test1_var2 test1_var3
+env1 test1_env2 test1_env3
+var1 test1_var2 test1_var3
+env1 subtask_env2 test2_env3
+var1 subtask_var2 test2_var3
 ```
 
-This way base tasks can be defined for each OS, and have only one version for its children. However, note that
-os-specific tasks do not inherit implicitly from the non os-specif task. As in the above example, `sample.windows`
-will not implicitly inherit from `sample`.
+This might be a bit confusing, so let's explain the output:
 
-
-<a name="extending-program-arguments"></a>
-#### Extending program arguments
-
-Args can be extended with `args_extend` or it's alias `args+`. These will append the given list to the `args`
-inherited from the bases.
-
-Examples:
-```yaml
-tasks:
-  program:
-    program: "program"
-    args: ["{name}"]
-
-  program_extend:
-    bases: ["program"]
-    args_extend: ["{phone}"]
-
-  other:
-    env: {"KEY": "VAL"}
-    args: ["{other_param}"]
-    private: true  # cannot be called directly, field not inherited
-
-  program_extend_again:
-    bases: ["program_extend", "other"]
-    args+: ["{address}"]  # args+ is an alias for args_extend
+```console
+env1 test1_env2 test1_env3
+var1 test1_var2 test1_var3
 ```
+This is the output of the first two commands in the `test1` task. `ENV1` and `VAR1` are only defined in the file, while the
+task overrides `ENV2`, `ENV3`, `VAR2` and `VAR3`.
 
-In the example above, `program_extend_again` will be equivalent to
-```yaml
-tasks:
-  program_extend_again:
-    program: "program"
-    env: {"KEY": "VAL"}
-    args: ["{name}", "{phone}", "{address}"]
+```console
+env1 test1_env2 test1_env3
+var1 test1_var2 test1_var3
 ```
+This is the output of the third command in the `test1` task, which calls `test2`. Again, `ENV1` and `VAR1` are only defined in the file.
+Even though `test2` overrides `ENV2`, `ENV3`, `VAR2` and `VAR3`, the values defined in `test1`, the parent task, take precedence.
 
-
-<a name="private-tasks"></a>
-#### Private tasks
-
-Tasks can be marked as private by setting `private = true`. Private tasks cannot be called by the user, but are useful
-for inheritance.
-
-
-<a name="debug-options"></a>
-### Debug Options
-Some debug options can be added at the task or file level under `debug_config`
-
-- `print_file_path`: Boolean, defined at the file level and false by default. If true, the absolute config file path will
- be displayed when running a task
-- `print_task_name`: Boolean, defined at the task or file level, true by default. If true, the name of the task will be displayed
- when tunning a task   
-
-
-<a name="list-of-functions"></a>
-### List of functions
-List of predefined functions.
-
-<a name="map-function"></a>
-#### map function
-**Signature:** `map<S: str | str[]>(fmt_string: str, values: S) -> S`
-
-Maps each value to `fmt(fmt_string, val)`.
-
-**Parameters:**
-- `fmt_string`: [format string](#format-strings)
-- `values`: Value or values to map
-
-Example:
-```yaml
-sample:
-  quote: never
-  script: |
-    echo {map("'%s'", $@)}
-
-
-sample2:
-  program: merge_txt_files
-  args: ["{map('%s.txt', $@)}"]
+```console
+env1 subtask_env2 test2_env3
+var1 subtask_var2 test2_var3
 ```
+This is the output of the fourth command in the `test1` task, which calls a subtask. `ENV1` and `VAR1` are only defined in the file.
+While it might seem like we are calling `task2`, we actually defined a new task that inherits from `task2` and overrides `ENV2` and `VAR2`.
+Therefore, the values inherited from `task2` will take precedence over the parent task.
 
-`yamis sample person1 person2` will result in `echo hi 'person1' 'person2'`
-
-`yamis sample2 file1 file2` will result in calling `merge_txt_files` with arguments `["file1.txt", "file2.txt"]`
-
-
-<a name="join-function"></a>
-#### join function
-**Signature**: `join<S: str | str[]>(join_str: str, values: S) -> str`
-
-The first parameter of `join` is a string that will be inserted between all values given in the second parameter
-returning a single string. If the second parameter is a single string, it will be returned as is.
-
-**Parameters:**
-- `join_str`: String to insert between the values
-- `values`: Value or values to join
-
-Example:
-```yaml
-sample:
-  quote: never
-  script: |
-    echo hello {join(" and ", $@)}
-```
-
-`yamis sample person1 person2` will result in `echo hi person1 and person2'`
-
-
-<a name="jmap-function"></a>
-#### jmap function
-**Signature:** `jmap<S: str | str[]>(fmt_string: str, values: S) -> S`
-
-Shortcut for `join("", map(fmt_string, values))`
-
-**Parameters:**
-- `fmt_string`: [format string](#format-strings)
-- `values`: Value or values to map
-
-Example:
-```yaml
-sample:
-  quote: never
-  script: |
-    echo hi{jmap(" '%s'", $@)}
-
-
-sample2:
-  program: some_program
-  args: ["{jmap('%s,', $@)}"]
-```
-
-`yamis sample person1 person2` will result in `echo hi 'person1' 'person2' `
-
-`yamis sample2 arg1 arg2` will result in calling `some_program` with arguments `["arg1,arg2,"]`
-
-
-<a name="fmt-function"></a>
-#### fmt function
-**Signature**: `fmt(fmt_string: str, *args: str) -> str`
-
-The first parameter of `fmt` is a [format string](#format-strings), and the rest of the values are parameters to format
-the string with. Note that those extra parameters must be string values, not list of strings, i.e. cannot pass directly
-`$@`.
-
-**Parameters:**
-- `fmt_string`: [format string](#format-strings)
-- `args`: Arguments that will replace the `%s` occurrence of the same index
-
-Example:
-```yaml
-sample:
-  quote: never
-  script: |
-    echo {fmt("Hi %s and %s", $1, $2)}
-```
-
-`yamis sample person1 person2` will result in `echo Hi person1 and person2`
-
-
-<a name="trim-function"></a>
-#### trim function
-**Signature**: `trim<S: str | str[]>(value: S) -> S`
-
-Removes leading and trailing whitespaces (including newlines) from the string or each string in list of strings.
-
-**Parameters:**
-- `value`: String or list of strings to trim
-
-Example:
-```yaml
-sample:
-  quote: never
-  script: |
-    echo {trim("  \n  hello world  \n")}
-```
-
-`yamis sample` will result in `echo hello world`
-
-
-
-<a name="split-function"></a>
-#### split function
-**Signature**: `split(split_val: str, split_string: str) -> str`
-
-Splits the string with the given value
-
-**Parameters:**
-- `split_val`: Value to split by
-- `split_string`: String to split
-
-Example:
-```yaml
-sample:
-  quote: never
-  script: |
-    echo {split(",", "a,b,c")}
-```
-
-`yamis sample` will result in `echo a b c`
-
-<a name="faq"></a>
-## FAQ
-
-### Why not use make, cargo-make or cmake and similar tools?
-They are great tool, but sometimes simpler is better. I created this tool because I didn't feel comfortable existing solutions,
-specially on the arguments parsing side, but you can use whatever fits your needs, no hard feelings. Also, there should be no any issue
-with using this together with other tools.
-
-### Can I define my own functions?
-Not possible at the moment, unless you fork the repository and add your own (which is easy to do if you know rust). You can always
-contribute so everyone benefits from it. While I have plans to add more functions in the future, allowing custom functions is not
-that straightforward and probably not worth the effort, perhaps it is better to use a separate script, i.e. python. I am open
-to suggestions.
 
 <a name="Contributing"></a>
 ## Contributing
-Feel free to create issues to report bugs, ask questions or request changes.
-
-You can also fork the repository to make pull requests, just make sure the code is well tested.
-Signed commits are preferred.
+Contributions welcome! Please read the [contributing guidelines](CONTRIBUTING.md) first.

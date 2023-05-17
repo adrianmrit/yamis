@@ -1,5 +1,6 @@
 /target
-local.yamis.*
+/yamis.private.yml
+/yamis.private.yaml
 /target_cov
 /target_ci
 /.idea

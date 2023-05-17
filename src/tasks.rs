@@ -1,33 +1,38 @@
 use std::collections::HashMap;
 use std::env::temp_dir;
+use std::error::Error;
 use std::fs::File;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::Arc;
 use std::{error, fmt, fs, mem};
 
+use crate::args::ArgsContext;
 use crate::config_files::ConfigFile;
-use crate::debug_config::{ConcreteTaskDebugConfig, TaskDebugConfig};
 use crate::defaults::default_false;
-use crate::parser::{parse_params, parse_script, EscapeMode};
-use crate::print_utils::YamisOutput;
-use serde_derive::Deserialize;
+use crate::print_utils::{YamisOutput, INFO_COLOR};
+use colored::Colorize;
+use serde::{de, Deserialize, Serialize};
+use tera;
 
-use crate::types::{DynErrResult, TaskArgs};
-use crate::utils::{get_path_relative_to_base, read_env_file, TMP_FOLDER_NAMESPACE};
+use crate::types::DynErrResult;
+use crate::utils::{
+    get_path_relative_to_base, join_commands, read_env_file, split_command, TMP_FOLDER_NAMESPACE,
+};
 use md5::{Digest, Md5};
+
+pub const DRY_RUN_MESSAGE: &str = "Dry run mode, nothing executed.";
 
 cfg_if::cfg_if! {
     if #[cfg(target_os = "windows")] {
         // Will run the actual script in CMD, but we don't need to specify /C option
-        const DEFAULT_INTERPRETER: &str = "powershell";
+        const DEFAULT_SCRIPT_RUNNER: &str = "powershell {{ script_path }}";
         const DEFAULT_SCRIPT_EXTENSION: &str = "cmd";
     } else if #[cfg(target_os = "linux")] {
-        const DEFAULT_INTERPRETER: &str = "bash";
+        const DEFAULT_SCRIPT_RUNNER: &str = "bash {{ script_path }}";
         const DEFAULT_SCRIPT_EXTENSION: &str = "sh";
     } else if #[cfg(target_os = "macos")] {
-        const DEFAULT_INTERPRETER: &str = "bash";
+        const DEFAULT_SCRIPT_RUNNER: &str = "bash {{ script_path }}";
         const DEFAULT_SCRIPT_EXTENSION: &str = "sh";
     }else {
         compile_error!("Unsupported platform.");
@@ -36,21 +41,25 @@ cfg_if::cfg_if! {
 
 /// Task errors
 #[derive(Debug, PartialEq, Eq)]
-pub enum TaskError {
+pub(crate) enum TaskError {
     /// Raised when there is an error running a task
-    RuntimeError(String, String),
+    RuntimeError(String),
     /// Raised when the task is improperly configured
-    ImproperlyConfigured(String, String),
+    ConfigError(String),
+    NotFound(String),
 }
 
 impl fmt::Display for TaskError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
-            TaskError::RuntimeError(ref name, ref reason) => {
-                write!(f, "Error running tasks.{}:\n{}", name, reason)
+            TaskError::RuntimeError(ref reason) => {
+                write!(f, "Runtime error:\n{}", reason)
             }
-            TaskError::ImproperlyConfigured(ref name, ref reason) => {
-                write!(f, "Improperly configured tasks.{}:\n{}", name, reason)
+            TaskError::ConfigError(ref reason) => {
+                write!(f, "Improperly configured:\n{}", reason)
+            }
+            TaskError::NotFound(ref name) => {
+                write!(f, "Task `{}` not found.", name)
             }
         }
     }
@@ -58,55 +67,64 @@ impl fmt::Display for TaskError {
 
 impl error::Error for TaskError {}
 
-/// Represents a Task
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Task {
-    /// Name of the task
-    #[serde(skip)]
-    name: String,
-    debug_config: Option<TaskDebugConfig>,
-    /// Help of the task
-    help: Option<String>,
-    /// Whether to automatically quote argument with spaces
-    quote: Option<EscapeMode>,
-    /// Script to run
-    script: Option<String>,
-    /// Interpreter program to use
-    script_runner: Option<String>,
-    /// Extra arguments to pass to the script runner
-    script_runner_args: Option<Vec<String>>,
-    /// Script extension
-    #[serde(alias = "script_extension")]
-    script_ext: Option<String>,
-    /// A program to run
-    program: Option<String>,
-    /// Args to pass to a command
-    args: Option<Vec<String>>,
-    /// Extends args from bases
-    #[serde(alias = "args+")]
-    args_extend: Option<Vec<String>>,
-    /// If given, runs all those tasks at once
-    serial: Option<Vec<String>>,
-    /// Env variables for the task
-    #[serde(default)]
-    pub(crate) env: HashMap<String, String>,
-    /// Env file to read environment variables from
-    env_file: Option<String>,
-    /// Working dir
-    wd: Option<String>,
-    /// Task to run instead if the OS is linux
-    pub(crate) linux: Option<Box<Task>>,
-    /// Task to run instead if the OS is windows
-    pub(crate) windows: Option<Box<Task>>,
-    /// Task to run instead if the OS is macos
-    pub(crate) macos: Option<Box<Task>>,
-    /// Base task to inherit from
-    #[serde(default)]
-    pub(crate) bases: Vec<String>,
-    /// If private, it cannot be called
-    #[serde(default = "default_false")]
-    private: bool,
+impl From<tera::Error> for TaskError {
+    fn from(err: tera::Error) -> TaskError {
+        let mut full_error = err.to_string();
+        let mut source = err.source();
+        while let Some(inner) = source {
+            full_error.push_str(&format!("\nCaused by: {}", inner));
+            source = inner.source();
+        }
+        TaskError::ConfigError(full_error)
+    }
+}
+
+impl From<std::io::Error> for TaskError {
+    fn from(err: std::io::Error) -> TaskError {
+        TaskError::RuntimeError(err.to_string())
+    }
+}
+
+// We convert back to TaskError in case a subtask fails
+// TODO: Use source() instead
+impl From<AwareTaskError> for TaskError {
+    fn from(err: AwareTaskError) -> TaskError {
+        TaskError::RuntimeError(err.to_string())
+    }
+}
+
+/// Task error aware of the task name
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct AwareTaskError {
+    /// Name of the task that failed
+    pub(crate) task_name: String,
+    /// The error that caused the task to fail
+    pub(crate) error: TaskError,
+}
+
+impl fmt::Display for AwareTaskError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Task `{}` failed:\n{}", self.task_name, self.error)
+    }
+}
+
+impl error::Error for AwareTaskError {
+    fn source(&self) -> Option<&(dyn error::Error + 'static)> {
+        Some(&self.error)
+    }
+}
+
+impl AwareTaskError {
+    /// Creates a new AwareTaskError
+    /// # Arguments
+    /// * `task_name` - Name of the task that failed
+    /// * `error` - The error that caused the task to fail
+    pub(crate) fn new(task_name: &str, error: TaskError) -> AwareTaskError {
+        AwareTaskError {
+            task_name: task_name.to_string(),
+            error,
+        }
+    }
 }
 
 cfg_if::cfg_if! {
@@ -180,6 +198,160 @@ macro_rules! inherit_value {
     };
 }
 
+#[derive(Debug, Deserialize, Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct TaskNameOption {
+    task: String,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub(crate) struct CmdOption {
+    #[serde(flatten)]
+    command: String,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(untagged)]
+pub(crate) enum Cmd {
+    #[serde(rename = "task_name")]
+    TaskName(String),
+    #[serde(rename = "task")]
+    Task(Box<Task>),
+    #[serde(rename = "cmd")]
+    Cmd(String),
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[serde(untagged)]
+pub(crate) enum StringOrTask {
+    String(String),
+    Task(Box<Task>),
+}
+
+impl<'de> de::Deserialize<'de> for Cmd {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: de::Deserializer<'de>,
+    {
+        struct CmdVisitor;
+
+        impl<'de> de::Visitor<'de> for CmdVisitor {
+            type Value = Cmd;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("cmd, task name or task")
+            }
+
+            fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                Ok(Cmd::Cmd(value.to_string()))
+            }
+
+            fn visit_map<V>(self, mut map: V) -> Result<Self::Value, V::Error>
+            where
+                V: de::MapAccess<'de>,
+            {
+                match map.next_key::<String>()? {
+                    Some(key) => match key.as_str() {
+                        "task" => {
+                            let string_or_task: StringOrTask = map.next_value()?;
+                            match string_or_task {
+                                StringOrTask::String(s) => Ok(Cmd::TaskName(s)),
+                                StringOrTask::Task(t) => Ok(Cmd::Task(t)),
+                            }
+                        }
+                        "cmd" => {
+                            let cmd: String = map.next_value()?;
+                            Ok(Cmd::Cmd(cmd))
+                        }
+                        _ => Err(de::Error::unknown_field(
+                            key.as_str(),
+                            &["task_name", "task", "cmd"],
+                        )),
+                    },
+                    None => Err(de::Error::missing_field("task_name or task")),
+                }
+
+                // Deserialize::deserialize(de::value::MapAccessDeserializer::new(map))
+            }
+        }
+
+        deserializer.deserialize_any(CmdVisitor {})
+    }
+}
+
+/// Represents a Task
+#[derive(Debug, Deserialize, Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Task {
+    /// Name of the task
+    #[serde(skip_deserializing)]
+    name: String,
+
+    /// Adds the given text to Tera, so that they can be included in templates
+    #[serde(default)]
+    templates: HashMap<String, String>,
+
+    /// Help of the task
+    help: Option<String>,
+
+    /// Script to run
+    script: Option<String>,
+
+    /// Interpreter program to use
+    script_runner: Option<String>,
+
+    /// Script extension
+    #[serde(alias = "script_ext")]
+    script_extension: Option<String>,
+
+    /// A program to run
+    program: Option<String>,
+
+    /// Args to pass to a command
+    args: Option<String>,
+
+    /// Run commands
+    cmds: Option<Vec<Cmd>>,
+
+    /// Extends args from bases
+    #[serde(alias = "args+")]
+    args_extend: Option<String>,
+
+    /// Env variables for the task
+    #[serde(default)]
+    pub(crate) env: HashMap<String, String>,
+
+    /// Env file to read environment variables from
+    env_file: Option<String>,
+
+    /// Variables to use around in the task
+    #[serde(default)]
+    pub(crate) vars: HashMap<String, serde_yaml::Value>,
+
+    /// Working dir
+    wd: Option<String>,
+
+    /// Task to run instead if the OS is linux
+    pub(crate) linux: Option<Box<Task>>,
+
+    /// Task to run instead if the OS is windows
+    pub(crate) windows: Option<Box<Task>>,
+
+    /// Task to run instead if the OS is macos
+    pub(crate) macos: Option<Box<Task>>,
+
+    /// Base task to inherit from
+    #[serde(default)]
+    pub(crate) bases: Vec<String>,
+
+    /// If private, it cannot be called
+    #[serde(default = "default_false")]
+    private: bool,
+}
+
 impl Task {
     /// Does extra setup on the task and does some validation.
     ///
@@ -190,10 +362,48 @@ impl Task {
     ///
     /// returns: Result<(), Box<dyn Error, Global>>
     ///
-    pub(crate) fn setup(&mut self, name: &str, base_path: &Path) -> DynErrResult<()> {
+    pub(crate) fn setup(&mut self, name: &str, base_path: &Path) -> Result<(), AwareTaskError> {
         self.name = String::from(name);
-        self.load_env_file(base_path)?;
-        Ok(self.validate()?)
+        match self.load_env_file(base_path) {
+            Ok(_) => {}
+            Err(e) => return Err(AwareTaskError::new(name, e)),
+        }
+        match self.validate() {
+            Ok(_) => Ok(()),
+            Err(e) => Err(AwareTaskError::new(name, e)),
+        }
+    }
+
+    /// Helper function for running a task. Accepts the environment variables as a HashMap.
+    /// So that we can reuse the environment variables for multiple tasks.
+    pub(crate) fn run(
+        &self,
+        args: &ArgsContext,
+        config_file: &ConfigFile,
+        dry_run: bool,
+    ) -> Result<(), AwareTaskError> {
+        let env = match config_file.env.as_ref() {
+            Some(env) => self.get_env(env),
+            None => self.env.clone(),
+        };
+        let vars = match config_file.vars.as_ref() {
+            Some(vars) => self.get_vars(vars),
+            None => self.vars.clone(),
+        };
+        let result = if self.script.is_some() {
+            self.run_script(args, config_file, &env, &vars, dry_run)
+        } else if self.program.is_some() {
+            self.run_program(args, config_file, &env, &vars, dry_run)
+        } else if self.cmds.is_some() {
+            self.run_cmds(args, config_file, &env, &vars, dry_run)
+        } else {
+            Err(TaskError::ConfigError(String::from("Nothing to run.")))
+        };
+
+        match result {
+            Ok(_) => Ok(()),
+            Err(e) => Err(AwareTaskError::new(&self.name, e)),
+        }
     }
 
     /// Extends from the given task.
@@ -205,18 +415,13 @@ impl Task {
     /// returns: ()
     ///
     pub(crate) fn extend_task(&mut self, base_task: &Task) {
-        if self.quote.is_none() && base_task.quote.is_some() {
-            self.quote = Some(base_task.quote.as_ref().unwrap().clone());
-        }
-        inherit_value!(self.debug_config, base_task.debug_config);
         inherit_value!(self.help, base_task.help);
         inherit_value!(self.script, base_task.script);
         inherit_value!(self.script_runner, base_task.script_runner);
-        inherit_value!(self.script_runner_args, base_task.script_runner_args);
-        inherit_value!(self.script_ext, base_task.script_ext);
+        inherit_value!(self.script_extension, base_task.script_extension);
         inherit_value!(self.program, base_task.program);
         inherit_value!(self.args, base_task.args);
-        inherit_value!(self.serial, base_task.serial);
+        inherit_value!(self.cmds, base_task.cmds);
         inherit_value!(self.env_file, base_task.env_file);
 
         // We merge the envs, so the base env is not overwritten
@@ -233,10 +438,11 @@ impl Task {
         if self.args_extend.is_some() {
             let new_args = mem::replace(&mut self.args_extend, None).unwrap();
             if self.args.is_none() {
-                self.args = mem::replace(&mut self.args, Some(Vec::<String>::new()));
+                self.args = mem::replace(&mut self.args, Some(String::new()));
             }
             if let Some(args) = &mut self.args {
-                args.extend(new_args);
+                args.push(' ');
+                args.push_str(&new_args);
             } else {
                 self.args = Some(new_args);
             }
@@ -244,17 +450,17 @@ impl Task {
     }
 
     /// Returns the name of the task
-    pub fn get_name(&self) -> &str {
+    pub(crate) fn get_name(&self) -> &str {
         &self.name
     }
 
     /// Returns weather the task is private or not
-    pub fn is_private(&self) -> bool {
+    pub(crate) fn is_private(&self) -> bool {
         self.private
     }
 
     /// Returns the help for the task
-    pub fn get_help(&self) -> &str {
+    pub(crate) fn get_help(&self) -> &str {
         match self.help {
             Some(ref help) => help.trim(),
             None => "",
@@ -268,14 +474,25 @@ impl Task {
     /// * `base_path`: path to use as a reference to resolve relative paths
     ///
     /// returns: Result<(), Box<dyn Error, Global>>
-    fn load_env_file(&mut self, base_path: &Path) -> DynErrResult<()> {
+    fn load_env_file(&mut self, base_path: &Path) -> Result<(), TaskError> {
         // removes the env_file as we won't need it again
         let env_file = mem::replace(&mut self.env_file, None);
         if let Some(env_file) = env_file {
             let env_file = get_path_relative_to_base(base_path, &env_file);
-            let env_variables = read_env_file(env_file.as_path())?;
-            for (key, val) in env_variables {
-                self.env.entry(key).or_insert(val);
+            let env_variables = read_env_file(env_file.as_path());
+            match env_variables {
+                Ok(env_variables) => {
+                    for (key, val) in env_variables {
+                        self.env.entry(key).or_insert(val);
+                    }
+                }
+                Err(err) => {
+                    return Err(TaskError::ConfigError(format!(
+                        "Error reading env file `{}`: {}",
+                        env_file.display(),
+                        err
+                    )));
+                }
             }
         }
         Ok(())
@@ -289,14 +506,42 @@ impl Task {
     /// * `config_file`: Config file to load extra environment variables from
     ///
     /// returns: HashMap<String, String, RandomState>
-    fn get_env(&self, config_file: &ConfigFile) -> HashMap<String, String> {
-        let mut env = self.env.clone();
-        if let Some(config_file_env) = &config_file.env {
-            for (key, val) in config_file_env {
-                env.entry(key.clone()).or_insert_with(|| val.clone());
-            }
+    fn get_env(&self, env: &HashMap<String, String>) -> HashMap<String, String> {
+        let mut new_env = self.env.clone();
+        for (key, val) in env {
+            new_env.entry(key.clone()).or_insert_with(|| val.clone());
         }
-        env
+        new_env
+    }
+
+    /// Returns the environment variables by merging the ones from the config file with
+    /// the ones from the task, where the task takes precedence.
+    ///
+    /// # Arguments
+    ///
+    /// * `config_file`: Config file to load extra environment variables from
+    ///
+    /// returns: HashMap<String, String, RandomState>
+    fn get_vars(
+        &self,
+        env: &HashMap<String, serde_yaml::Value>,
+    ) -> HashMap<String, serde_yaml::Value> {
+        let mut new_vars: HashMap<String, serde_yaml::Value> = self.vars.clone();
+        for (key, val) in env {
+            new_vars.entry(key.clone()).or_insert_with(|| val.clone());
+        }
+        new_vars
+    }
+
+    /// Same as `get_env` but for the tera templates
+    fn get_templates(&self, tera_templates: &HashMap<String, String>) -> HashMap<String, String> {
+        let mut new_templates: HashMap<String, String> = self.templates.clone();
+        for (key, val) in tera_templates {
+            new_templates
+                .entry(key.clone())
+                .or_insert_with(|| val.clone());
+        }
+        new_templates
     }
 
     /// Validates the task configuration.
@@ -306,47 +551,57 @@ impl Task {
     /// * `name` - Name of the task
     fn validate(&self) -> Result<(), TaskError> {
         if self.script.is_some() && self.program.is_some() {
-            return Err(TaskError::ImproperlyConfigured(
-                self.name.clone(),
-                String::from("Cannot specify `script` and `program` at the same time."),
-            ));
+            return Err(TaskError::ConfigError(String::from(
+                "Cannot set both `script` and `program`.",
+            )));
         }
 
-        if self.script_runner.is_some() && self.script_runner.as_ref().unwrap().is_empty() {
-            return Err(TaskError::ImproperlyConfigured(
-                self.name.clone(),
-                String::from("`script_runner` parameter cannot be an empty string."),
-            ));
+        if self.script.is_some() && self.cmds.is_some() {
+            return Err(TaskError::ConfigError(String::from(
+                "Cannot set both `cmds` and `script`.",
+            )));
         }
 
-        if self.script.is_some() && self.serial.is_some() {
-            return Err(TaskError::ImproperlyConfigured(
-                self.name.clone(),
-                String::from("Cannot specify `script` and `serial` at the same time."),
-            ));
+        if self.program.is_some() && self.cmds.is_some() {
+            return Err(TaskError::ConfigError(String::from(
+                "Cannot set both `cmds` and `program`.",
+            )));
         }
 
-        if self.program.is_some() && self.serial.is_some() {
-            return Err(TaskError::ImproperlyConfigured(
-                self.name.clone(),
-                String::from("Cannot specify `program` and `serial` at the same time."),
-            ));
-        }
-
-        if self.script.is_some() && self.args.is_some() {
-            return Err(TaskError::ImproperlyConfigured(
-                self.name.clone(),
-                String::from("Cannot specify `args` on scripts."),
-            ));
-        }
-
-        if (self.program.is_some() | self.serial.is_some()) && self.quote.is_some() {
-            return Err(TaskError::ImproperlyConfigured(
-                self.name.clone(),
-                String::from("`quote` parameter can only be set for scripts."),
-            ));
-        }
         Ok(())
+    }
+
+    // Returns the Tera instance for the Tera template engine.
+    fn get_tera_instance(&self, config_file: &ConfigFile) -> Result<tera::Tera, TaskError> {
+        let mut tera = tera::Tera::default();
+        for (name, template) in config_file.templates.iter() {
+            tera.add_raw_template(&format!("templates.{name}"), template)?;
+        }
+        for (name, template) in self.templates.iter() {
+            tera.add_raw_template(&format!("templates.{name}"), template)?;
+        }
+        Ok(tera)
+    }
+
+    /// Returns the context for the Tera template engine.
+    fn get_tera_context(
+        &self,
+        args: &ArgsContext,
+        config_file: &ConfigFile,
+        env: &HashMap<String, String>,
+        vars: &HashMap<String, serde_yaml::Value>,
+    ) -> tera::Context {
+        let mut context = tera::Context::new();
+
+        context.insert("args", &args.args);
+        context.insert("kwargs", &args.kwargs);
+        context.insert("pkwargs", &args.pkwargs);
+        context.insert("vars", &vars);
+        context.insert("env", &env);
+        context.insert("TASK", self);
+        context.insert("FILE", config_file);
+
+        context
     }
 
     /// Sets common parameters for commands, like stdout, stderr, stdin, working directory and
@@ -360,7 +615,9 @@ impl Task {
         &self,
         command: &mut Command,
         config_file: &ConfigFile,
-    ) -> DynErrResult<()> {
+        env: &HashMap<String, String>,
+    ) -> Result<(), TaskError> {
+        command.envs(env);
         command.stdout(Stdio::inherit());
         command.stderr(Stdio::inherit());
         command.stdin(Stdio::inherit());
@@ -384,11 +641,15 @@ impl Task {
     /// # Arguments
     ///
     /// * `command` - Command to spawn
-    fn spawn_command(&self, command: &mut Command) -> DynErrResult<()> {
+    fn spawn_command(&self, command: &mut Command, dry_run: bool) -> Result<(), TaskError> {
+        if dry_run {
+            println!("{}", DRY_RUN_MESSAGE.yamis_info());
+            return Ok(());
+        }
         let mut child = match command.spawn() {
             Ok(child) => child,
             Err(e) => {
-                return Err(TaskError::RuntimeError(self.name.clone(), format!("{}", e)).into());
+                return Err(TaskError::RuntimeError(format!("{}", e)));
             }
         };
 
@@ -399,166 +660,268 @@ impl Task {
         match result.success() {
             true => Ok(()),
             false => match result.code() {
-                None => Err(TaskError::RuntimeError(
-                    self.name.clone(),
-                    String::from("Process did not terminate correctly"),
-                )
-                .into()),
-                Some(code) => Err(TaskError::RuntimeError(
-                    self.name.clone(),
-                    format!("Process terminated with exit code {}", code),
-                )
-                .into()),
+                None => Err(TaskError::RuntimeError(String::from(
+                    "Process did not terminate correctly",
+                ))),
+                Some(code) => Err(TaskError::RuntimeError(format!(
+                    "Process terminated with exit code {}",
+                    code
+                ))),
             },
         }
     }
 
-    /// Runs a program from a task.
-    ///
-    /// # Arguments
-    ///
-    /// * `name` - Name of the task, displayed in errors.
-    /// * `args` - Arguments to format the task args with
-    /// * `config_file` - Configuration file of the task
-    fn run_program(&self, args: &TaskArgs, config_file: &ConfigFile) -> DynErrResult<()> {
+    /// Runs a program
+    fn run_program(
+        &self,
+        args: &ArgsContext,
+        config_file: &ConfigFile,
+        env: &HashMap<String, String>,
+        vars: &HashMap<String, serde_yaml::Value>,
+        dry_mode: bool,
+    ) -> Result<(), TaskError> {
         let program = self.program.as_ref().unwrap();
         let mut command = Command::new(program);
-        self.set_command_basics(&mut command, config_file)?;
+        self.set_command_basics(&mut command, config_file, env)?;
 
-        let env = self.get_env(config_file);
-        command.envs(&env);
+        let mut tera = self.get_tera_instance(config_file)?;
+        let context = self.get_tera_context(args, config_file, env, vars);
 
-        if let Some(task_args) = &self.args {
-            match parse_params(task_args, args, &env) {
-                Ok(task_args) => {
-                    // Programs need to exclude empty arguments, otherwise they might be passed as real parameters
-                    command.args(task_args.iter().filter(|val| !val.is_empty()));
-                }
-                Err(e) => {
-                    return Err(
-                        TaskError::ImproperlyConfigured(self.name.clone(), e.to_string()).into(),
-                    );
+        let args_list = match &self.args {
+            None => vec![],
+            Some(args) => {
+                let task_name = &self.name;
+                let template_name = format!("tasks.{task_name}.args");
+                tera.add_raw_template(&template_name, args)?;
+                let rendered_args = tera.render(&template_name, &context)?;
+                split_command(&rendered_args)
+            }
+        };
+        if args_list.is_empty() {
+            println!("{}", format!("{}: {}", self.name, program).yamis_info());
+        } else {
+            let display_args = join_commands(&args_list);
+            command.args(args_list);
+
+            println!(
+                "{}",
+                format!("{}: {} {}", self.name, program, display_args).yamis_info()
+            );
+        }
+
+        self.spawn_command(&mut command, dry_mode)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn run_cmds_cmd(
+        &self,
+        cmd: &str,
+        cmd_index: usize,
+        args: &ArgsContext,
+        config_file: &ConfigFile,
+        env: &HashMap<String, String>,
+        vars: &HashMap<String, serde_yaml::Value>,
+        dry_run: bool,
+    ) -> Result<(), TaskError> {
+        let mut tera = self.get_tera_instance(config_file)?;
+        let context = self.get_tera_context(args, config_file, env, vars);
+
+        let task_name = &self.name;
+        let task_name = &format!("{task_name}.cmds.{cmd_index}");
+        let template_name = &format!("tasks.{task_name}");
+        tera.add_raw_template(template_name, cmd)?;
+
+        let cmd = tera.render(template_name, &context);
+        let cmd = cmd?;
+        let cmd_args = split_command(&cmd);
+        let program = &cmd_args[0];
+        let program_args = &cmd_args[1..];
+        let mut command: Command = Command::new(program);
+        self.set_command_basics(&mut command, config_file, env)?;
+        command.args(program_args.iter());
+
+        println!(
+            "{}",
+            // We print the clean commands, not the rendered ones. For a nicer output.
+            format!("{task_name}: {}", join_commands(&cmd_args)).yamis_info()
+        );
+        self.spawn_command(&mut command, dry_run)
+    }
+
+    fn run_cmds_task_name(
+        &self,
+        task_name: &str,
+        cmd_index: usize,
+        args: &ArgsContext,
+        config_file: &ConfigFile,
+        dry_run: bool,
+    ) -> Result<(), TaskError> {
+        let display_task_name = format!("{}.cmds.{}.{}", self.name, cmd_index, task_name);
+        if let Some(mut task) = config_file.get_task(task_name) {
+            // The env and vars of the parent take precedence in this case.
+            task.env = self.get_env(&task.env);
+            task.vars = self.get_vars(&task.vars);
+            task.templates = self.get_templates(&task.templates);
+
+            // Should setup first, to load the env_file.
+            task.setup(&display_task_name, config_file.directory())?;
+
+            if let Err(e) = task.run(args, config_file, dry_run) {
+                Err(TaskError::RuntimeError(format!(
+                    "Error running task: {}",
+                    e
+                )))
+            } else {
+                Ok(())
+            }
+        } else {
+            Err(TaskError::NotFound(task_name.to_string()))
+        }
+    }
+
+    fn run_cmds_task(
+        &self,
+        task: &Task,
+        cmd_index: usize,
+        args: &ArgsContext,
+        config_file: &ConfigFile,
+        dry_run: bool,
+    ) -> Result<(), TaskError> {
+        let mut task = task.clone();
+        let task_name = format!("{}.cmds.{}", self.name, cmd_index);
+
+        task.setup(&task_name, config_file.directory())?;
+
+        // Should setup first, to load the env_file. This way the child task inherits from the parent,
+        // but can override specific values
+
+        let base_task_names = task.bases.clone();
+        for base_name in base_task_names.iter() {
+            // Because the bases have been loaded already, there cannot be any circular dependencies
+            // Todo, get reference to base task instead of cloning it
+            let base_task = config_file.get_task(base_name);
+            match base_task {
+                Some(base_task) => task.extend_task(&base_task),
+                None => {
+                    return Err(TaskError::NotFound(base_name.to_string()));
                 }
             }
         }
 
-        self.spawn_command(&mut command)
+        // Done after setup and bases, so that the env and vars specified directly in the child take precedence
+        task.env = task.get_env(&self.env);
+        task.vars = task.get_vars(&self.vars);
+        task.templates = task.get_templates(&self.templates);
+
+        // This should load the config file env and vars
+        task.run(args, config_file, dry_run).map_err(|e| e.into())
     }
 
-    /// Runs a script from a task.
-    ///
-    /// # Arguments
-    ///
-    /// * `name` - Name of the task, displayed in errors.
-    /// * `args` - Arguments to format the task args with
-    /// * `config_file` - Configuration file of the task
-    fn run_script(&self, args: &TaskArgs, config_file: &ConfigFile) -> DynErrResult<()> {
+    /// Runs the commands specified with the cmds option.
+    fn run_cmds(
+        &self,
+        args: &ArgsContext,
+        config_file: &ConfigFile,
+        env: &HashMap<String, String>,
+        vars: &HashMap<String, serde_yaml::Value>,
+        dry_run: bool,
+    ) -> Result<(), TaskError> {
+        for (i, cmd) in self.cmds.as_ref().unwrap().iter().enumerate() {
+            match cmd {
+                Cmd::Cmd(cmd) => {
+                    self.run_cmds_cmd(cmd, i, args, config_file, env, vars, dry_run)?;
+                }
+                Cmd::TaskName(task_name) => {
+                    self.run_cmds_task_name(task_name, i, args, config_file, dry_run)?;
+                }
+                Cmd::Task(task) => {
+                    self.run_cmds_task(task, i, args, config_file, dry_run)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Runs a script
+    fn run_script(
+        &self,
+        args: &ArgsContext,
+        config_file: &ConfigFile,
+        env: &HashMap<String, String>,
+        vars: &HashMap<String, serde_yaml::Value>,
+        dry_run: bool,
+    ) -> Result<(), TaskError> {
         let script = self.script.as_ref().unwrap();
+
+        let mut tera = self.get_tera_instance(config_file)?;
+        let mut context = self.get_tera_context(args, config_file, env, vars);
+        let task_name = &self.name;
+        let template_name = format!("tasks.{task_name}.script");
+        tera.add_raw_template(&template_name, script)?;
+        let script = tera.render(&template_name, &context)?;
+        let default_script_extension = String::from(DEFAULT_SCRIPT_EXTENSION);
+        let script_extension = self
+            .script_extension
+            .as_ref()
+            .unwrap_or(&default_script_extension);
+
+        let script_path = get_temp_script(
+            &script,
+            script_extension,
+            &self.name,
+            config_file.filepath.as_path(),
+        );
+
+        let script_path = match script_path {
+            Ok(path) => path,
+            Err(e) => {
+                return Err(TaskError::RuntimeError(format!(
+                    "Error creating script file: {}",
+                    e
+                )))
+            }
+        };
+
+        cfg_if::cfg_if! {
+            if #[cfg(target_os = "windows")]
+            {
+                let script_path = script_path.to_str().unwrap();
+                let script_path = script_path.replace('\\', "\\\\");
+                context.insert("script_path", &script_path);
+            } else {
+                context.insert("script_path", &script_path);
+            }
+        }
 
         // Interpreter is a list, because sometimes there is need to pass extra arguments to the
         // interpreter, such as the /C option in the batch case
         let script_runner = if let Some(script_runner) = &self.script_runner {
             script_runner
         } else {
-            DEFAULT_INTERPRETER
+            DEFAULT_SCRIPT_RUNNER
         };
 
-        let default_script_extension = String::from(DEFAULT_SCRIPT_EXTENSION);
-        let script_extension = self
-            .script_ext
-            .as_ref()
-            .unwrap_or(&default_script_extension);
+        let script_runner_template_name = format!("tasks.{task_name}.script_runner");
+        tera.add_raw_template(&script_runner_template_name, script_runner)?;
 
-        let mut command = Command::new(script_runner);
+        let script_runner = tera.render(&script_runner_template_name, &context)?;
+        let script_runner_values = split_command(&script_runner);
 
-        if let Some(script_runner_args) = &self.script_runner_args {
-            command.args(script_runner_args);
+        let mut command = Command::new(&script_runner_values[0]);
+
+        // The script runner might not contain the actual script path, but we just leave it as a feature ;)
+        if script_runner_values.len() > 1 {
+            command.args(script_runner_values[1..].iter());
         }
 
-        let env = self.get_env(config_file);
-        command.envs(&env);
+        self.set_command_basics(&mut command, config_file, env)?;
 
-        self.set_command_basics(&mut command, config_file)?;
+        println!("{}", format!("{task_name}: {script_runner}").yamis_info());
+        println!("{}", "Script Begin:".yamis_info());
+        println!("{}", script.color(INFO_COLOR));
+        println!("{}", "Script End.".yamis_info());
 
-        let quote = if self.quote.is_some() {
-            self.quote.as_ref().unwrap()
-        } else {
-            &config_file.quote
-        };
-
-        match parse_script(script, args, &env, quote) {
-            Ok(script) => {
-                let script_file = get_temp_script(
-                    &script,
-                    script_extension,
-                    &self.name,
-                    config_file.filepath.as_path(),
-                )?;
-                command.arg(script_file.to_str().unwrap());
-            }
-            Err(e) => {
-                return Err(
-                    TaskError::ImproperlyConfigured(self.name.clone(), e.to_string()).into(),
-                );
-            }
-        }
-
-        self.spawn_command(&mut command)
-    }
-
-    /// Runs a series of tasks from a task, in order.
-    ///
-    /// # Arguments
-    /// * `args` - Arguments to format the task args with
-    /// * `config_file` - Configuration file of the task
-    fn run_serial(&self, args: &TaskArgs, config_file: &ConfigFile) -> DynErrResult<()> {
-        let serial = self.serial.as_ref().unwrap();
-        let mut tasks: Vec<Arc<Task>> = Vec::new();
-        for task_name in serial {
-            if let Some(task) = config_file.get_task(task_name) {
-                tasks.push(task);
-            } else {
-                return Err(TaskError::RuntimeError(
-                    self.name.clone(),
-                    format!("Task `{}` not found.", task_name),
-                )
-                .into());
-            }
-        }
-        for task in tasks {
-            task.run(args, config_file)?;
-        }
-        Ok(())
-    }
-
-    /// Runs a task.
-    ///
-    /// # Arguments
-    ///
-    /// * `name` - Name of the task, displayed in errors.
-    /// * `args` - Arguments to format the task args with
-    /// * `config_file` - Configuration file of the task
-    /// * `config_files` - global ConfigurationFiles instance
-    pub fn run(&self, args: &TaskArgs, config_file: &ConfigFile) -> DynErrResult<()> {
-        let task_debug_config =
-            ConcreteTaskDebugConfig::new(&self.debug_config, &config_file.debug_config);
-
-        if task_debug_config.print_task_name {
-            println!("{}", format!("Task: `{}`", self.name).yamis_info());
-        }
-
-        return if self.script.is_some() {
-            self.run_script(args, config_file)
-        } else if self.program.is_some() {
-            self.run_program(args, config_file)
-        } else if self.serial.is_some() {
-            self.run_serial(args, config_file)
-        } else {
-            Err(
-                TaskError::ImproperlyConfigured(self.name.clone(), String::from("Nothing to run."))
-                    .into(),
-            )
-        };
+        self.spawn_command(&mut command, dry_run)
     }
 }
 
@@ -573,12 +936,12 @@ mod tests {
     use std::io::Write;
     use std::path::Path;
 
-    pub fn get_task(
+    pub(crate) fn get_task(
         name: &str,
         definition: &str,
         base_path: Option<&Path>,
     ) -> Result<Task, Box<dyn std::error::Error>> {
-        let mut task: Task = toml::from_str(definition).unwrap();
+        let mut task: Task = serde_yaml::from_str(definition).unwrap();
         task.setup(name, base_path.unwrap_or_else(|| Path::new("")))?;
         Ok(task)
     }
@@ -586,23 +949,28 @@ mod tests {
     #[test]
     fn test_env_inheritance() {
         let tmp_dir = TempDir::new().unwrap();
-        let config_file_path = tmp_dir.join("project.yamis.toml");
+        let config_file_path = tmp_dir.join("yamis.root.yml");
         let mut file = File::create(&config_file_path).unwrap();
         file.write_all(
             r#"
-    [tasks.hello_base.env]
-    greeting = "hello world"
+version: 2
 
-    [tasks.calc_base.env]
-    one_plus_one = "2"
+tasks:
+    hello_base:
+        env:
+            greeting: hello world
 
-    [tasks.hello]
-    bases = ["hello_base", "calc_base"]
-    script = "echo $greeting, 1+1=$one_plus_one"
+    calc_base:
+        env:
+            one_plus_one: 2
 
-    [tasks.hello.windows]
-    bases = ["hello_base", "calc_base"]
-    script = "echo %greeting%, 1+1=%one_plus_one%"
+    hello:
+        bases: ["hello_base", "calc_base"]
+        script: "echo $greeting, 1+1=$one_plus_one"
+
+    hello.windows:
+        bases: ["hello_base", "calc_base"]
+        script: "echo %greeting%, 1+1=%one_plus_one%"
     "#
             .as_bytes(),
         )
@@ -612,71 +980,37 @@ mod tests {
 
         let task = config_file.get_task("hello").unwrap();
 
-        let env = task.get_env(&config_file);
         let expected = HashMap::from([
             ("greeting".to_string(), "hello world".to_string()),
             ("one_plus_one".to_string(), "2".to_string()),
         ]);
-        assert_eq!(env, expected);
-    }
-
-    #[test]
-    fn test_quotes_inheritance() {
-        let tmp_dir = TempDir::new().unwrap();
-        let config_file_path = tmp_dir.join("project.yamis.toml");
-        let mut file = File::create(&config_file_path).unwrap();
-        file.write_all(
-            r#"
-    [tasks.hello_base]
-    quote = "spaces"
-
-    [tasks.calc_base]
-    quote = "never"
-
-    [tasks.hello]
-    bases = ["hello_base", "calc_base"]
-    script = "echo hello_1"
-
-    [tasks.hello_2]
-    bases = ["calc_base", "hello_base"]
-    script = "echo hello_2"
-    "#
-            .as_bytes(),
-        )
-        .unwrap();
-
-        let config_file = ConfigFile::load(config_file_path).unwrap();
-
-        let task = config_file.get_task("hello").unwrap();
-        let task_ref = task.as_ref();
-        assert_eq!(task_ref.quote.as_ref().unwrap(), &EscapeMode::Spaces);
-
-        let task = config_file.get_task("hello_2").unwrap();
-        let task_ref = task.as_ref();
-        assert_eq!(task_ref.quote.as_ref().unwrap(), &EscapeMode::Never);
+        assert_eq!(task.env, expected);
     }
 
     #[test]
     fn test_args_inheritance() {
         let tmp_dir = TempDir::new().unwrap();
-        let config_file_path = tmp_dir.join("project.yamis.toml");
+        let config_file_path = tmp_dir.join("yamis.root.yml");
         let mut file = File::create(&config_file_path).unwrap();
         file.write_all(
             r#"
-    [tasks.bash]
-    program = "bash"
+    version: 2
 
-    [tasks.bash_inline]
-    bases = ["bash"]
-    args_extend = ["-c"]
+    tasks:
+        bash:
+            program: "bash"
 
-    [tasks.hello]
-    bases = ["bash_inline"]
-    args_extend = ["echo", "hello"]
+        bash_inline:
+            bases: ["bash"]
+            args_extend: "-c"
 
-    [tasks.hello_2]
-    bases = ["hello"]
-    args = ["-c", "echo", "hello"]
+        hello:
+            bases: ["bash_inline"]
+            args_extend: echo hello
+
+        hello_2:
+            bases: ["hello"]
+            args: -c "echo hello"
     "#
             .as_bytes(),
         )
@@ -685,49 +1019,45 @@ mod tests {
         let config_file = ConfigFile::load(config_file_path).unwrap();
 
         let task = config_file.get_task("hello").unwrap();
-        let task_ref = task.as_ref();
-        assert_eq!(
-            task_ref.args.as_ref().unwrap(),
-            &vec!["-c".to_string(), "echo".to_string(), "hello".to_string()]
-        );
+        assert_eq!(task.args.as_ref().unwrap(), "-c echo hello");
 
         let task = config_file.get_task("hello_2").unwrap();
-        let task_ref = task.as_ref();
-        assert_eq!(
-            task_ref.args.as_ref().unwrap(),
-            &vec!["-c".to_string(), "echo".to_string(), "hello".to_string()]
-        );
+        assert_eq!(task.args.as_ref().unwrap(), &"-c \"echo hello\"");
     }
 
     #[test]
     fn test_get_task_help() {
         let tmp_dir = TempDir::new().unwrap();
-        let config_file_path = tmp_dir.join("project.yamis.toml");
+        let config_file_path = tmp_dir.join("yamis.root.yml");
         let mut file = File::create(&config_file_path).unwrap();
         file.write_all(
             r#"
-[tasks.base]
-help = """
-New lines should be trimmed
-"""
-program = "bash"
+version: 2
 
-[tasks.help_inherited]
-bases = ["base"]
+tasks:
+    base:
+        help: >
+            New lines
+            should be
+            trimmed
 
-[tasks.no_help]
-program = "bash"
+        program: "bash"
 
-[tasks.help_removed]
-bases = ["base"]
-help = ""
+    help_inherited:
+        bases: ["base"]
 
-[tasks.help_overriden]
-bases = ["base"]
-help = """
-First line
-Second line
-"""
+    no_help:
+        program: "bash"
+
+    help_removed:
+        bases: ["base"]
+        help: ""
+
+    help_overriden:
+        bases: ["base"]
+        help: |
+            First line
+            Second line
     "#
             .as_bytes(),
         )
@@ -736,57 +1066,51 @@ Second line
         let config_file = ConfigFile::load(config_file_path).unwrap();
 
         let task = config_file.get_task("base").unwrap();
-        let task_ref = task.as_ref();
-        assert_eq!(task_ref.get_help(), "New lines should be trimmed");
+        assert_eq!(task.get_help(), "New lines should be trimmed");
 
         let task = config_file.get_task("help_inherited").unwrap();
-        let task_ref = task.as_ref();
-        assert_eq!(task_ref.get_help(), "New lines should be trimmed");
+        assert_eq!(task.get_help(), "New lines should be trimmed");
 
         let task = config_file.get_task("no_help").unwrap();
-        let task_ref = task.as_ref();
-        assert_eq!(task_ref.get_help(), "");
+        assert_eq!(task.get_help(), "");
 
         let task = config_file.get_task("help_removed").unwrap();
-        let task_ref = task.as_ref();
-        assert_eq!(task_ref.get_help(), "");
+        assert_eq!(task.get_help(), "");
 
         let task = config_file.get_task("help_overriden").unwrap();
-        let task_ref = task.as_ref();
-        assert_eq!(task_ref.get_help(), "First line\nSecond line");
+        assert_eq!(task.get_help(), "First line\nSecond line");
     }
 
     #[test]
     fn test_read_env() {
         let tmp_dir = TempDir::new().unwrap();
-        let project_config_path = tmp_dir.join("project.yamis.toml");
+        let project_config_path = tmp_dir.join("yamis.root.yml");
         let mut project_config_file = File::create(project_config_path.as_path()).unwrap();
         project_config_file
             .write_all(
                 r#"
-            env_file = ".env"
+env_file: ".env"
 
-            [tasks.test.windows]
-            quote = "never"
-            script = "echo %VAR1% %VAR2% %VAR3%"
+version: 2
 
-            [tasks.test]
-            quote = "never"
-            script = "echo $VAR1 $VAR2 $VAR3"
+tasks:
+    test.windows:
+        script: "echo %VAR1% %VAR2% %VAR3%"
 
-            [tasks.test_2.windows]
-            quote = "never"
-            script = "echo %VAR1% %VAR2% %VAR3%"
-            env_file = ".env_2"
-            env = {"VAR1" = "TASK_VAL1"}
+    test:
+        script: "echo $VAR1 $VAR2 $VAR3"
 
-            [tasks.test_2]
-            quote = "never"
-            script = "echo $VAR1 $VAR2 $VAR3"
-            env_file = ".env_2"
+    test_2.windows:
+        script: "echo %VAR1% %VAR2% %VAR3%"
+        env_file: ".env_2"
+        env: 
+            VAR1: TASK_VAL1
 
-            [tasks.test_2.env]
-            VAR1 = "TASK_VAL1"
+    test_2:
+        script: "echo $VAR1 $VAR2 $VAR3"
+        env_file: ".env_2"
+        env:
+            VAR1: "TASK_VAL1"
             "#
                 .as_bytes(),
             )
@@ -818,7 +1142,7 @@ Second line
         let config_file = ConfigFile::load(project_config_path).unwrap();
 
         let task = config_file.get_task("test").unwrap();
-        let env = task.get_env(&config_file);
+        let env = task.get_env(config_file.env.as_ref().unwrap());
 
         let expected = HashMap::from([
             ("VAR1".to_string(), "VAL1".to_string()),
@@ -828,7 +1152,7 @@ Second line
         assert_eq!(env, expected);
 
         let task = config_file.get_task("test_2").unwrap();
-        let env = task.get_env(&config_file);
+        let env = task.get_env(config_file.env.as_ref().unwrap());
         let expected = HashMap::from([
             ("VAR1".to_string(), "TASK_VAL1".to_string()),
             ("VAR2".to_string(), "OTHER_VAL2".to_string()),
@@ -842,87 +1166,43 @@ Second line
         let task = get_task(
             "sample",
             r#"
-        script = "hello world"
-        program = "some_program"
+        script: "hello world"
+        program: "some_program"
     "#,
             None,
         );
-        let expected_error = TaskError::ImproperlyConfigured(
-            String::from("sample"),
-            String::from("Cannot specify `script` and `program` at the same time."),
+        let expected_error = AwareTaskError::new(
+            "sample",
+            TaskError::ConfigError(String::from("Cannot set both `script` and `program`.")),
         );
         assert_eq!(task.unwrap_err().to_string(), expected_error.to_string());
 
         let task = get_task(
             "sample",
             r#"
-        script_runner = ""
+        script: "something"
+        cmds: ["cmd1", "cmd2"]
     "#,
             None,
         );
-        let expected_error = TaskError::ImproperlyConfigured(
-            String::from("sample"),
-            String::from("`script_runner` parameter cannot be an empty string."),
+        let expected_error = AwareTaskError::new(
+            "sample",
+            TaskError::ConfigError(String::from("Cannot set both `cmds` and `script`.")),
         );
         assert_eq!(task.unwrap_err().to_string(), expected_error.to_string());
 
         let task = get_task(
             "sample",
             r#"
-        script = "echo hello"
-        serial = ["sample"]
+        program: "sample script"
+        cmds: ["some command"]
     "#,
             None,
         );
 
-        let expected_error = TaskError::ImproperlyConfigured(
-            String::from("sample"),
-            String::from("Cannot specify `script` and `serial` at the same time."),
-        );
-        assert_eq!(task.unwrap_err().to_string(), expected_error.to_string());
-
-        let task = get_task(
+        let expected_error = AwareTaskError::new(
             "sample",
-            r#"
-        program = "python"
-        serial = ["sample"]
-    "#,
-            None,
-        );
-
-        let expected_error = TaskError::ImproperlyConfigured(
-            String::from("sample"),
-            String::from("Cannot specify `program` and `serial` at the same time."),
-        );
-        assert_eq!(task.unwrap_err().to_string(), expected_error.to_string());
-
-        let task = get_task(
-            "sample",
-            r#"
-        quote = "spaces"
-        program = "python"
-    "#,
-            None,
-        );
-
-        let expected_error = TaskError::ImproperlyConfigured(
-            String::from("sample"),
-            String::from("`quote` parameter can only be set for scripts."),
-        );
-        assert_eq!(task.unwrap_err().to_string(), expected_error.to_string());
-
-        let task = get_task(
-            "sample",
-            r#"
-        script = "sample script"
-        args = ["some", "args"]
-    "#,
-            None,
-        );
-
-        let expected_error = TaskError::ImproperlyConfigured(
-            String::from("sample"),
-            String::from("Cannot specify `args` on scripts."),
+            TaskError::ConfigError(String::from("Cannot set both `cmds` and `program`.")),
         );
         assert_eq!(task.unwrap_err().to_string(), expected_error.to_string());
     }
@@ -930,7 +1210,7 @@ Second line
     #[test]
     fn test_create_temp_script() {
         let tmp_dir = TempDir::new().unwrap();
-        let project_config_path = tmp_dir.join("project.yamis.toml");
+        let project_config_path = tmp_dir.join("yamis.root.yml");
         let script = "echo hello world";
         let extension = "sh";
         let task_name = "sample";
