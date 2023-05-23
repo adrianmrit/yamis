@@ -1,5 +1,5 @@
 # Archived
-I decided to archive this project in favor of `[mom](https://github.com/adrianmrit/mom/)`, which is based on this project but with big changes that are not backward compatible, and with the intention of using a shorter to type name.
+I decided to archive this project in favor of [mom-task](https://github.com/adrianmrit/mom/), which is based on this project but with big changes that are not backward compatible, and with the intention of using a shorter to type name.
 
 # Yamis
 ![build](https://github.com/adrianmrit/yamis/actions/workflows/test.yml/badge.svg)
